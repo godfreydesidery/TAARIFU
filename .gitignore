@@ -1,0 +1,20 @@
+# ─────────────────────────────────────────────────────────────
+# Taarifu workspace .gitignore
+# ─────────────────────────────────────────────────────────────
+
+# Cloned reference repositories — THROW-AWAY, reference only.
+# Not part of this project. Re-clone from GitHub if ever needed.
+# (Their internal .git dirs have been removed so they are plain folders.)
+taarifu-engine-api/
+taarifu-engine-dash/
+taarifu-mob-app/
+taarifu-core-api/
+
+# Local scratch & backups
+_prd_drafts/
+*.bak
+
+# OS / editor noise
+Thumbs.db
+.DS_Store
+desktop.ini

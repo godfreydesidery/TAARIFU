@@ -1,0 +1,37 @@
+# =============================================================================
+# Taarifu backend — SAMPLE environment configuration (documentation only).
+#
+# Copy the values below into your shell/secret manager (NOT into a committed file).
+# This file contains NO real secrets — only documented placeholders (PRD §18,
+# CLAUDE.md §12). application.yml reads all of these via ${VAR} env placeholders.
+#
+# Generate a dev crypto key (Base64 256-bit):
+#   openssl rand -base64 32
+# Generate a JWT secret (HMAC, >=256-bit):
+#   openssl rand -base64 48
+# =============================================================================
+
+# --- Database (PostgreSQL 16 + PostGIS 3.4) ---
+# TAARIFU_DB_URL=jdbc:postgresql://localhost:5432/taarifu
+# TAARIFU_DB_USER=taarifu
+# TAARIFU_DB_PASSWORD=<set-in-env>
+
+# --- JWT (ADR-0007) ---
+# TAARIFU_JWT_SECRET=<output of: openssl rand -base64 48>
+# TAARIFU_JWT_ISSUER=taarifu
+
+# --- CORS allow-list (PRD §18) ---
+# Comma-separated EXACT origins. Never use '*' with credentials.
+# TAARIFU_CORS_ORIGINS=https://admin.taarifu.example,https://app.taarifu.example
+
+# --- Field-level PII encryption dev key (EI-19) ---
+# TAARIFU_CRYPTO_DEV_KEY=<output of: openssl rand -base64 32>
+
+# --- Geocoder adapter selection ---
+# 'postgis' (default; requires seeded ward boundaries) or 'stub' (dev/test, no geometry needed).
+# TAARIFU_GEOCODER=postgis
+
+# Notes:
+# - In production, TAARIFU_JWT_SECRET / TAARIFU_CRYPTO_DEV_KEY are replaced by
+#   KMS-backed signing keys and KMS envelope encryption respectively (ADR-0007, EI-19).
+# - PII (national/voter ID) is encrypted at rest; never log it; honour PDPA 2022/2023.

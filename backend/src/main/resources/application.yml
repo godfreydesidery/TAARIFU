@@ -1,0 +1,93 @@
+# =============================================================================
+# Taarifu backend — default application configuration.
+#
+# Responsibility: safe defaults for every environment. Schema is owned by Flyway
+# (ddl-auto=validate, ADR-0005); ALL secrets come from environment variables /
+# secret manager via ${VAR} placeholders — NONE are committed (PRD §18, CLAUDE.md §12).
+# See application-sample.yml for documented placeholders to copy into a real env.
+# =============================================================================
+spring:
+  application:
+    name: taarifu-backend
+
+  # --- Datasource: provided entirely by the environment (no host/user/pass in source). ---
+  datasource:
+    url: ${TAARIFU_DB_URL:jdbc:postgresql://localhost:5432/taarifu}
+    username: ${TAARIFU_DB_USER:taarifu}
+    password: ${TAARIFU_DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    # Flyway owns the schema; Hibernate only VALIDATES entities against it and fails fast (ADR-0005).
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false                # no lazy loading in the view layer (clean boundaries)
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC               # all timestamps persisted/read as UTC (PRD §15)
+        format_sql: false
+
+  # --- Flyway: forward-only, range-partitioned migrations under db/migration (ARCHITECTURE §4.1). ---
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+    validate-on-migrate: true
+
+  # --- i18n: Swahili default, English secondary (ADR-0010). ---
+  messages:
+    basename: i18n/messages
+    encoding: UTF-8
+    fallback-to-system-locale: false
+
+  web:
+    locale: sw                         # default request locale = Swahili
+    locale-resolver: accept_header     # honour Accept-Language, default to sw
+
+# --- Server: versioned API root /api/v1 (ARCHITECTURE §5.4). ---
+server:
+  servlet:
+    context-path: /api/v1
+  error:
+    include-stacktrace: never          # never leak stack traces to clients (PRD §18)
+    include-message: never
+
+# --- Actuator: expose only health/info publicly; everything else stays internal (ARCHITECTURE §9). ---
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true                  # liveness/readiness groups
+
+# --- springdoc / OpenAPI: serve the spec + Swagger UI (paths are relative to context-path). ---
+springdoc:
+  api-docs:
+    path: /openapi.json
+  swagger-ui:
+    path: /swagger-ui.html
+
+# =============================================================================
+# Taarifu-specific configuration (all secrets via env; see application-sample.yml).
+# =============================================================================
+taarifu:
+  security:
+    jwt:
+      # JWT signing secret MUST come from the environment — no default in source (PRD §18).
+      secret: ${TAARIFU_JWT_SECRET:}
+      issuer: ${TAARIFU_JWT_ISSUER:taarifu}
+      access-ttl: PT15M                # ~15 min access token (ADR-0007)
+      refresh-ttl: P30D                # ~30 day rotating refresh (ADR-0007)
+    cors:
+      # Explicit allow-list; NEVER wildcard-with-credentials (PRD §18). Empty by default.
+      allowed-origins: ${TAARIFU_CORS_ORIGINS:}
+    crypto:
+      # Base64 256-bit dev key for field-level PII encryption — env-provided, never committed (EI-19).
+      dev-key: ${TAARIFU_CRYPTO_DEV_KEY:}
+  geography:
+    # Active Geocoder adapter: 'postgis' (default, source of truth) or 'stub' (dev/test).
+    geocoder: ${TAARIFU_GEOCODER:postgis}

@@ -1,0 +1,9 @@
+{
+  "//": "Dev proxy: forwards /api/v1/* from the Angular dev server (:4200) to the Spring Boot backend (:8081), avoiding browser CORS during local development. Active only with `npm start` / `ng serve`. To use it, point environment.development.ts apiUrl at the relative '/api/v1'. By default the app calls http://localhost:8081/api/v1 directly, so this proxy is optional.",
+  "/api/v1": {
+    "target": "http://localhost:8081",
+    "secure": false,
+    "changeOrigin": true,
+    "logLevel": "debug"
+  }
+}

@@ -1,0 +1,87 @@
+<!-- Representatives directory: debounced search + type/status filters + server pagination. -->
+<section>
+  <h1 class="h3 mb-3">{{ 'representatives.title' | translate }}</h1>
+
+  <div class="row g-2 mb-3">
+    <div class="col-12 col-md-6">
+      <label class="visually-hidden" for="rep-search">{{ 'common.search' | translate }}</label>
+      <input
+        id="rep-search"
+        type="search"
+        class="form-control"
+        [formControl]="search"
+        [attr.placeholder]="'representatives.searchPlaceholder' | translate"
+      />
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="visually-hidden" for="rep-type">{{ 'representatives.filterType' | translate }}</label>
+      <select id="rep-type" class="form-select" [formControl]="typeFilter">
+        <option value="">{{ 'common.all' | translate }}</option>
+        @for (type of types; track type) {
+          <option [value]="type">{{ type }}</option>
+        }
+      </select>
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="visually-hidden" for="rep-status">{{ 'representatives.filterStatus' | translate }}</label>
+      <select id="rep-status" class="form-select" [formControl]="statusFilter">
+        <option value="">{{ 'common.all' | translate }}</option>
+        @for (status of statuses; track status) {
+          <option [value]="status">{{ status }}</option>
+        }
+      </select>
+    </div>
+  </div>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
+    </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="retry()">
+        {{ 'common.retry' | translate }}
+      </button>
+    </div>
+  } @else if (rows().length === 0) {
+    <div class="alert alert-info" role="status">{{ 'representatives.noResults' | translate }}</div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th scope="col">{{ 'representatives.type' | translate }}</th>
+            <th scope="col">{{ 'representatives.status' | translate }}</th>
+            <th scope="col">{{ 'representatives.party' | translate }}</th>
+            <th scope="col">{{ 'representatives.constituency' | translate }}</th>
+            <th scope="col">{{ 'representatives.ward' | translate }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (rep of rows(); track rep.id) {
+            <tr>
+              <td>{{ rep.type }}</td>
+              <td>
+                <span
+                  class="badge"
+                  [class.text-bg-success]="rep.status === 'SITTING'"
+                  [class.text-bg-secondary]="rep.status === 'FORMER'"
+                  [class.text-bg-warning]="rep.status === 'PENDING_VERIFICATION'"
+                >
+                  {{ rep.status }}
+                </span>
+              </td>
+              <td>{{ rep.partyAbbrev || rep.partyName || '—' }}</td>
+              <td>{{ rep.constituencyName || '—' }}</td>
+              <td>{{ rep.wardName || '—' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="goToPage($event)" />
+  }
+</section>

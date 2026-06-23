@@ -1,0 +1,45 @@
+name: taarifu_citizen
+description: "Taarifu — Tanzania civic-engagement citizen app (Swahili-first, offline-first, low-data)."
+publish_to: "none"
+
+# WHY a hand-pinned, lean dependency set: every package adds to the APK that a citizen
+# on a tiny data bundle must download (PRD §15 data-budget NFR). We add only what the
+# foundation slice needs — state (bloc), networking (dio), secure storage, connectivity,
+# and i18n — and avoid heavyweight codegen/UI kits until a feature actually requires them.
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # State management — the locked choice (CLAUDE.md §5).
+  flutter_bloc: ^9.1.0
+  bloc: ^9.0.0
+  equatable: ^2.0.7
+
+  # Networking tuned for bad networks: timeouts, retry/backoff, gzip (PRD §15).
+  dio: ^5.7.0
+
+  # Keystore-backed token storage — never plaintext (PRD §18, ARCHITECTURE §6).
+  flutter_secure_storage: ^9.2.4
+
+  # Reachability hint only — we still confirm with a real lightweight call before trusting it.
+  connectivity_plus: ^6.1.0
+
+  # i18n message lookups (gen-l10n uses this); Swahili default + English secondary.
+  intl: any
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  bloc_test: ^10.0.0
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  generate: true # turns on gen-l10n from lib/l10n/*.arb (see l10n.yaml)

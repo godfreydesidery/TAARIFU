@@ -1,0 +1,45 @@
+{
+  "@@locale": "en",
+  "appTitle": "Taarifu",
+  "navHome": "Home",
+  "navMyReps": "My Representatives",
+
+  "onboardingWelcomeTitle": "Welcome to Taarifu",
+  "onboardingWelcomeBody": "Reach your leaders and report service problems — in Swahili, even on a weak network.",
+
+  "phoneLabel": "Phone number",
+  "phoneHint": "+255712345678",
+  "phoneInvalid": "Enter a valid number starting with +255",
+
+  "requestOtpButton": "Send one-time code",
+  "otpSentMessage": "We sent you a one-time code by SMS",
+
+  "otpLabel": "One-time code (OTP)",
+  "otpHint": "6 digits",
+  "otpInvalid": "The code is not valid",
+  "verifyOtpButton": "Verify",
+  "changePhoneButton": "Change number",
+
+  "signedInTier1": "You are signed in. Tier: T1 (phone verified).",
+  "logoutButton": "Sign out",
+
+  "feedTitle": "Home",
+  "feedEmpty": "No updates yet. Follow areas or topics to see updates here.",
+  "feedSignInPrompt": "Sign in to see updates relevant to you.",
+
+  "myRepsTitle": "My Representatives",
+  "myRepsPickWard": "Choose your ward",
+  "myRepsRegionLabel": "Region",
+  "myRepsMpLabel": "Member of Parliament",
+  "myRepsCouncillorLabel": "Councillor",
+  "myRepsExecutiveLabel": "Ward Executive",
+  "myRepsNone": "No representative found right now.",
+
+  "retryButton": "Try again",
+  "loadingLabel": "Loading…",
+
+  "errorOffline": "No network. We'll retry when you're back online.",
+  "errorTimeout": "The network is slow. Please try again.",
+  "errorServer": "A technical problem occurred. Please try again later.",
+  "errorUnknown": "Something went wrong. Please try again."
+}

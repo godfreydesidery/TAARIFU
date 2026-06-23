@@ -49,14 +49,37 @@ import java.util.List;
 @EnableConfigurationProperties({JwtProperties.class, CorsProperties.class})
 public class SecurityConfig {
 
-    /** URL patterns served without authentication (public reference reads + ops/docs). */
+    /**
+     * URL patterns served without authentication (public reference reads + ops/docs).
+     *
+     * <p>GET-only: write/admin endpoints under these prefixes (POST/PUT/DELETE, or method-gated GETs
+     * such as {@code /issue-categories/admin}) remain protected because (a) this allow-list is scoped to
+     * {@link HttpMethod#GET} and (b) {@code @PreAuthorize} still runs at the method layer even when the
+     * URL is {@code permitAll()} — an anonymous request to an {@code ADMIN}-gated handler is denied.
+     * Public civic-data reads per PRD §11/§22.6 + the wave-1 module directories.</p>
+     */
     private static final String[] PUBLIC_GET_PATTERNS = {
+            // Geography reference data (M1)
             "/api/v1/regions/**",
             "/api/v1/districts/**",
             "/api/v1/councils/**",
             "/api/v1/wards/**",
             "/api/v1/locations/**",
-            "/api/v1/constituencies/**"
+            "/api/v1/constituencies/**",
+            // Representatives & institutions directory (M2)
+            "/api/v1/representatives/**",
+            "/api/v1/parties/**",
+            "/api/v1/parliaments/**",
+            // Issue categories + public reports (M3)
+            "/api/v1/issue-categories/**",
+            "/api/v1/public/reports/**",
+            // Service-provider / responder directory (M18)
+            "/api/v1/responders/**",
+            "/api/v1/organisations/**",
+            // Engagement public reads (M8/M9/M10) — drafts/moderation-held excluded service-side
+            "/api/v1/petitions/**",
+            "/api/v1/surveys/**",
+            "/api/v1/questions/**"
     };
 
     /** Patterns served without authentication regardless of method (docs + health). */

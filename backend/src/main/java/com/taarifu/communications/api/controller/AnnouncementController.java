@@ -19,6 +19,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Author/official/admin endpoints to publish and manage announcements (PRD §12 UC-G01/G02, M4, US-4.1).
@@ -45,6 +47,12 @@ import java.util.List;
  * <p>WHY the trust decision lives in the controller (not the service): it is derived from the
  * authenticated principal's roles, which the controller already holds; the service stays free of identity
  * internals and simply honours the {@code trustedAuthor} flag (ARCHITECTURE §3.2).</p>
+ *
+ * <p><b>Public read</b>: {@code GET /announcements/&#123;publicId&#125;} is {@code permitAll()} — a
+ * published announcement is public civic data any guest may read (PRD §22.6, AC-T0). Its visibility is
+ * enforced entirely service-side ({@link AnnouncementService#getPublicDetail(java.util.UUID)}): only a
+ * {@code PUBLISHED}, in-window announcement is returned; everything else 404s so nothing in flight leaks.
+ * The public URL pattern must be centrally allow-listed — see CENTRAL INTEGRATION NEEDS.</p>
  */
 @RestController
 @RequestMapping("/announcements")
@@ -123,6 +131,40 @@ public class AnnouncementController {
                 .listMine(CurrentUser.requirePublicId(), pageable)
                 .map(mapper::toAnnouncementDto);
         return responses.paged(result.getContent(), pageMapper.toMeta(result));
+    }
+
+    /**
+     * Fetches a single <b>published, citizen-visible</b> announcement by its public id — the public
+     * feed-detail read that lets the mobile/web feed-detail screen show the full body (title, full SW/EN
+     * body, author ref, published timestamp, audience/area). Closes the mobile agent's gap: previously only
+     * the lean {@link com.taarifu.communications.api.dto.FeedItemDto feed item} and the author-scoped
+     * {@code /announcements/mine} existed.
+     *
+     * <p><b>Authorization</b>: {@code permitAll()} — a published announcement is part of the <b>public
+     * civic graph</b> any guest may read (PRD §22.6, AC-T0 "view … announcements", SR-3 "active
+     * announcements"). All visibility is enforced <b>service-side</b>: {@link
+     * AnnouncementService#getPublicDetail(UUID)} returns the announcement only when it is {@code PUBLISHED}
+     * and within its publish/expiry window, and otherwise throws {@code NOT_FOUND} — so a draft, scheduled,
+     * expired, moderation-held, or soft-deleted announcement is <b>never leaked</b> (it 404s,
+     * indistinguishable from a non-existent id, avoiding an enumeration vector — PRD §18).</p>
+     *
+     * <p>WHY the public-read URL needs central registration: like {@code GET /petitions/{id}}, this is a
+     * GET that must be added to the security allow-list so it is reachable unauthenticated — flagged under
+     * <b>CENTRAL INTEGRATION NEEDS</b> (this module must not edit {@code SecurityConfig}). Until then the
+     * {@code @PreAuthorize("permitAll()")} permits the handler, but the URL filter still requires the
+     * central pattern registration to be reachable by a guest.</p>
+     *
+     * @param publicId the announcement's public id.
+     * @return {@code 200} + the full {@link AnnouncementDto}, or {@code 404} if not publicly visible.
+     */
+    @GetMapping("/{publicId}")
+    @PreAuthorize("permitAll()")
+    @Operation(summary = "Get a published announcement by id",
+            description = "Public read. Only PUBLISHED, in-window announcements are returned; "
+                    + "drafts/scheduled/expired/held → 404 (never leaked).")
+    public ApiResponse<AnnouncementDto> get(@PathVariable UUID publicId) {
+        Announcement announcement = announcementService.getPublicDetail(publicId);
+        return responses.ok(mapper.toAnnouncementDto(announcement));
     }
 
     /**

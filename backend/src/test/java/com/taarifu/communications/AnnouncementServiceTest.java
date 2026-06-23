@@ -6,12 +6,14 @@ import com.taarifu.communications.api.event.AnnouncementPublished;
 import com.taarifu.communications.application.service.AnnouncementService;
 import com.taarifu.communications.domain.model.Announcement;
 import com.taarifu.communications.domain.model.enums.AnnouncementStatus;
+import com.taarifu.communications.domain.model.enums.Channel;
 import com.taarifu.communications.domain.repository.AnnouncementRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.Instant;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -117,5 +119,106 @@ class AnnouncementServiceTest {
         assertThat(out.isModerationHeld()).isFalse();
         assertThat(out.getStatus()).isEqualTo(AnnouncementStatus.PUBLISHED);
         verify(events).publishEvent(any(AnnouncementPublished.class));
+    }
+
+    // --- getPublicDetail: the public citizen-readable visibility gate (PRD §22.6, SR-3) -------------------
+
+    @Test
+    void getPublicDetail_returnsLivePublishedAnnouncement() {
+        Announcement live = published(null, null); // no window bounds → live
+        when(announcementRepository.findByPublicId(any())).thenReturn(Optional.of(live));
+
+        Announcement out = service.getPublicDetail(UUID.randomUUID());
+
+        assertThat(out).isSameAs(live);
+        assertThat(out.getStatus()).isEqualTo(AnnouncementStatus.PUBLISHED);
+    }
+
+    @Test
+    void getPublicDetail_missingId_is404() {
+        when(announcementRepository.findByPublicId(any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getPublicDetail(UUID.randomUUID()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    @Test
+    void getPublicDetail_draft_is404_neverLeaked() {
+        // A DRAFT (e.g. moderation-held) must be indistinguishable from a missing id — the no-leak gate.
+        Announcement draft = Announcement.draft(author, "Rasimu", "Mwili", null);
+        draft.targetAudience(Set.of(area), null, null, Set.of(Channel.FEED));
+        when(announcementRepository.findByPublicId(any())).thenReturn(Optional.of(draft));
+
+        assertThatThrownBy(() -> service.getPublicDetail(UUID.randomUUID()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    @Test
+    void getPublicDetail_notYetLive_is404() {
+        // SCHEDULED-equivalent: PUBLISHED status but a future publishAt → not yet citizen-visible.
+        Instant future = clock.now().plusSeconds(3600);
+        Announcement notYet = published(future, future.plusSeconds(7200));
+        when(announcementRepository.findByPublicId(any())).thenReturn(Optional.of(notYet));
+
+        assertThatThrownBy(() -> service.getPublicDetail(UUID.randomUUID()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    @Test
+    void getPublicDetail_expired_is404() {
+        // expireAt in the past → no longer an "active announcement" (SR-3) → hidden.
+        Instant pastStart = clock.now().minusSeconds(7200);
+        Announcement expired = published(pastStart, clock.now().minusSeconds(3600));
+        when(announcementRepository.findByPublicId(any())).thenReturn(Optional.of(expired));
+
+        assertThatThrownBy(() -> service.getPublicDetail(UUID.randomUUID()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    @Test
+    void getPublicDetail_atExpiryBoundary_is404() {
+        // expireAt == now is exclusive (window is [publishAt, expireAt)) → already hidden.
+        Instant pastStart = clock.now().minusSeconds(3600);
+        Announcement boundary = published(pastStart, clock.now());
+        when(announcementRepository.findByPublicId(any())).thenReturn(Optional.of(boundary));
+
+        assertThatThrownBy(() -> service.getPublicDetail(UUID.randomUUID()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    /**
+     * Builds a {@code PUBLISHED} announcement with the given window for the public-detail gate assertions.
+     *
+     * <p>The lifecycle status is forced to {@code PUBLISHED} <b>independently of the window</b> so that the
+     * service's own visibility predicate — not the domain {@code publish()} transition — is what's under
+     * test: {@code getPublicDetail} must hide a row that is {@code PUBLISHED} yet has a future
+     * {@code publishAt} or a past {@code expireAt} on its own. We therefore drive the transition with an
+     * instant at/after {@code publishAt} (so {@code publish()} chooses {@code PUBLISHED}) and only then set
+     * the real window via {@code schedule()}.</p>
+     *
+     * @param publishAt the publish instant stored on the row (may be future to model not-yet-live), or
+     *                  {@code null} for "immediately".
+     * @param expireAt  the expiry instant, or {@code null} for no expiry.
+     * @return a PUBLISHED announcement targeting {@code area} over {@code FEED}.
+     */
+    private Announcement published(Instant publishAt, Instant expireAt) {
+        Announcement a = Announcement.draft(author, "Tangazo", "Mwili", "Body");
+        a.targetAudience(Set.of(area), null, null, Set.of(Channel.FEED));
+        // Transition to PUBLISHED using an instant that is not before publishAt, so publish() picks
+        // PUBLISHED (not SCHEDULED) — the lifecycle is forced live regardless of the window we then set.
+        Instant transitionAt = publishAt == null ? clock.now() : publishAt;
+        a.schedule(publishAt, expireAt);
+        a.publish(transitionAt);
+        return a;
     }
 }

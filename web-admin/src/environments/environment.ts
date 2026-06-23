@@ -17,9 +17,13 @@ export const environment = {
    */
   apiUrl: 'http://localhost:8081/api/v1',
 
-  /** Default UI locale (Swahili-first per PRD §14, CLAUDE.md §5). */
-  defaultLocale: 'sw',
+  /**
+   * Default UI locale. The **admin console is English-first** (operators/staff context); the
+   * Swahili-first mandate (PRD §14) applies to the citizen-facing **mobile** app, not this back-office.
+   * Swahili remains available via the language toggle.
+   */
+  defaultLocale: 'en',
 
-  /** Fallback locale used when a key is missing in the active locale (SW → EN → key chain). */
+  /** Fallback locale used when a key is missing in the active locale (EN → key chain). */
   fallbackLocale: 'en',
 };

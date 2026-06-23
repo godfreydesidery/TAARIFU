@@ -1,9 +1,11 @@
 package com.taarifu.identity.domain.model;
 
 import com.taarifu.common.domain.model.BaseEntity;
+import com.taarifu.common.infrastructure.persistence.EncryptedStringConverter;
 import com.taarifu.identity.domain.model.enums.TrustTier;
 import com.taarifu.identity.domain.model.enums.UserStatus;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -79,6 +81,24 @@ public class User extends BaseEntity {
     @Column(name = "mfa_enabled", nullable = false)
     private boolean mfaEnabled = false;
 
+    /**
+     * The <b>active</b> Base32 TOTP secret — set on {@code activate}, used to verify the staff second
+     * factor (N-4). <b>Field-encrypted</b> at rest via {@link EncryptedStringConverter} (the DB stores
+     * ciphertext); never logged or serialised (S-4). {@code null} until MFA is activated.
+     */
+    @Convert(converter = EncryptedStringConverter.class)
+    @Column(name = "mfa_totp_secret", length = 512)
+    private String mfaTotpSecret;
+
+    /**
+     * A <b>provisional</b> Base32 TOTP secret set at {@code setup}, <b>before</b> activation —
+     * field-encrypted, never logged (S-4). Kept separate from {@link #mfaTotpSecret} so an un-activated
+     * secret can never satisfy a login; {@code activate} promotes it to the active secret (§2.3).
+     */
+    @Convert(converter = EncryptedStringConverter.class)
+    @Column(name = "mfa_pending_secret", length = 512)
+    private String mfaPendingSecret;
+
     /** Last successful login instant (UTC); {@code null} until first login. */
     @Column(name = "last_login_at")
     private Instant lastLoginAt;
@@ -136,6 +156,42 @@ public class User extends BaseEntity {
     /** Records the instant of a successful login. */
     public void recordLogin(Instant when) {
         this.lastLoginAt = when;
+    }
+
+    /**
+     * Stores the provisional TOTP secret produced at {@code setup} (before activation). Encrypted at
+     * rest by the column converter; never logged (S-4).
+     *
+     * @param mfaPendingSecret the Base32 secret, or {@code null} to clear it.
+     */
+    public void setMfaPendingSecret(String mfaPendingSecret) {
+        this.mfaPendingSecret = mfaPendingSecret;
+    }
+
+    /** @return the provisional (un-activated) TOTP secret, or {@code null}. Handle as a secret — never log. */
+    public String getMfaPendingSecret() {
+        return mfaPendingSecret;
+    }
+
+    /** @return the active TOTP secret used to verify the staff second factor, or {@code null}. Never log. */
+    public String getMfaTotpSecret() {
+        return mfaTotpSecret;
+    }
+
+    /**
+     * Activates MFA: promotes the provisional secret to the active secret, clears the pending slot, and
+     * sets {@code mfaEnabled=true} (§2.3). After this the account must complete a TOTP step to hold a
+     * staff session (N-4).
+     *
+     * @throws IllegalStateException if no provisional secret was set by a prior {@code setup}.
+     */
+    public void enableMfa() {
+        if (this.mfaPendingSecret == null) {
+            throw new IllegalStateException("No pending TOTP secret to activate");
+        }
+        this.mfaTotpSecret = this.mfaPendingSecret;
+        this.mfaPendingSecret = null;
+        this.mfaEnabled = true;
     }
 
     /** @return the unique E.164 phone (account key). */

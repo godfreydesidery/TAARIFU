@@ -47,6 +47,7 @@ spring:
 
 # --- Server: versioned API root /api/v1 (ARCHITECTURE §5.4). ---
 server:
+  port: ${SERVER_PORT:8081}   # 8081 by default; 8080 left free for other local services. Override via SERVER_PORT.
   servlet:
     context-path: /api/v1
   error:
@@ -94,6 +95,19 @@ taarifu:
     otp:
       # OTP lifetime in seconds (single-use, attempt-capped). 5 min default (AUTH-DESIGN §9, §25.1).
       ttl-seconds: ${TAARIFU_OTP_TTL_SECONDS:300}
+    mfa:
+      # Staff TOTP second factor (N-4). RFC 6238 step (30s) + MFA_CHALLENGE token TTL (~5 min).
+      totp:
+        step-seconds: ${TAARIFU_MFA_TOTP_STEP_SECONDS:30}
+      challenge:
+        ttl-seconds: ${TAARIFU_MFA_CHALLENGE_TTL_SECONDS:300}
+  identity:
+    verification:
+      # Pluggable identity verification (D-Q2): 'operator-assisted' (default, MVP queue) or 'auto-stub'.
+      provider: ${TAARIFU_VERIFICATION_PROVIDER:operator-assisted}
+    electoral:
+      # Manual isElectoral change cooldown in days (~6 months, D13/§25.4); voter-ID set bypasses it.
+      cooldown-days: ${TAARIFU_ELECTORAL_COOLDOWN_DAYS:183}
   geography:
     # Active Geocoder adapter: 'postgis' (default, source of truth) or 'stub' (dev/test).
     geocoder: ${TAARIFU_GEOCODER:postgis}

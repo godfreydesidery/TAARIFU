@@ -153,9 +153,11 @@ class AuthFlowIntegrationTest extends AbstractPostgisIntegrationTest {
 
         UUID loginChallenge = loginService.requestLoginOtp(phone);
         String loginCode = requestAndReadCode(loginChallenge, phone);
-        TokenService.TokenPair pair = loginService.loginWithOtp(loginChallenge, loginCode);
+        // A plain citizen (no staff role, no MFA) completes login directly — no second factor (N-4).
+        LoginService.LoginOutcome outcome = loginService.loginWithOtp(loginChallenge, loginCode);
 
-        assertThat(pair.accessToken()).isNotBlank();
+        assertThat(outcome.mfaRequired()).isFalse();
+        assertThat(outcome.tokens().accessToken()).isNotBlank();
         assertThat(auditCount(AuditEventType.AUTH_LOGIN_SUCCEEDED)).isGreaterThanOrEqualTo(1);
     }
 

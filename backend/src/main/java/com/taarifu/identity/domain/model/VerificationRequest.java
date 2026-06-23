@@ -76,6 +76,70 @@ public class VerificationRequest extends BaseEntity {
     protected VerificationRequest() {
     }
 
+    /**
+     * Creates a new {@link VerificationStatus#PENDING} request routed to the operator-assisted queue
+     * (Flow 2). The actual ID PII lives encrypted on the {@link Profile}; this request holds only the
+     * subject, the kind, and an object-store {@code evidenceRef} — never document bytes (PRD §18).
+     *
+     * @param subject     the account being verified.
+     * @param type        what is being verified (this increment wires {@link VerificationType#ID}).
+     * @param evidenceRef object-store key to the submitted evidence, or {@code null} if out-of-band.
+     * @return the populated, transient {@code PENDING} request.
+     */
+    public static VerificationRequest submit(User subject, VerificationType type, String evidenceRef) {
+        VerificationRequest r = new VerificationRequest();
+        r.subject = subject;
+        r.type = type;
+        r.status = VerificationStatus.PENDING;
+        r.evidenceRef = evidenceRef;
+        return r;
+    }
+
+    /**
+     * Approves this request (Moderator decision — Flow 3). Records the reviewer, the optional note, and
+     * the decision instant, and moves the status to {@link VerificationStatus#APPROVED}. The caller (the
+     * review service) is responsible for the side effects (flip {@code idVerified}, set authoritative
+     * electoral, audit) — this method only transitions the request's own state.
+     *
+     * @param reviewerPublicId the deciding Moderator's public id (multi-hat audit, D16).
+     * @param note             an optional operator note.
+     * @param now              the decision instant (UTC, from the injected clock).
+     * @throws IllegalStateException if the request is not currently {@code PENDING} (no re-deciding).
+     */
+    public void approve(UUID reviewerPublicId, String note, Instant now) {
+        requirePending();
+        this.status = VerificationStatus.APPROVED;
+        this.reviewerPublicId = reviewerPublicId;
+        this.reviewNote = note;
+        this.decidedAt = now;
+    }
+
+    /**
+     * Rejects this request (Moderator decision — Flow 3) with a reason code. The subject's tier is left
+     * untouched (a rejection never grants nor removes tier; {@code idVerified} stays false).
+     *
+     * @param reviewerPublicId the deciding Moderator's public id.
+     * @param reasonCode       the machine rejection reason (stored in {@link #reviewNote}'s lead).
+     * @param note             an optional operator note appended after the reason code.
+     * @param now              the decision instant (UTC).
+     * @throws IllegalStateException if the request is not currently {@code PENDING}.
+     */
+    public void reject(UUID reviewerPublicId, String reasonCode, String note, Instant now) {
+        requirePending();
+        this.status = VerificationStatus.REJECTED;
+        this.reviewerPublicId = reviewerPublicId;
+        // Store the machine reason first so it is greppable; the free-text note (if any) follows.
+        this.reviewNote = note == null ? reasonCode : reasonCode + ": " + note;
+        this.decidedAt = now;
+    }
+
+    /** Guards the single legal transition source: a decision may only be made on a PENDING request. */
+    private void requirePending() {
+        if (this.status != VerificationStatus.PENDING) {
+            throw new IllegalStateException("Verification request is not PENDING: " + this.status);
+        }
+    }
+
     /** @return the account being verified. */
     public User getSubject() {
         return subject;

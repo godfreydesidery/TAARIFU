@@ -118,6 +118,52 @@ public class OtpService {
     }
 
     /**
+     * Issues an email-channel OTP challenge (the cheaper T2 contact-verify channel, AUTH-DESIGN §15).
+     *
+     * <p>Reuses <b>all</b> existing OTP machinery — code hashing, single-use, the durable attempt cap,
+     * send-rate limiting, anti-enumeration — with zero new OTP logic (VERIFICATION-DESIGN §2.4). Until the
+     * dedicated {@code EmailSender} adapter lands (communications increment), delivery rides the same
+     * {@link SmsGateway} seam (the dev stub delivers email-channel codes identically; the {@code recipient}
+     * is the email). The code is never logged (S-4).</p>
+     *
+     * @param email   the destination email (never logged).
+     * @param purpose the flow this code authorises (typically {@link OtpPurpose#VERIFY}).
+     * @param user    the owning account.
+     * @return the new challenge's public id.
+     * @throws ApiException {@link ErrorCode#RATE_LIMITED} if the send-rate cap is exceeded.
+     */
+    @Transactional
+    public UUID issueEmail(String email, OtpPurpose purpose, User user) {
+        String recipientHash = crypto.blindIndex(email);
+        if (!rateLimiter.allowOtpSend(recipientHash)) {
+            audit.record(AuditEvent.Builder
+                    .of(AuditEventType.AUTH_OTP_REQUESTED, AuditOutcome.DENIED)
+                    .reason("RATE_LIMITED").build());
+            throw new ApiException(ErrorCode.RATE_LIMITED);
+        }
+
+        String code = generateCode();
+        OtpChallenge challenge = OtpChallenge.create(
+                null, email, purpose, OtpChannel.EMAIL,
+                crypto.blindIndex(code), clock.now().plus(ttl), MAX_ATTEMPTS, user);
+        challengeRepository.save(challenge);
+
+        // Same delivery seam as SMS until the EmailSender adapter lands; the code is never logged (S-4).
+        smsGateway.send(new SmsGateway.SmsMessage(
+                email,
+                buildBody(code, purpose),
+                purpose.name() + "_EMAIL_OTP",
+                challenge.getPublicId().toString()));
+
+        audit.record(AuditEvent.Builder
+                .of(AuditEventType.AUTH_OTP_REQUESTED, AuditOutcome.SUCCESS)
+                .reason(purpose.name())
+                .detailRef("email_hash:" + recipientHash)   // ref/hash only, never the raw email (S-4)
+                .build());
+        return challenge.getPublicId();
+    }
+
+    /**
      * Verifies a presented code against a challenge (single-use, attempt-capped, TTL-bounded).
      *
      * <p><b>N-1 (P2) — durable failed-attempt counter.</b> WHY {@code noRollbackFor = ApiException.class}:

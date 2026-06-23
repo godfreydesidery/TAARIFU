@@ -56,16 +56,16 @@ docker run --name taarifu-db -e POSTGRES_DB=taarifu -e POSTGRES_USER=taarifu \
 ./mvnw spring-boot:run
 ```
 
-- API root: `http://localhost:8080/api/v1`
-- Swagger UI: `http://localhost:8080/api/v1/swagger-ui.html`
-- OpenAPI JSON: `http://localhost:8080/api/v1/openapi.json`
-- Health: `http://localhost:8080/api/v1/actuator/health`
+- API root: `http://localhost:8081/api/v1`
+- Swagger UI: `http://localhost:8081/api/v1/swagger-ui.html`
+- OpenAPI JSON: `http://localhost:8081/api/v1/openapi.json`
+- Health: `http://localhost:8081/api/v1/actuator/health`
 
 Sample public reads (no auth required):
 
 ```bash
-curl http://localhost:8080/api/v1/regions
-curl "http://localhost:8080/api/v1/locations/resolve?lat=-3.07&lng=37.35"
+curl http://localhost:8081/api/v1/regions
+curl "http://localhost:8081/api/v1/locations/resolve?lat=-3.07&lng=37.35"
 ```
 
 ## Test

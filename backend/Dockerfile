@@ -31,11 +31,11 @@ USER taarifu
 # Copy the built jar from the build stage.
 COPY --from=build /workspace/target/taarifu-backend-*.jar /app/app.jar
 
-# The API listens on 8080 (context-path /api/v1 is set in application.yml).
-EXPOSE 8080
+# The API listens on 8081 (context-path /api/v1 is set in application.yml).
+EXPOSE 8081
 
 # Container health uses the actuator liveness probe.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-  CMD wget -qO- http://localhost:8080/api/v1/actuator/health/liveness || exit 1
+  CMD wget -qO- http://localhost:8081/api/v1/actuator/health/liveness || exit 1
 
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

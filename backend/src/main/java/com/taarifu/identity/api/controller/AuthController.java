@@ -4,11 +4,13 @@ import com.taarifu.common.api.ResponseFactory;
 import com.taarifu.common.api.dto.ApiResponse;
 import com.taarifu.common.security.CurrentUser;
 import com.taarifu.identity.api.dto.AuthResultDto;
+import com.taarifu.identity.api.dto.LoginResultDto;
 import com.taarifu.identity.api.dto.OtpChallengeDto;
 import com.taarifu.identity.api.dto.OtpRequestDto;
 import com.taarifu.identity.api.dto.PasswordLoginDto;
 import com.taarifu.identity.api.dto.RefreshRequestDto;
 import com.taarifu.identity.api.dto.TokenPairDto;
+import com.taarifu.identity.api.dto.TotpLoginDto;
 import com.taarifu.identity.api.dto.VerifyOtpDto;
 import com.taarifu.identity.application.service.LoginService;
 import com.taarifu.identity.application.service.SignupService;
@@ -105,28 +107,45 @@ public class AuthController {
     }
 
     /**
-     * Password login by phone or email.
+     * Password login by phone or email. For a staff/MFA account this returns {@code mfaRequired=true} and
+     * an {@code mfaToken} (the TOTP second factor must be completed at {@code /auth/login/totp}, N-4) —
+     * <b>no</b> token pair is issued here.
      *
      * @param request account key + password.
-     * @return {@code 200} + the token pair.
+     * @return {@code 200} + the login result (token pair, or an MFA challenge for staff).
      */
     @PostMapping("/login/password")
-    public ResponseEntity<ApiResponse<TokenPairDto>> loginWithPassword(
+    public ResponseEntity<ApiResponse<LoginResultDto>> loginWithPassword(
             @Valid @RequestBody PasswordLoginDto request) {
-        TokenService.TokenPair pair = loginService.loginWithPassword(request.accountKey(), request.password());
-        return ResponseEntity.ok(responses.ok(toDto(pair)));
+        LoginService.LoginOutcome outcome =
+                loginService.loginWithPassword(request.accountKey(), request.password());
+        return ResponseEntity.ok(responses.ok(toDto(outcome)));
     }
 
     /**
-     * Passwordless OTP login.
+     * Passwordless OTP login. For a staff/MFA account this returns an MFA challenge (N-4), not a pair.
      *
      * @param request challenge id + code.
-     * @return {@code 200} + the token pair.
+     * @return {@code 200} + the login result (token pair, or an MFA challenge for staff).
      */
     @PostMapping("/login/otp")
-    public ResponseEntity<ApiResponse<TokenPairDto>> loginWithOtp(
+    public ResponseEntity<ApiResponse<LoginResultDto>> loginWithOtp(
             @Valid @RequestBody VerifyOtpDto request) {
-        TokenService.TokenPair pair = loginService.loginWithOtp(request.challengeId(), request.code());
+        LoginService.LoginOutcome outcome = loginService.loginWithOtp(request.challengeId(), request.code());
+        return ResponseEntity.ok(responses.ok(toDto(outcome)));
+    }
+
+    /**
+     * Staff second-factor login step (N-4): exchanges the {@code MFA_CHALLENGE} token + TOTP code for the
+     * real token pair. Public (it carries the challenge token, not a prior access token).
+     *
+     * @param request the MFA challenge token + the TOTP code.
+     * @return {@code 200} + the issued token pair.
+     */
+    @PostMapping("/login/totp")
+    public ResponseEntity<ApiResponse<TokenPairDto>> loginWithTotp(
+            @Valid @RequestBody TotpLoginDto request) {
+        TokenService.TokenPair pair = loginService.completeTotpLogin(request.mfaToken(), request.totp());
         return ResponseEntity.ok(responses.ok(toDto(pair)));
     }
 
@@ -170,5 +189,13 @@ public class AuthController {
 
     private static TokenPairDto toDto(TokenService.TokenPair pair) {
         return new TokenPairDto(pair.accessToken(), pair.refreshToken());
+    }
+
+    /** Maps a first-factor outcome to the wire DTO: a token pair, or an MFA challenge for staff (N-4). */
+    private static LoginResultDto toDto(LoginService.LoginOutcome outcome) {
+        return new LoginResultDto(
+                outcome.mfaRequired(),
+                outcome.tokens() == null ? null : toDto(outcome.tokens()),
+                outcome.mfaToken());
     }
 }

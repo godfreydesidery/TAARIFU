@@ -55,6 +55,13 @@ public enum ErrorCode {
     /** National/voter-ID dedup violation — one person, one account (PRD §6.4, D15). */
     DUPLICATE_IDENTITY(HttpStatus.CONFLICT, "common.duplicateIdentity"),
 
+    /**
+     * A staff account (MODERATOR/ADMIN/ROOT) must complete a TOTP second factor before holding a staff
+     * session or reaching a staff endpoint (N-4). Surfaced when login cannot complete without TOTP and
+     * the account has not yet enrolled, directing it to {@code /auth/mfa/totp/setup} → {@code activate}.
+     */
+    MFA_REQUIRED(HttpStatus.FORBIDDEN, "common.mfaRequired"),
+
     /** Rate/velocity/quota limit exceeded (PRD §18, §23 free-quota). */
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "common.rateLimited"),
 

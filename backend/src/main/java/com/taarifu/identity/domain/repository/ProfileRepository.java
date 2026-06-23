@@ -50,4 +50,15 @@ public interface ProfileRepository extends JpaRepository<Profile, Long> {
      * @return {@code true} if a profile already exists for that identity (fast dedup guard).
      */
     boolean existsByIdHash(String idHash);
+
+    /**
+     * Dedup guard for verification submit (D15): is this identity already bound to a <b>different</b>
+     * account? Excluding the caller's own profile lets a citizen (re)submit their <b>own</b> ID without a
+     * false {@code DUPLICATE_IDENTITY}, while still blocking a second account claiming the same ID.
+     *
+     * @param idHash the blind-index hash over {@code idType + ":" + idNo}.
+     * @param user   the submitting caller's account (their own profile is excluded from the match).
+     * @return {@code true} if another account already holds this identity (→ {@code DUPLICATE_IDENTITY}).
+     */
+    boolean existsByIdHashAndUserNot(String idHash, User user);
 }

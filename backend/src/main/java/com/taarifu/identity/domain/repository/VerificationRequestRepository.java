@@ -35,4 +35,29 @@ public interface VerificationRequestRepository extends JpaRepository<Verificatio
      * @return that account's verification requests.
      */
     List<VerificationRequest> findBySubject(User subject);
+
+    /**
+     * The reviewer queue, narrowed to a status and type (e.g. PENDING ID requests for the Moderator
+     * queue). Scope filtering (the caller's area scope) is applied in the service over this set, since
+     * the subject's ward must be resolved through the identity model (kept out of the repository).
+     *
+     * @param status the review status (typically {@link VerificationStatus#PENDING}).
+     * @param type   the verification kind (this increment lists {@code ID}).
+     * @return matching requests, newest first by surrogate id.
+     */
+    List<VerificationRequest> findByStatusAndTypeOrderByIdDesc(VerificationStatus status,
+                                                               com.taarifu.identity.domain.model.enums.VerificationType type);
+
+    /**
+     * Idempotency / no-duplicate-queue-entry guard (Flow 2): is there already an in-flight request of
+     * this type for this subject? A second submit while one is {@code PENDING} returns the existing one.
+     *
+     * @param subject the account being verified.
+     * @param type    the verification kind.
+     * @param status  the status to match (typically {@link VerificationStatus#PENDING}).
+     * @return the existing in-flight request, or empty.
+     */
+    Optional<VerificationRequest> findFirstBySubjectAndTypeAndStatus(
+            User subject, com.taarifu.identity.domain.model.enums.VerificationType type,
+            VerificationStatus status);
 }

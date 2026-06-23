@@ -182,6 +182,44 @@ public class Profile extends BaseEntity {
         this.phoneVerified = true;
     }
 
+    /**
+     * Records the submitted government identity at verification submit (Flow 2). The {@code idNo} is
+     * encrypted by the column converter; the {@code idHash} is the blind index that backs the unique
+     * dedup constraint (D15). This does <b>not</b> set {@code idVerified} — submitting is not being
+     * verified (tier is unchanged until a reviewer approves, PRD §25.5). The plaintext {@code idNo} is
+     * never logged (S-4).
+     *
+     * @param idType the government ID document type (NIDA/voter/passport).
+     * @param idNo   the document number (PII — stored encrypted, never logged).
+     * @param idHash the deterministic blind index over {@code idType + ":" + idNo} (D15).
+     */
+    public void setIdentity(IdType idType, String idNo, String idHash) {
+        this.idType = idType;
+        this.idNo = idNo;
+        this.idHash = idHash;
+    }
+
+    /**
+     * Marks the government ID verified (on Moderator approval — Flow 3). Setting this flip is what makes
+     * the <b>live</b> {@code TierService} return T3 the next time it resolves (MF-2) — no tier is set
+     * here directly. Stamps {@link #verifiedAt}.
+     *
+     * @param now the verification instant (UTC, from the injected clock).
+     */
+    public void markIdVerified(Instant now) {
+        this.idVerified = true;
+        this.verifiedAt = now;
+    }
+
+    /**
+     * Revokes ID verification (fraud/erasure — §25.5). The live tier immediately drops back to T2 on the
+     * next resolve (no token reissue needed, since the tier claim is never trusted, MF-2); prior actions
+     * taken while T3 stand (PRD §25.5).
+     */
+    public void revokeIdVerified() {
+        this.idVerified = false;
+    }
+
     /** @return the owning account. */
     public User getUser() {
         return user;

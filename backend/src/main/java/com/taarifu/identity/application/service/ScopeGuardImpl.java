@@ -98,7 +98,11 @@ public class ScopeGuardImpl implements ScopeGuard {
     /** {@inheritDoc} */
     @Override
     public boolean isNotSelf(UUID subjectPublicId) {
-        // Deny-by-default: with no authenticated caller this cannot be a permitted "act on other".
+        // Deny-by-default: with no authenticated caller, or an unresolved subject, this cannot be a
+        // permitted "act on other" — a null subject (e.g. a request not found) must NOT pass the check.
+        if (subjectPublicId == null) {
+            return false;
+        }
         return CurrentUser.current()
                 .map(cu -> !cu.publicId().equals(subjectPublicId))
                 .orElse(false);

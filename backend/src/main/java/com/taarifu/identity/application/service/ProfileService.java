@@ -6,13 +6,11 @@ import com.taarifu.common.audit.AuditOutcome;
 import com.taarifu.common.audit.domain.model.AuditEvent;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
-import com.taarifu.geography.application.service.GeographyQueryService;
 import com.taarifu.identity.domain.model.Profile;
-import com.taarifu.identity.domain.model.ProfileLocation;
 import com.taarifu.identity.domain.model.User;
 import com.taarifu.identity.domain.model.enums.AssociationType;
+import com.taarifu.identity.domain.model.enums.OtpPurpose;
 import com.taarifu.identity.domain.model.enums.TrustTier;
-import com.taarifu.identity.domain.repository.ProfileLocationRepository;
 import com.taarifu.identity.domain.repository.ProfileRepository;
 import com.taarifu.identity.domain.repository.UserRepository;
 import org.springframework.stereotype.Service;
@@ -25,43 +23,44 @@ import java.util.UUID;
  * Profile read + completion path to trust-tier T2 (AUTH-DESIGN §6, ADR-0011 §1).
  *
  * <p>Responsibility: serves the caller's own profile ({@code GET /me}) and drives T1→T2 by completing
- * the profile — names/demographics and at least one pinned {@link ProfileLocation}. After every
- * tier-affecting change it recomputes the live tier via {@link TierService} and caches it on the
- * {@link User} (the cache is a token hint only — gating always re-resolves live, MF-2). It never returns
- * another user's profile or any {@code idNo}/location of others, and never logs PII values (S-4).</p>
+ * the profile — names/demographics, the email-OTP contact-verify channel, and (via
+ * {@link LocationService}) at least one pinned location. After every tier-affecting change it recomputes
+ * the live tier via {@link TierService} and caches it on the {@link User} (the cache is a token hint
+ * only — gating always re-resolves live, MF-2). It never returns another user's profile or any
+ * {@code idNo}/location of others, and never logs PII values (S-4).</p>
  *
- * <p>The single-primary rule (D12) is upheld here: pinning a new primary first clears any existing
- * primary (the DB partial-unique index is the hard backstop).</p>
+ * <p>The {@code ProfileLocation} lifecycle (add/remove/set-primary/set-electoral, D12/D13) lives in
+ * {@link LocationService} (SRP, VERIFICATION-DESIGN §2); {@link #pinLocation} delegates to it.</p>
  */
 @Service
 public class ProfileService {
 
     private final UserRepository userRepository;
     private final ProfileRepository profileRepository;
-    private final ProfileLocationRepository profileLocationRepository;
-    private final GeographyQueryService geographyQueryService;
     private final TierService tierService;
+    private final OtpService otpService;
+    private final LocationService locationService;
     private final AuditEventService audit;
 
     /**
-     * @param userRepository            account lookup.
-     * @param profileRepository         profile persistence.
-     * @param profileLocationRepository location persistence (private PII).
-     * @param geographyQueryService     geography public API for ward→constituency pin resolution.
-     * @param tierService               live tier recompute + cache.
-     * @param audit                     append-only audit writer.
+     * @param userRepository    account lookup.
+     * @param profileRepository profile persistence.
+     * @param tierService       live tier recompute + cache.
+     * @param otpService        OTP issue/verify (the EMAIL VERIFY channel for T2 contact verification).
+     * @param locationService   {@code ProfileLocation} lifecycle (SRP — pin/remove/primary/electoral).
+     * @param audit             append-only audit writer.
      */
     public ProfileService(UserRepository userRepository,
                           ProfileRepository profileRepository,
-                          ProfileLocationRepository profileLocationRepository,
-                          GeographyQueryService geographyQueryService,
                           TierService tierService,
+                          OtpService otpService,
+                          LocationService locationService,
                           AuditEventService audit) {
         this.userRepository = userRepository;
         this.profileRepository = profileRepository;
-        this.profileLocationRepository = profileLocationRepository;
-        this.geographyQueryService = geographyQueryService;
         this.tierService = tierService;
+        this.otpService = otpService;
+        this.locationService = locationService;
         this.audit = audit;
     }
 
@@ -117,9 +116,9 @@ public class ProfileService {
     }
 
     /**
-     * Pins a ward location to the caller's profile (PRIVATE PII). Resolves the ward + effective
-     * constituency through the geography public API; if {@code primary} is set, clears any existing
-     * primary first (single-primary, D12). Recomputes the live tier (the ≥1-pin half of T2).
+     * Pins a ward location to the caller's profile (the ≥1-pin half of T2). Delegates the
+     * {@code ProfileLocation} lifecycle to {@link LocationService} (SRP, VERIFICATION-DESIGN §2) and
+     * recomputes the live tier afterwards.
      *
      * @param userPublicId    the authenticated account.
      * @param wardPublicId    the ward to pin (minimum granularity, PRD §9.0).
@@ -130,20 +129,64 @@ public class ProfileService {
     @Transactional
     public TrustTier pinLocation(UUID userPublicId, UUID wardPublicId,
                                  AssociationType associationType, boolean primary) {
+        locationService.addLocation(userPublicId, wardPublicId, associationType, primary);
         User user = requireUser(userPublicId);
         Profile profile = profileRepository.findByUser(user)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND));
+        return recomputeTier(user, profile);
+    }
 
-        GeographyQueryService.WardPin pin = geographyQueryService.resolveWardPin(wardPublicId);
+    /**
+     * Requests an EMAIL VERIFY OTP for the caller's contact-channel verification (T2 path,
+     * VERIFICATION-DESIGN §3). The email is recorded on the account so the verified channel can be
+     * matched on verify. Returns the challenge id (never reveals delivery details; the code is never
+     * logged — S-4).
+     *
+     * @param userPublicId the authenticated account.
+     * @param email        the destination email to verify.
+     * @return the OTP challenge public id.
+     */
+    @Transactional
+    public UUID requestEmailVerification(UUID userPublicId, String email) {
+        User user = requireUser(userPublicId);
+        // Record the email so verify can mark the channel; not unique (login alias semantics, see User).
+        user.setEmail(email);
+        return otpService.issueEmail(email, OtpPurpose.VERIFY, user);
+    }
 
-        if (primary) {
-            // Single-primary (D12): demote any existing primary before setting the new one.
-            profileLocationRepository.findByProfileAndPrimaryTrue(profile)
-                    .ifPresent(ProfileLocation::clearPrimary);
-        }
-        profileLocationRepository.save(
-                ProfileLocation.pin(profile, pin.ward(), pin.constituency(), associationType, primary));
+    /**
+     * Verifies an EMAIL VERIFY OTP → marks the profile's email verified → recomputes the live tier (may
+     * promote to T2 once name + ≥1 location are present). The client cannot self-assert T2 (MF-2).
+     *
+     * @param userPublicId the authenticated account.
+     * @param challengeId  the EMAIL VERIFY challenge id.
+     * @param code         the code the user entered.
+     * @return the recomputed live tier.
+     * @throws ApiException {@link ErrorCode#BAD_REQUEST} on a bad/expired/wrong code.
+     */
+    @Transactional
+    public TrustTier verifyEmail(UUID userPublicId, UUID challengeId, String code) {
+        User user = requireUser(userPublicId);
+        Profile profile = profileRepository.findByUser(user)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND));
+        // verify() consumes the challenge and throws on any bad/expired/wrong-code path (audited there).
+        otpService.verify(challengeId, code, OtpPurpose.VERIFY);
+        profile.markEmailVerified();
+        return recomputeTier(user, profile);
+    }
 
+    /**
+     * Recomputes + caches the caller's live tier (used after an out-of-band location change so the client
+     * sees a T2 promotion immediately). Server-computed; never client-asserted (MF-2).
+     *
+     * @param userPublicId the authenticated account.
+     * @return the recomputed live tier.
+     */
+    @Transactional
+    public TrustTier getMeTier(UUID userPublicId) {
+        User user = requireUser(userPublicId);
+        Profile profile = profileRepository.findByUser(user)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND));
         return recomputeTier(user, profile);
     }
 

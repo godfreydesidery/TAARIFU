@@ -81,6 +81,10 @@ public class SecurityConfig {
             "/api/v1/auth/login/password",
             "/api/v1/auth/login/otp",
             "/api/v1/auth/login/otp/request",
+            // Staff second-factor step (N-4): carries an MFA_CHALLENGE token (not a prior access token),
+            // so it cannot require authentication; it is anti-automation-protected like the other open
+            // login endpoints (AUTH-DESIGN §14.1, VERIFICATION-DESIGN §7.1/§9.5).
+            "/api/v1/auth/login/totp",
             "/api/v1/auth/refresh"
     };
 

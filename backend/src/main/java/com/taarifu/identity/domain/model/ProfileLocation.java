@@ -135,6 +135,29 @@ public class ProfileLocation extends BaseEntity {
         this.primary = false;
     }
 
+    /** Sets this as the single primary (default-context) location; the caller demotes any prior primary (D12). */
+    public void markPrimary() {
+        this.primary = true;
+    }
+
+    /**
+     * Marks this as the single electoral (binding-civic-weight) location and stamps the change instant
+     * for the cooldown (D13). The caller demotes any prior electoral in the same transaction (the DB
+     * partial-unique index {@code ux_profile_location_one_electoral} is the hard backstop against a race).
+     *
+     * @param now the change instant (UTC, from the injected clock) used to enforce the manual-change
+     *            cooldown on the next attempt.
+     */
+    public void markElectoral(Instant now) {
+        this.electoral = true;
+        this.electoralChangedAt = now;
+    }
+
+    /** Clears the electoral flag (when re-assigning the single electoral to another location, D13). */
+    public void clearElectoral() {
+        this.electoral = false;
+    }
+
     /** @return the owning profile. */
     public Profile getProfile() {
         return profile;

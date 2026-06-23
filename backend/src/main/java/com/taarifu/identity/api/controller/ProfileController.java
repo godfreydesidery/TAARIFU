@@ -4,12 +4,15 @@ import com.taarifu.common.api.ResponseFactory;
 import com.taarifu.common.api.dto.ApiResponse;
 import com.taarifu.common.security.CurrentUser;
 import com.taarifu.common.security.RequiresTier;
+import com.taarifu.identity.api.dto.EmailOtpRequestDto;
+import com.taarifu.identity.api.dto.OtpChallengeDto;
 import com.taarifu.identity.api.dto.MeDto;
-import com.taarifu.identity.api.dto.PinLocationDto;
 import com.taarifu.identity.api.dto.UpdateProfileDto;
+import com.taarifu.identity.api.dto.VerifyOtpDto;
 import com.taarifu.identity.application.service.ProfileService;
 import com.taarifu.identity.domain.model.enums.TrustTier;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -90,19 +93,37 @@ public class ProfileController {
     }
 
     /**
-     * Pins a ward location to the caller's profile (PRIVATE PII) — the ≥1-location half of T2.
+     * Requests an EMAIL VERIFY OTP for the caller's contact-channel verification (T2 path,
+     * VERIFICATION-DESIGN §3, §9.1). The email is recorded on the account; the code is delivered
+     * out-of-band and never appears in any response (S-4).
      *
-     * @param request the ward, association type, and primary flag.
-     * @return {@code 200} + the recomputed tier.
+     * @param request the destination email.
+     * @return {@code 202} + the OTP challenge id to verify against.
      */
-    @PostMapping("/me/locations")
+    @PostMapping("/me/email/otp")
     @PreAuthorize("isAuthenticated()")
     @RequiresTier("T1")
-    public ResponseEntity<ApiResponse<Map<String, String>>> pinLocation(
-            @Valid @RequestBody PinLocationDto request) {
-        TrustTier tier = profileService.pinLocation(
-                CurrentUser.requirePublicId(),
-                request.wardPublicId(), request.associationType(), request.primary());
+    public ResponseEntity<ApiResponse<OtpChallengeDto>> requestEmailOtp(
+            @Valid @RequestBody EmailOtpRequestDto request) {
+        UUID challengeId = profileService.requestEmailVerification(
+                CurrentUser.requirePublicId(), request.email());
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+                .body(responses.ok(new OtpChallengeDto(challengeId)));
+    }
+
+    /**
+     * Verifies the EMAIL VERIFY OTP → marks email verified → recomputes the live tier (may promote T2).
+     *
+     * @param request the challenge id + code.
+     * @return {@code 200} + the recomputed tier.
+     */
+    @PostMapping("/me/email/verify")
+    @PreAuthorize("isAuthenticated()")
+    @RequiresTier("T1")
+    public ResponseEntity<ApiResponse<Map<String, String>>> verifyEmailOtp(
+            @Valid @RequestBody VerifyOtpDto request) {
+        TrustTier tier = profileService.verifyEmail(
+                CurrentUser.requirePublicId(), request.challengeId(), request.code());
         return ResponseEntity.ok(responses.ok(Map.of("tier", tier.name())));
     }
 

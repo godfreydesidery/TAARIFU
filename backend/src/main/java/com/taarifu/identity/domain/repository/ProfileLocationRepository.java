@@ -34,4 +34,18 @@ public interface ProfileLocationRepository extends JpaRepository<ProfileLocation
      * @return the single electoral (binding-civic-weight) location, or empty (D13).
      */
     Optional<ProfileLocation> findByProfileAndElectoralTrue(Profile profile);
+
+    /**
+     * @param profile  the owning profile.
+     * @param publicId a location's public id.
+     * @return the matching location if it belongs to this profile (ownership guard), or empty.
+     */
+    Optional<ProfileLocation> findByProfileAndPublicId(Profile profile, java.util.UUID publicId);
+
+    /**
+     * @param profile the owning profile.
+     * @return the number of (non-deleted) locations the profile holds — used by the delete guard to
+     *         refuse removing the last location of a T2+ user (it would break the ≥1-pin T2 predicate).
+     */
+    long countByProfile(Profile profile);
 }

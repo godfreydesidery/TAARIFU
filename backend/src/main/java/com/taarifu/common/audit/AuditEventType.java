@@ -63,6 +63,29 @@ public enum AuditEventType {
     /** A citizen submitted ID/representative/organisation verification evidence (object-store ref). */
     AUTH_VERIFICATION_REQUESTED,
 
+    /** A Moderator approved an ID/rep/org verification request (actor=reviewer, subject=citizen, D16). */
+    AUTH_VERIFICATION_APPROVED,
+
+    /** A Moderator rejected a verification request ({@code reason_code} = rejection reason). */
+    AUTH_VERIFICATION_REJECTED,
+
+    /**
+     * The single {@code isElectoral} location was set/changed (manual or voter-ID-authoritative); the
+     * reason code is one of {@code MANUAL}, {@code VOTER_ID_AUTHORITATIVE}, {@code REDELIMITATION}, or
+     * (on a denied attempt) {@code COOLDOWN}/{@code AUTHORITATIVE_LOCKED} — voter-ID-authoritative,
+     * cooldown-guarded (D13, §25.4).
+     */
+    ELECTORAL_CHANGED,
+
+    /** A staff account completed the TOTP second factor at login ({@code reason_code="TOTP"}, N-4). */
+    AUTH_LOGIN_MFA,
+
+    /** TOTP MFA was activated for an account ({@code mfa_enabled=true}) — staff second factor enrolled. */
+    AUTH_MFA_ENROLLED,
+
+    /** A TOTP code was wrong at login/activate (anti-automation signal, S-2/N-4). */
+    AUTH_MFA_CHALLENGE_FAILED,
+
     /** A {@code @RequiresTier} gate denied an action (required vs live tier — MF-2 evidence). */
     AUTHZ_TIER_DENIED,
 

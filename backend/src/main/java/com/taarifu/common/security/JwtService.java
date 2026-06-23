@@ -73,6 +73,20 @@ public class JwtService {
     }
 
     /**
+     * Mints a very short-lived {@link TokenType#MFA_CHALLENGE} token for the staff second-factor step
+     * (N-4). It carries <b>no roles and no trust tier</b> and is verified like every other token
+     * (signature/iss/aud/exp/type), so it can only be presented to {@code POST /auth/login/totp} and
+     * never as an access token.
+     *
+     * @param subjectPublicId the authenticated-by-first-factor user's {@code publicId}.
+     * @param ttlSeconds      the challenge lifetime in seconds (~5 min; config-tunable).
+     * @return the serialised compact JWT.
+     */
+    public String issueMfaChallengeToken(UUID subjectPublicId, long ttlSeconds) {
+        return sign(subjectPublicId, TokenType.MFA_CHALLENGE, List.of(), null, ttlSeconds);
+    }
+
+    /**
      * Verifies a token's signature, expiry, issuer, audience, and {@link TokenType}.
      *
      * @param token        the compact JWT.
@@ -131,6 +145,12 @@ public class JwtService {
                     .subject(subject.toString())
                     .issuer(properties.issuer())
                     .audience(properties.audience())
+                    // A unique jti per token. WHY: without it, two tokens for the same subject+type minted
+                    // in the same second carry identical claims → identical serialised JWT → identical hash,
+                    // which collides on the unique refresh_token.token_hash index (e.g. signup then login of
+                    // a staff account within one second). The jti makes every token unique (standard JWT
+                    // hygiene); it is not validated on verify, so this is backward-compatible.
+                    .jwtID(UUID.randomUUID().toString())
                     .issueTime(Date.from(now))
                     .notBeforeTime(Date.from(now))
                     .expirationTime(Date.from(now.plusSeconds(ttlSeconds)))

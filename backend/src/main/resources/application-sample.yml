@@ -25,6 +25,14 @@
 # --- OTP (AUTH-DESIGN §9) ---
 # TAARIFU_OTP_TTL_SECONDS=300            # 5-minute single-use OTP lifetime
 
+# --- Staff TOTP / MFA (N-4, VERIFICATION-DESIGN §7) ---
+# TAARIFU_MFA_TOTP_STEP_SECONDS=30       # RFC 6238 TOTP step (authenticator default)
+# TAARIFU_MFA_CHALLENGE_TTL_SECONDS=300  # MFA_CHALLENGE token TTL (~5 min, two-step staff login)
+
+# --- Identity verification + electoral (D-Q2 / D13, VERIFICATION-DESIGN §4-§6) ---
+# TAARIFU_VERIFICATION_PROVIDER=operator-assisted  # or 'auto-stub' (dev/E2E); no NIDA dependency at launch
+# TAARIFU_ELECTORAL_COOLDOWN_DAYS=183    # ~6-month manual isElectoral change cooldown (voter-ID bypasses)
+
 # --- CORS allow-list (PRD §18) ---
 # Comma-separated EXACT origins. Never use '*' with credentials.
 # TAARIFU_CORS_ORIGINS=https://admin.taarifu.example,https://app.taarifu.example

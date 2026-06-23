@@ -1,0 +1,55 @@
+<!-- Create/edit a parliament term. -->
+<section style="max-width: 640px">
+  <h1 class="h3 mb-3">{{ (isEdit ? 'institutions.editParliament' : 'institutions.newParliament') | translate }}</h1>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+    </div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+      <div class="row">
+        <div class="col-md-4 mb-3">
+          <label class="form-label" for="p-term">{{ 'institutions.term' | translate }}</label>
+          <input id="p-term" type="number" min="1" class="form-control" formControlName="termNumber" />
+        </div>
+        <div class="col-md-8 mb-3">
+          <label class="form-label" for="p-name">{{ 'institutions.name' | translate }}</label>
+          <input id="p-name" type="text" class="form-control" formControlName="name" />
+          @if (form.controls.name.touched && form.controls.name.invalid) {
+            <div class="text-danger small">{{ form.controls.name.getError('server') || ('common.required' | translate) }}</div>
+          }
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="p-legislature">{{ 'institutions.legislature' | translate }}</label>
+        <select id="p-legislature" class="form-select" formControlName="legislature">
+          @for (l of legislatures; track l) {
+            <option [value]="l">{{ 'institutions.legislatureValue.' + l | translate }}</option>
+          }
+        </select>
+      </div>
+      <div class="row">
+        <div class="col-md-6 mb-3">
+          <label class="form-label" for="p-start">{{ 'institutions.startDate' | translate }}</label>
+          <input id="p-start" type="date" class="form-control" formControlName="startDate" />
+        </div>
+        <div class="col-md-6 mb-3">
+          <label class="form-label" for="p-end">{{ 'institutions.endDate' | translate }}</label>
+          <input id="p-end" type="date" class="form-control" formControlName="endDate" />
+        </div>
+      </div>
+      <div class="form-check mb-3">
+        <input id="p-current" type="checkbox" class="form-check-input" formControlName="current" />
+        <label class="form-check-label" for="p-current">{{ 'institutions.isCurrent' | translate }}</label>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary" [disabled]="submitting()">
+          {{ (submitting() ? 'common.loading' : 'common.save') | translate }}
+        </button>
+        <button type="button" class="btn btn-outline-secondary" (click)="cancel()">{{ 'common.cancel' | translate }}</button>
+      </div>
+    </form>
+  }
+</section>

@@ -1,0 +1,90 @@
+<!-- Organisation detail: its responder capabilities + inline add-responder form. -->
+<section>
+  <a routerLink="/responders" class="btn btn-sm btn-link px-0 mb-2">&laquo; {{ 'responders.backToList' | translate }}</a>
+
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <h1 class="h4 mb-0">{{ 'responders.respondersOf' | translate }}</h1>
+    <button type="button" class="btn btn-primary btn-sm" (click)="toggleForm()">
+      + {{ 'responders.newResponder' | translate }}
+    </button>
+  </div>
+
+  @if (showForm()) {
+    <form [formGroup]="form" (ngSubmit)="createResponder()" class="border rounded p-3 mb-4" novalidate>
+      <div class="row">
+        <div class="col-md-6 mb-3">
+          <label class="form-label" for="r-name">{{ 'responders.name' | translate }}</label>
+          <input id="r-name" type="text" class="form-control" formControlName="name" />
+          @if (form.controls.name.touched && form.controls.name.invalid) {
+            <div class="text-danger small">{{ 'common.required' | translate }}</div>
+          }
+        </div>
+        <div class="col-md-3 mb-3">
+          <label class="form-label" for="r-type">{{ 'responders.type' | translate }}</label>
+          <select id="r-type" class="form-select" formControlName="responderType">
+            @for (t of types; track t) {
+              <option [value]="t">{{ 'responders.typeValue.' + t | translate }}</option>
+            }
+          </select>
+        </div>
+        <div class="col-md-3 mb-3">
+          <label class="form-label" for="r-coverage">{{ 'responders.coverage' | translate }}</label>
+          <select id="r-coverage" class="form-select" formControlName="coverageType">
+            @for (c of coverageTypes; track c) {
+              <option [value]="c">{{ 'responders.coverageValue.' + c | translate }}</option>
+            }
+          </select>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="r-cats">{{ 'responders.handledCategories' | translate }}</label>
+        <input id="r-cats" type="text" class="form-control" formControlName="handledCategoryIds" [placeholder]="'responders.idsHint' | translate" />
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="r-sla">{{ 'responders.slaPolicy' | translate }}</label>
+        <input id="r-sla" type="text" class="form-control" formControlName="slaPolicy" />
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm" [disabled]="creating()">
+        {{ (creating() ? 'common.loading' : 'common.create') | translate }}
+      </button>
+    </form>
+  }
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+    </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="loadPage(0)">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else if (rows().length === 0) {
+    <div class="alert alert-info" role="status">{{ 'responders.noResponders' | translate }}</div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th scope="col">{{ 'responders.name' | translate }}</th>
+            <th scope="col">{{ 'responders.type' | translate }}</th>
+            <th scope="col">{{ 'responders.status' | translate }}</th>
+            <th scope="col">{{ 'responders.coverage' | translate }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (r of rows(); track r.id) {
+            <tr>
+              <td>{{ r.name }}</td>
+              <td>{{ 'responders.typeValue.' + r.responderType | translate }}</td>
+              <td>{{ 'responders.statusValue.' + r.status | translate }}</td>
+              <td>{{ 'responders.coverageValue.' + r.coverageType | translate }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="loadPage($event)" />
+  }
+</section>

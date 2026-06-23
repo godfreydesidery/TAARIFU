@@ -679,9 +679,12 @@ Rules: respect per-user **NotificationPreference** (channel/type, quiet hours, l
 - **Public ids = UUID/ULID** in URLs (never sequential DB ids); human codes (e.g. ticket `TAR-YYYY-NNNNNN`) for display.
 - **One consistent response envelope** for all responses incl. errors and pagination *(insight: prior systems had 3 inconsistent envelopes)*:
   ```json
-  { "success": true, "code": "OK", "message": "...", "data": { }, "meta": { "page": 0, "size": 20, "total": 137 }, "timestamp": "..." }
+  // success
+  { "success": true, "statusCode": 200, "message": "...", "data": { }, "meta": { "page": 0, "size": 20, "total": 137 }, "timestamp": "..." }
+  // error — stable machine code preserved at data.code; field errors at data.errors[]
+  { "success": false, "statusCode": 403, "message": "...", "data": { "code": "TIER_TOO_LOW", "errors": [ { "field": "...", "code": "NotBlank", "message": "..." } ] }, "timestamp": "..." }
   ```
-- **Errors**: stable machine codes + localised messages + field-level validation details; correct HTTP status.
+- **`statusCode`** = integer HTTP status (200/403/404…). **Errors**: the **stable machine code** lives in `data.code` (e.g. `TIER_TOO_LOW` vs `OUT_OF_SCOPE` — both 403 but distinguishable), with field-level validation details in `data.errors[]` + localised messages.
 - **Pagination/sort/filter**: standard params (`page,size,sort,q,filters`); consistent defaults.
 - **Idempotency** keys for create/submit (reports, signatures, OTP); **optimistic concurrency** on updates.
 - **Auth**: bearer JWT, short-lived access + rotating refresh; tiered authorization claims verified server-side; no privileged action trusts the client.

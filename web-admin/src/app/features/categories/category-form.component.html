@@ -1,0 +1,124 @@
+<!-- Issue category create/edit form. Inline validation; server field errors mapped back to controls. -->
+<section style="max-width: 40rem;">
+  <h1 class="h3 mb-3">
+    {{ (isEdit ? 'categories.editCategory' : 'categories.createCategory') | translate }}
+  </h1>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
+    </div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+      <div class="mb-3">
+        <label class="form-label" for="code">{{ 'categories.code' | translate }}</label>
+        <input
+          id="code"
+          type="text"
+          class="form-control font-monospace"
+          formControlName="code"
+          [class.is-invalid]="form.controls.code.touched && form.controls.code.invalid"
+        />
+        <div class="form-text">{{ 'categories.codeHint' | translate }}</div>
+        @if (form.controls.code.touched && form.controls.code.invalid) {
+          <div class="invalid-feedback d-block">
+            {{ form.controls.code.errors?.['server'] || ('common.required' | translate) }}
+          </div>
+        }
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label" for="name">{{ 'categories.name' | translate }}</label>
+        <input
+          id="name"
+          type="text"
+          class="form-control"
+          formControlName="name"
+          [class.is-invalid]="form.controls.name.touched && form.controls.name.invalid"
+        />
+        @if (form.controls.name.touched && form.controls.name.invalid) {
+          <div class="invalid-feedback d-block">
+            {{ form.controls.name.errors?.['server'] || ('common.required' | translate) }}
+          </div>
+        }
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="routing">{{ 'categories.routingLevel' | translate }}</label>
+          <select id="routing" class="form-select" formControlName="defaultRoutingLevel">
+            @for (level of routingLevels; track level) {
+              <option [value]="level">{{ level }}</option>
+            }
+          </select>
+        </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="visibility">{{ 'categories.visibility' | translate }}</label>
+          <select id="visibility" class="form-select" formControlName="defaultVisibility">
+            @for (v of visibilities; track v) {
+              <option [value]="v">{{ v }}</option>
+            }
+          </select>
+        </div>
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="ttfr">{{ 'categories.ttfr' | translate }}</label>
+          <input
+            id="ttfr"
+            type="number"
+            min="1"
+            class="form-control"
+            formControlName="defaultSlaTtfrMinutes"
+            [class.is-invalid]="form.controls.defaultSlaTtfrMinutes.touched && form.controls.defaultSlaTtfrMinutes.invalid"
+          />
+        </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="ttr">{{ 'categories.ttr' | translate }}</label>
+          <input
+            id="ttr"
+            type="number"
+            min="1"
+            class="form-control"
+            formControlName="defaultSlaTtrMinutes"
+            [class.is-invalid]="form.controls.defaultSlaTtrMinutes.touched && form.controls.defaultSlaTtrMinutes.invalid"
+          />
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label" for="icon">{{ 'categories.icon' | translate }}</label>
+        <input id="icon" type="text" class="form-control" formControlName="icon" />
+      </div>
+
+      <div class="form-check mb-2">
+        <input id="sensitive" type="checkbox" class="form-check-input" formControlName="sensitive" />
+        <label class="form-check-label" for="sensitive">{{ 'categories.sensitive' | translate }}</label>
+      </div>
+      <div class="form-check mb-2">
+        <input id="forcePrivate" type="checkbox" class="form-check-input" formControlName="forcePrivate" />
+        <label class="form-check-label" for="forcePrivate">{{ 'categories.forcePrivate' | translate }}</label>
+      </div>
+      @if (isEdit) {
+        <div class="form-check mb-3">
+          <input id="active" type="checkbox" class="form-check-input" formControlName="active" />
+          <label class="form-check-label" for="active">{{ 'categories.active' | translate }}</label>
+        </div>
+      }
+
+      <div class="d-flex gap-2 mt-4">
+        <button type="submit" class="btn btn-primary" [disabled]="submitting()">
+          @if (submitting()) {
+            <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+          }
+          {{ 'common.save' | translate }}
+        </button>
+        <button type="button" class="btn btn-outline-secondary" (click)="cancel()">
+          {{ 'common.cancel' | translate }}
+        </button>
+      </div>
+    </form>
+  }
+</section>

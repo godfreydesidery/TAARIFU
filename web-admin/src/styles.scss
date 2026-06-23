@@ -1,0 +1,19 @@
+/* Global styles. Bootstrap 5.3 is the UI system (matches the legacy admin dashboard's lineage). */
+
+/* Import Bootstrap's full SCSS so it is bundled and tree-shaken by the build (no external CDN —
+   keeps the app self-hosted and offline-friendly for in-country deployments). */
+@import 'bootstrap/scss/bootstrap';
+
+/* App-wide base: respect prefers-reduced-motion (accessibility) and a sane default font stack. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body {
+  min-height: 100vh;
+}

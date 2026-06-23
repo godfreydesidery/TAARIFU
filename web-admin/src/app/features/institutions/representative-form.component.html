@@ -1,0 +1,102 @@
+<!--
+  Create/link a representative to an EXISTING account's profile (additive role, §6.4 D12).
+  Never re-registers an elected citizen — links the role to their one identity.
+-->
+<section style="max-width: 720px">
+  <a routerLink="/representatives" class="btn btn-sm btn-link px-0 mb-2">&laquo; {{ 'representatives.title' | translate }}</a>
+  <h1 class="h3 mb-2">{{ 'institutions.linkRepresentative' | translate }}</h1>
+  <p class="text-muted small">{{ 'institutions.linkRepresentativeHint' | translate }}</p>
+
+  <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+    <div class="mb-3">
+      <label class="form-label" for="rep-profile">{{ 'institutions.profileId' | translate }}</label>
+      <input id="rep-profile" type="text" class="form-control" formControlName="profileId" [placeholder]="'institutions.profileIdPlaceholder' | translate" />
+      @if (form.controls.profileId.touched && form.controls.profileId.invalid) {
+        <div class="text-danger small">{{ form.controls.profileId.getError('server') || ('common.required' | translate) }}</div>
+      }
+    </div>
+
+    <div class="row">
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="rep-type">{{ 'representatives.type' | translate }}</label>
+        <select id="rep-type" class="form-select" formControlName="type">
+          @for (t of types; track t) {
+            <option [value]="t">{{ 'institutions.typeValue.' + t | translate }}</option>
+          }
+        </select>
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="rep-mandate">{{ 'institutions.mandate' | translate }}</label>
+        <select id="rep-mandate" class="form-select" formControlName="mandate">
+          @for (m of mandates; track m) {
+            <option [value]="m">{{ 'institutions.mandateValue.' + m | translate }}</option>
+          }
+        </select>
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="rep-status">{{ 'representatives.status' | translate }}</label>
+        <select id="rep-status" class="form-select" formControlName="status">
+          @for (s of statuses; track s) {
+            <option [value]="s">{{ 'institutions.statusValue.' + s | translate }}</option>
+          }
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label" for="rep-constituency">{{ 'representatives.constituency' | translate }}</label>
+        <input id="rep-constituency" type="text" class="form-control" formControlName="constituencyId" [placeholder]="'institutions.uuidOptional' | translate" />
+        @if (form.controls.constituencyId.getError('server')) {
+          <div class="text-danger small">{{ form.controls.constituencyId.getError('server') }}</div>
+        }
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label" for="rep-ward">{{ 'representatives.ward' | translate }}</label>
+        <input id="rep-ward" type="text" class="form-control" formControlName="wardId" [placeholder]="'institutions.uuidOptional' | translate" />
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label" for="rep-party">{{ 'representatives.party' | translate }}</label>
+        <input id="rep-party" type="text" class="form-control" formControlName="partyId" [placeholder]="'institutions.uuidOptional' | translate" />
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label" for="rep-legislature">{{ 'institutions.legislature' | translate }}</label>
+        <select id="rep-legislature" class="form-select" formControlName="legislature">
+          @for (l of legislatures; track l) {
+            <option [value]="l">{{ 'institutions.legislatureValue.' + l | translate }}</option>
+          }
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label" for="rep-parliament">{{ 'institutions.parliament' | translate }}</label>
+        <input id="rep-parliament" type="text" class="form-control" formControlName="parliamentId" [placeholder]="'institutions.uuidOptional' | translate" />
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label" for="rep-role">{{ 'institutions.parliamentRole' | translate }}</label>
+        <input id="rep-role" type="text" class="form-control" formControlName="parliamentRoleId" [placeholder]="'institutions.uuidOptional' | translate" />
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label" for="rep-elected">{{ 'institutions.electedAt' | translate }}</label>
+      <input id="rep-elected" type="date" class="form-control" formControlName="electedAt" />
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="rep-bio">{{ 'institutions.bio' | translate }}</label>
+      <textarea id="rep-bio" class="form-control" rows="3" formControlName="bio"></textarea>
+    </div>
+
+    <div class="d-flex gap-2">
+      <button type="submit" class="btn btn-primary" [disabled]="submitting()">
+        {{ (submitting() ? 'common.loading' : 'institutions.linkRole') | translate }}
+      </button>
+      <button type="button" class="btn btn-outline-secondary" (click)="cancel()">{{ 'common.cancel' | translate }}</button>
+    </div>
+  </form>
+</section>

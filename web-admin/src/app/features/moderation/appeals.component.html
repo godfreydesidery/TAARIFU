@@ -1,0 +1,33 @@
+<!-- Appeals: decide by appeal id (UPHELD/OVERTURNED). Independence enforced server-side. -->
+<section style="max-width: 640px">
+  <a routerLink="/moderation" class="btn btn-sm btn-link px-0 mb-2">&laquo; {{ 'moderation.backToQueue' | translate }}</a>
+  <h1 class="h3 mb-3">{{ 'moderation.appeals' | translate }}</h1>
+
+  <p class="text-muted small">{{ 'moderation.appealsHint' | translate }}</p>
+
+  <div class="mb-3">
+    <label class="form-label" for="appeal-id">{{ 'moderation.appealId' | translate }}</label>
+    <input id="appeal-id" type="text" class="form-control" [ngModel]="appealId()" (ngModelChange)="appealId.set($event)" />
+  </div>
+  <div class="mb-3">
+    <label class="form-label" for="appeal-outcome">{{ 'moderation.appealOutcome' | translate }}</label>
+    <select id="appeal-outcome" class="form-select" [ngModel]="outcome()" (ngModelChange)="outcome.set($event)">
+      @for (o of outcomes; track o) {
+        <option [value]="o">{{ 'moderation.outcomeValue.' + o | translate }}</option>
+      }
+    </select>
+  </div>
+  <div class="mb-3">
+    <label class="form-label" for="appeal-note">{{ 'moderation.decisionNote' | translate }}</label>
+    <textarea id="appeal-note" class="form-control" rows="3" [ngModel]="decisionNote()" (ngModelChange)="decisionNote.set($event)"></textarea>
+  </div>
+  <button type="button" class="btn btn-primary" [disabled]="deciding() || !appealId().trim()" (click)="decide()">
+    {{ (deciding() ? 'common.loading' : 'moderation.decide') | translate }}
+  </button>
+
+  @if (decided(); as appeal) {
+    <div class="alert alert-success mt-4" role="status">
+      {{ 'moderation.appealDecided' | translate }} — {{ 'moderation.outcomeValue.' + appeal.status | translate }}
+    </div>
+  }
+</section>

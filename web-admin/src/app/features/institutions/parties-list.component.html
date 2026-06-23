@@ -1,0 +1,58 @@
+<!-- Political parties directory: debounced search + server pagination. -->
+<section>
+  <h1 class="h3 mb-3">{{ 'parties.title' | translate }}</h1>
+
+  <div class="mb-3">
+    <label class="visually-hidden" for="party-search">{{ 'common.search' | translate }}</label>
+    <input
+      id="party-search"
+      type="search"
+      class="form-control"
+      [formControl]="search"
+      [attr.placeholder]="'parties.searchPlaceholder' | translate"
+    />
+  </div>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
+    </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="retry()">
+        {{ 'common.retry' | translate }}
+      </button>
+    </div>
+  } @else if (rows().length === 0) {
+    <div class="alert alert-info" role="status">{{ 'parties.noResults' | translate }}</div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th scope="col">{{ 'parties.abbreviation' | translate }}</th>
+            <th scope="col">{{ 'geography.name' | translate }}</th>
+            <th scope="col">{{ 'parties.ideology' | translate }}</th>
+            <th scope="col">{{ 'parties.foundedYear' | translate }}</th>
+            <th scope="col">{{ 'parties.status' | translate }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (party of rows(); track party.id) {
+            <tr>
+              <td><strong>{{ party.abbreviation || '—' }}</strong></td>
+              <td>{{ party.name }}</td>
+              <td>{{ party.ideology || '—' }}</td>
+              <td>{{ party.foundedYear || '—' }}</td>
+              <td>{{ party.status || '—' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="goToPage($event)" />
+  }
+</section>

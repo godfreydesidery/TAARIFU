@@ -1,0 +1,53 @@
+// Admin shell layout. Mobile-first: sidenav is an off-canvas drawer < md, static column ≥ md.
+
+.skip-link {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 1080;
+}
+
+.shell-body {
+  display: flex;
+  min-height: calc(100vh - 56px); // viewport minus navbar height
+  position: relative;
+}
+
+.app-sidenav {
+  width: 240px;
+  flex: 0 0 240px;
+  min-height: 100%;
+
+  // Mobile: slide-in drawer.
+  @media (max-width: 767.98px) {
+    position: fixed;
+    top: 56px;
+    bottom: 0;
+    left: 0;
+    z-index: 1045;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease-in-out;
+
+    &.open {
+      transform: translateX(0);
+    }
+  }
+}
+
+.sidenav-backdrop {
+  position: fixed;
+  inset: 56px 0 0 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 1040;
+}
+
+.app-content {
+  flex: 1 1 auto;
+  min-width: 0; // allow tables to scroll horizontally instead of overflowing the flex row
+}
+
+.nav-link.active {
+  font-weight: 600;
+  background-color: rgba(13, 110, 253, 0.1);
+  border-radius: 0.25rem;
+}

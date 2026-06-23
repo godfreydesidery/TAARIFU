@@ -1,0 +1,75 @@
+<!-- Regions list with districts drill-down. Loading / empty / error states all handled. -->
+<section>
+  <h1 class="h3 mb-3">{{ 'geography.regionsTitle' | translate }}</h1>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
+    </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="loadPage(0)">
+        {{ 'common.retry' | translate }}
+      </button>
+    </div>
+  } @else if (regions().length === 0) {
+    <div class="alert alert-info" role="status">{{ 'geography.noRegions' | translate }}</div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th scope="col">{{ 'geography.code' | translate }}</th>
+            <th scope="col">{{ 'geography.name' | translate }}</th>
+            <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (region of regions(); track region.id) {
+            <tr>
+              <td><code>{{ region.code }}</code></td>
+              <td>{{ region.name }}</td>
+              <td class="text-end">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-primary"
+                  (click)="toggleDistricts(region)"
+                  [attr.aria-expanded]="expandedRegionId() === region.id"
+                >
+                  {{ 'geography.viewDistricts' | translate }}
+                </button>
+              </td>
+            </tr>
+            @if (expandedRegionId() === region.id) {
+              <tr>
+                <td colspan="3" class="bg-body-secondary">
+                  <strong class="d-block mb-2">
+                    {{ 'geography.districtsOf' | translate: { region: region.name } }}
+                  </strong>
+                  @if (districtsLoading()) {
+                    <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+                    {{ 'common.loading' | translate }}
+                  } @else if (districts().length === 0) {
+                    <span class="text-muted">{{ 'common.noData' | translate }}</span>
+                  } @else {
+                    <ul class="list-inline mb-0">
+                      @for (district of districts(); track district.id) {
+                        <li class="list-inline-item badge text-bg-light border me-1 mb-1">
+                          {{ district.name }}
+                        </li>
+                      }
+                    </ul>
+                  }
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="loadPage($event)" />
+  }
+</section>

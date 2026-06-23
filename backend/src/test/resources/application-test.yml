@@ -1,0 +1,42 @@
+# =============================================================================
+# Test profile configuration.
+#
+# WHY Flyway is disabled and ddl-auto=create-drop here: the Flyway migrations are
+# owned by the database engineer and land in the NEXT increment. Until they exist,
+# tests generate the schema from the JPA entities so the read slice, repositories,
+# and constraints can be exercised against a real PostGIS Testcontainer now. When
+# the migrations land, these tests flip to Flyway + validate (matching production)
+# with no change to the test logic — proving entities and DDL agree (ADR-0005/0009).
+#
+# Datasource is provided dynamically by @DynamicPropertySource from the Testcontainer.
+# Test secrets below are DUMMY values (no real secrets) — they only need to be present.
+# =============================================================================
+spring:
+  flyway:
+    enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        hbm2ddl:
+          # Create the PostGIS extension so geometry columns generate cleanly under create-drop.
+          import_files:
+  sql:
+    init:
+      mode: never
+
+taarifu:
+  security:
+    jwt:
+      secret: dGVzdC1qd3Qtc2VjcmV0LWZvci10YWFyaWZ1LWJhY2tlbmQtdGVzdHMtb25seQ==
+      issuer: taarifu-test
+      audience: taarifu-test-clients
+    cors:
+      allowed-origins:
+    crypto:
+      # Dummy base64 256-bit key for tests only (NOT a real secret).
+      dev-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  geography:
+    geocoder: stub

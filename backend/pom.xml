@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Taarifu backend build descriptor.
+
+  Responsibility: pins the exact tech-stack versions the Solution Architect fixed in
+  ARCHITECTURE.md §2 and the ADRs, and assembles the modular-monolith Spring Boot
+  application as a single buildable artefact (package-by-feature inside one module).
+
+  WHY single Maven module (not multi-module yet): this is the FOUNDATION increment
+  (FOUNDATION-SCOPE.md) — `common`, the `geography` read slice, and the `identity`
+  data layer. Boundaries are enforced mechanically by ArchUnit tests (ARCHITECTURE
+  §3.4) rather than by Maven reactor modules at this stage, keeping the build KISS
+  (CLAUDE.md §3). The package tree already follows the binding layout (ARCHITECTURE
+  §11) so a later split into reactor modules is mechanical and non-breaking.
+
+  WHY pinned versions: ADR-0005 (Postgres/Flyway/validate), ADR-0007 (JWT), ADR-0008
+  (envelope/outbox), ADR-0009 (Testcontainers). Bumps go through an ADR note.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+      Spring Boot parent BOM pinned to 3.3.5 (ARCHITECTURE §2). It manages transitive
+      versions of Spring Framework 6.1.x, Spring Security 6.3.x, Spring Data JPA,
+      Hibernate, Jackson, JUnit 5, and Testcontainers BOM import.
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.5</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.taarifu</groupId>
+    <artifactId>taarifu-backend</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <name>taarifu-backend</name>
+    <description>Taarifu — Tanzania civic-engagement platform backend (modular monolith)</description>
+
+    <properties>
+        <!-- Java 21 LTS toolchain (ARCHITECTURE §2). -->
+        <java.version>21</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!-- Versions not managed by the Spring Boot BOM, pinned per ARCHITECTURE §2. -->
+        <springdoc.version>2.6.0</springdoc.version>
+        <nimbus-jose-jwt.version>9.40</nimbus-jose-jwt.version>
+        <testcontainers.version>1.20.3</testcontainers.version>
+        <archunit.version>1.3.0</archunit.version>
+        <rest-assured.version>5.5.0</rest-assured.version>
+        <!-- Hibernate Spatial ships matching the Boot-managed Hibernate 6.5.x line. -->
+        <hibernate.version>6.5.3.Final</hibernate.version>
+    </properties>
+
+    <dependencies>
+        <!-- ============================ Web / REST ============================ -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- ============================ Security ============================== -->
+        <!-- @EnableWebSecurity, @EnableMethodSecurity, BCrypt (ADR-0007). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!-- ============================ Persistence ========================== -->
+        <!-- Spring Data JPA + Hibernate; ddl-auto=validate (ADR-0005). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <!-- Hibernate Spatial maps PostGIS geometry types to JTA Geometry (ARCHITECTURE §4.3). -->
+        <dependency>
+            <groupId>org.hibernate.orm</groupId>
+            <artifactId>hibernate-spatial</artifactId>
+            <version>${hibernate.version}</version>
+        </dependency>
+
+        <!-- ============================ Validation =========================== -->
+        <!-- Bean Validation at the API edge (CLAUDE.md §8). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- ============================ AOP ================================= -->
+        <!-- AspectJ @Around advice backs the live @RequiresTier interceptor (MF-2, ADR-0011 §3). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
+        <!-- ============================ Actuator ============================= -->
+        <!-- Health/liveness/readiness + metrics (ARCHITECTURE §9). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- ============================ Database ============================= -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ============================ Migrations =========================== -->
+        <!-- Flyway 10 owns the schema (ADR-0005); the Postgres module is required for PG 16. -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+        <!-- ============================ JWT ================================== -->
+        <!-- Nimbus JOSE handles access + rotating refresh token sign/verify (ADR-0007). -->
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <version>${nimbus-jose-jwt.version}</version>
+        </dependency>
+
+        <!-- ============================ OpenAPI ============================== -->
+        <!-- springdoc serves Swagger UI + /api/v1/openapi.json (ARCHITECTURE §5.4). -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>${springdoc.version}</version>
+        </dependency>
+
+        <!-- ============================ Lombok (sparingly) ================== -->
+        <!-- CLAUDE.md §8: allowed but sparingly. Used for boilerplate-free constructors/getters. -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- ============================ Tests ================================ -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Spring Security test support (@WithMockUser, security filter assertions). -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Testcontainers: real Postgres+PostGIS in integration tests (ADR-0009). -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- REST Assured: controller/contract assertions over the envelope (ADR-0009). -->
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <version>${rest-assured.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- ArchUnit: enforce module boundary rules (ARCHITECTURE §3.4). -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>${archunit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Align all Testcontainers artefacts to one version (ADR-0009). -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <plugins>
+            <!--
+              Spring Boot repackage: produces the runnable fat jar. Lombok is excluded
+              from the final image because it is a compile-time-only annotation processor.
+            -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+
+            <!-- Pin the compiler to Java 21 and register Lombok as an annotation processor. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

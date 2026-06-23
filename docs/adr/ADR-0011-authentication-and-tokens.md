@@ -1,0 +1,40 @@
+# ADR-0011: Authentication & tokens — OTP signup, password/OTP login, rotating refresh with reuse-detection, live tier resolution, scope seam, JWT hardening & append-only audit
+
+**Status:** Accepted · 2026-06-23 · Solution Architect (David Okello)
+**Extends:** ADR-0007 (stateless JWT — short access + rotating refresh, method-level RBAC, scopes, trust tiers). ADR-0007 set the *policy*; this ADR sets the *enforced behaviour* and resolves the security-review backlog before any behaviour is built on the scaffold.
+**Grounding:** PRD §6.4 (D11–D16), §7 (RBAC + trust tiers T0–T3), §18 (security), §25.1 (lifecycle/erasure), §25.5 (tier downgrade); ARCHITECTURE.md §6; CLAUDE.md §3/§8/§12; `docs/reviews/security-foundation-review.md` (MF-1, MF-2, MF-3, S-1…S-5, L-1).
+**Companion design:** [AUTH-DESIGN.md](../architecture/AUTH-DESIGN.md) (the buildable contract).
+
+## Context
+The foundation increment shipped a correct **auth scaffold** (HS256 `JwtService`, deny-by-default `SecurityConfig` with `@EnableMethodSecurity`, hashed `RefreshToken` with `family_id/used/revoked`, field-encrypted PII, `@RequiresTier`/`CurrentUser`/`ScopeGuard` placeholders) but **no auth behaviour**. The security review found no launch-gate blocker in the scaffold yet flagged that the first behaviour built on it must close specific contracts, or they become real authorization bugs:
+- the `trustTier` JWT claim is client-presentable; gating on it is a privilege-escalation path (**MF-2**);
+- `hasRole(...)` without area/category/constituency scope passes actors outside their grant (**MF-3**);
+- an absent/weak HS256 secret silently mints forgeable ROOT tokens; `iss` is issued but unchecked (**MF-1**);
+- OTP/login anti-automation and staff MFA are unbuilt (**S-2**);
+- refresh rotation/reuse-detection is modelled but not enforced (**S-3**);
+- there is no immutable, PII-safe **audit-event** store yet (**L-1**).
+This ADR decides how the auth increment closes all of these while honouring the locked decisions (one account per person, additive roles, electoral-integrity fence, PDPA).
+
+## Decision
+1. **Signup & login.** Phone **+ OTP** signup → **T1** (one account per phone, D11/D15; existing phone → login/recovery, never a 2nd account). Login by **password** or **OTP** onto one token issuance; constant-time, **no user enumeration**; account status gates usability.
+2. **Tokens.** Short **access JWT (~15 min)** + **rotating, single-use refresh JWT (~30 days)**, persisted **hashed**. **Reuse of a consumed refresh token revokes the entire `family_id`** (theft signal) and forces re-login; rotation issues exactly one new live token per family under a row lock; logout/`logout-all` revoke families. Refresh tokens carry no roles/tier. (**S-3**)
+3. **Live trust-tier resolution (the keystone).** A server-side `TierService.resolveLiveTier(publicId)` computes T0–T3 from **current DB state** on **every** tier-gated request; the JWT `trustTier` claim is a **UI hint only and never an authorization input**. `@RequiresTier` is enforced by a method interceptor against this resolver, ships **in the same PR** as the first tier-gated endpoint, and is regression-tested to **ignore a forged/elevated claim**. Tier downgrade (§25.5) takes effect immediately with no token reissue. (**MF-2**)
+4. **Scope-aware authz seam.** A `ScopeGuard` bean (`@taarifuAuthz`) exposes `canActOnArea`/`canActOnCategory`/`canActInConstituency`/`isNotSelf`, reading **live** `RoleAssignment` scope (area sets resolve ancestors via the geography closure table). Deny-by-default. The bean + tests ship now; the per-endpoint `@PreAuthorize("@taarifuAuthz…")` annotations land with the modules that own those resources. (**MF-3**, D13/D16)
+5. **Integrity fence.** Binding-action authorization checks **tier + electoral scope + one-per-person only** and **must never read a token/wallet balance** (D18/§23.5). Fixed here so `engagement`/`accountability` inherit it.
+6. **Anti-automation.** Redis-backed OTP **send/attempt** limits (per phone + per IP, single-use, ≤5-min TTL, code never logged) and login **lockout + exponential backoff with jitter**; a **staff TOTP gate** keyed on `User.mfaEnabled` makes password success insufficient for `MODERATOR`/`ADMIN`/`ROOT` (two-step `mfaToken` → TOTP). Counters/locks are ephemeral Redis; outcomes are audited. Redis-down fails **closed** for the auth surface. (**S-2**)
+7. **JWT hardening + asymmetric migration.** Fail-fast on absent/`<256-bit` secret (reject the empty default); validate `iss` and add+validate `aud`. A `JwtKeyProvider` + `kid` header localizes the **RS256/ES256** swap to `JwtService`; the asymmetric signer (private key in KMS/secret-manager, public JWKs at `/.well-known/jwks.json`, dual-`kid` rotation window) **must be live before any staff token is issued in a shared environment**. (**MF-1**)
+8. **Append-only audit.** A dedicated **append-only `audit_event`** table (separate from `BaseEntity` per-row audit) records the auth/security/authz/role/verification/erasure events enumerated in AUTH-DESIGN §11.2, holding **references/hashes, never raw PII** (hashed actor IP, object-store refs, no OTP/`idNo`/raw phone); the app has **INSERT+SELECT only**; **erasure appends a tombstone event, never mutates history** (§25.1). (**L-1**, S-5)
+9. **OTP delivery seam.** OTP/alerts go through the `SmsGateway` **port** with a **logging dev stub** (redacted, never the OTP value; optional test-only retrieval for zero-external-call E2E); the real least-cost/DLR aggregator adapter and email-fallback degradation land in the `communications` integration increment. (**EI-3**)
+10. **Data additions.** New `otp_challenge` (DB, `code_hash` only, short TTL) and `audit_event` (DB, append-only); anti-automation counters in **Redis** (no login-attempt table); an optional encrypted `app_user.mfa_totp_secret` column. No other existing-table changes. (**S-1** residual — HKDF-derived, separately rotatable blind-index/MFA sub-keys are an explicit requirement on the production KMS adapter, EI-19; the dev `CryptoPort` adapter's single-key SHA-256 derivation is accepted dev-only residual.)
+
+## Consequences
+- (+) Closes every MF/S/L item the review raised **before** behaviour is built on the scaffold — cheap now, expensive later. Authorization becomes **server-authoritative** (live tier + live scope), not claim-trusting, which is the exact legacy gap.
+- (+) Theft-resistant sessions: rotating single-use refresh with family revocation gives a stolen-token kill-switch; staff MFA + lockout/backoff blunt credential-stuffing and OTP abuse.
+- (+) PDPA-aligned auditability: an immutable, PII-free trail of security decisions that survives erasure via tombstones; no PII in logs/audit.
+- (+) The RS256/ES256 + JWKS path keeps an extracted service verifying the same tokens (resource-server pattern, ARCHITECTURE §10) with no shared signing secret.
+- (−) The live-tier resolve per gated request adds a DB read; bounded by a ≤30s Redis cache with explicit invalidation (authority is always the DB on miss). Accepted: correctness over a marginal read.
+- (−) Rotating refresh + family revocation + audit add storage and logic; accepted — it is the security win (ADR-0007 consequence, now realised).
+- (−) Access tokens remain un-revocable before their short TTL; sensitive changes re-resolve tier/scope live, and `logout-all` plus family revocation bound the exposure.
+- (−) Redis-fail-closed trades some auth availability for security; public reads are unaffected and the choice is documented.
+- **Revisit triggers:** (a) staff **SSO/OIDC** required → add the OIDC adapter mapping IdP groups→roles (ADR-0007 trigger), native path stays fallback; (b) audit-event volume/retention outgrows an in-DB table → move the append-only log to the outbox sink / a dedicated store (ARCHITECTURE §8/§10); (c) NIDA/voter-ID API access granted → swap the operator-assisted verification path for the API adapter (D-Q2), tier predicates unchanged; (d) MFA factors beyond TOTP → promote `mfa_totp_secret` to a `user_mfa` table.
+</content>

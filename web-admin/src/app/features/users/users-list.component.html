@@ -1,0 +1,66 @@
+<!--
+  Users & Roles: operator identity + additive roles + role catalogue + grant entry point.
+  The generic user directory + role-grant API is a CENTRAL NEED (no backend endpoint yet).
+-->
+<section>
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <h1 class="h3 mb-0">{{ 'users.title' | translate }}</h1>
+    <a routerLink="/institutions/representatives/new" class="btn btn-primary btn-sm">
+      + {{ 'users.grantRepresentative' | translate }}
+    </a>
+  </div>
+
+  <div class="alert alert-warning" role="note">{{ 'users.apiGapNote' | translate }}</div>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
+    </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="load()">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else {
+    <!-- The signed-in operator's identity + roles. -->
+    <div class="card mb-4" style="max-width: 560px">
+      <div class="card-body">
+        <h2 class="h6 text-muted">{{ 'users.myIdentity' | translate }}</h2>
+        @if (me(); as me) {
+          <p class="mb-1"><strong>{{ me.firstName || '—' }} {{ me.lastName || '' }}</strong></p>
+          <p class="mb-1 small">{{ 'users.tier' | translate }}: <span class="badge text-bg-info">{{ me.tier || 'T0' }}</span></p>
+        }
+        <p class="mb-2 small">{{ 'users.roles' | translate }}:</p>
+        <div class="d-flex flex-wrap gap-1">
+          @for (role of effectiveRoles(); track role) {
+            <span class="badge text-bg-secondary">{{ 'users.roleValue.' + role | translate }}</span>
+          } @empty {
+            <span class="text-muted small">{{ 'users.noRoles' | translate }}</span>
+          }
+        </div>
+      </div>
+    </div>
+
+    <!-- The platform role catalogue (reference). -->
+    <h2 class="h5">{{ 'users.roleCatalogue' | translate }}</h2>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th scope="col">{{ 'users.role' | translate }}</th>
+            <th scope="col">{{ 'users.grantedBy' | translate }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (role of roleCatalogue; track role) {
+            <tr>
+              <td><span class="badge text-bg-light">{{ 'users.roleValue.' + role | translate }}</span></td>
+              <td><small class="text-muted">{{ 'users.grantedByValue.' + role | translate }}</small></td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</section>

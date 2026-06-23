@@ -1,0 +1,122 @@
+<!-- Report case detail: header + timeline + responder lifecycle actions. -->
+<section>
+  <a routerLink="/reports" class="btn btn-sm btn-link px-0 mb-2">&laquo; {{ 'reports.backToQueue' | translate }}</a>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
+    </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="load()">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else if (report()) {
+    @let r = report()!;
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+      <h1 class="h4 mb-0">{{ r.title }}</h1>
+      <span class="badge text-bg-secondary">{{ 'reports.statusValue.' + r.status | translate }}</span>
+    </div>
+
+    <dl class="row small mb-4">
+      <dt class="col-4 col-md-2">{{ 'reports.code' | translate }}</dt>
+      <dd class="col-8 col-md-4"><code>{{ r.code }}</code></dd>
+      <dt class="col-4 col-md-2">{{ 'reports.category' | translate }}</dt>
+      <dd class="col-8 col-md-4">{{ r.categoryName || '—' }}</dd>
+      <dt class="col-4 col-md-2">{{ 'reports.priority' | translate }}</dt>
+      <dd class="col-8 col-md-4">{{ 'reports.priorityValue.' + r.priority | translate }}</dd>
+      <dt class="col-4 col-md-2">{{ 'reports.sla' | translate }}</dt>
+      <dd class="col-8 col-md-4">
+        @if (r.dueAt) {
+          {{ r.dueAt | date: 'short' }}
+        } @else {
+          —
+        }
+      </dd>
+      <dt class="col-4 col-md-2">{{ 'reports.filed' | translate }}</dt>
+      <dd class="col-8 col-md-4">{{ r.createdAt | date: 'short' }}</dd>
+    </dl>
+
+    <div class="row g-4">
+      <!-- Timeline -->
+      <div class="col-12 col-lg-7">
+        <h2 class="h6">{{ 'reports.timeline' | translate }}</h2>
+        @if (events().length === 0) {
+          <p class="text-muted small">{{ 'reports.noEvents' | translate }}</p>
+        } @else {
+          <ul class="list-group list-group-flush">
+            @for (event of events(); track event.id) {
+              <li class="list-group-item px-0">
+                <div class="d-flex justify-content-between">
+                  <strong class="small">{{ 'reports.eventType.' + event.eventType | translate }}</strong>
+                  <small class="text-muted">{{ event.createdAt | date: 'short' }}</small>
+                </div>
+                @if (event.message) {
+                  <p class="mb-0 small">{{ event.message }}</p>
+                }
+              </li>
+            }
+          </ul>
+        }
+      </div>
+
+      <!-- Status actions -->
+      <div class="col-12 col-lg-5">
+        <h2 class="h6">{{ 'reports.actions' | translate }}</h2>
+        <p class="text-muted small">{{ 'reports.actionsHint' | translate }}</p>
+
+        <div class="mb-3">
+          <label class="form-label small" for="responder-id">{{ 'reports.responderId' | translate }}</label>
+          <div class="input-group input-group-sm">
+            <input
+              id="responder-id"
+              type="text"
+              class="form-control"
+              [ngModel]="responderIdInput()"
+              (ngModelChange)="responderIdInput.set($event)"
+              [placeholder]="'reports.responderIdPlaceholder' | translate"
+            />
+            <button type="button" class="btn btn-outline-primary" [disabled]="acting() || !responderIdInput().trim()" (click)="assign()">
+              {{ 'reports.assign' | translate }}
+            </button>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <button type="button" class="btn btn-sm btn-outline-secondary w-100" [disabled]="acting()" (click)="start()">
+            {{ 'reports.start' | translate }}
+          </button>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label small" for="resolution-note">{{ 'reports.resolutionNote' | translate }}</label>
+          <textarea
+            id="resolution-note"
+            class="form-control form-control-sm"
+            rows="2"
+            [ngModel]="resolutionNote()"
+            (ngModelChange)="resolutionNote.set($event)"
+          ></textarea>
+          <button type="button" class="btn btn-sm btn-success w-100 mt-2" [disabled]="acting() || !resolutionNote().trim()" (click)="resolve()">
+            {{ 'reports.resolve' | translate }}
+          </button>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label small" for="escalation-reason">{{ 'reports.escalationReason' | translate }}</label>
+          <textarea
+            id="escalation-reason"
+            class="form-control form-control-sm"
+            rows="2"
+            [ngModel]="escalationReason()"
+            (ngModelChange)="escalationReason.set($event)"
+          ></textarea>
+          <button type="button" class="btn btn-sm btn-outline-warning w-100 mt-2" [disabled]="acting()" (click)="escalate()">
+            {{ 'reports.escalate' | translate }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+</section>

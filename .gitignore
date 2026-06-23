@@ -1,6 +1,5 @@
 # ─────────────────────────────────────────────────────────────
 # Taarifu workspace .gitignore
-# ─────────────────────────────────────────────────────────────
 
 # Cloned reference repositories — THROW-AWAY, reference only.
 # Not part of this project. Re-clone from GitHub if ever needed.
@@ -9,19 +8,21 @@ taarifu-engine-api/
 taarifu-engine-dash/
 taarifu-mob-app/
 taarifu-core-api/
-
 # Local scratch & backups
 _prd_drafts/
 *.bak
-
-# Temporary parallel-build worktrees (auto-created/removed by the worktree-isolation
-# tooling; the real code lives at the repo root and is merged from these branches).
-.claude/worktrees/
-
+# Local environment secrets (docker compose auto-loads ./.env) — NEVER commit.
+# Template lives at deploy/.env.example.
+.env
+*.env
+!deploy/.env.example
 # OS / editor noise
 Thumbs.db
 .DS_Store
 desktop.ini
+# Temporary parallel-build worktrees (auto-created/removed by the worktree-isolation
+# tooling; the real code lives at the repo root and is merged from these branches).
+.claude/worktrees/
 .vscode/
 .idea/
 *.iml

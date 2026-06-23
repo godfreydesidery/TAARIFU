@@ -1,0 +1,106 @@
+# =============================================================================
+# Taarifu — local development stack.
+#
+# Brings up the dependencies the backend needs plus the backend itself, wired
+# to the EXACT environment variables backend/src/main/resources/application.yml
+# reads (TAARIFU_DB_*, TAARIFU_JWT_SECRET, TAARIFU_CRYPTO_DEV_KEY, ...).
+#
+# Stack (ARCHITECTURE.md §2): PostgreSQL 16 + PostGIS 3.4, Redis 7, backend on :8081.
+#
+# SECRETS: none are committed. Copy deploy/.env.example -> .env and fill it in.
+#   cp deploy/.env.example .env
+#   # generate the two required secrets:
+#   #   TAARIFU_JWT_SECRET=$(openssl rand -base64 48)
+#   #   TAARIFU_CRYPTO_DEV_KEY=$(openssl rand -base64 32)
+# Compose auto-loads ./.env. The ${VAR:?...} forms below FAIL FAST with a clear
+# message if a required secret is missing, mirroring the backend's own startup
+# guard (MF-1) — no insecure defaults.
+#
+# Usage:
+#   docker compose up -d db redis          # just the infra (run the backend from your IDE)
+#   docker compose up --build              # full stack incl. the backend container
+#   docker compose down                    # stop;  add -v to also drop the DB volume
+# =============================================================================
+
+services:
+  # --- PostgreSQL 16 + PostGIS 3.4 — same image family as production + tests. ---
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: taarifu-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-taarifu}
+      POSTGRES_USER: ${POSTGRES_USER:-taarifu}
+      # Local-only password; override via .env. NOT a production secret.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-taarifu}
+    ports:
+      - "${DB_HOST_PORT:-5432}:5432"
+    volumes:
+      - taarifu-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-taarifu} -d ${POSTGRES_DB:-taarifu}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # --- Redis 7 — OTP / idempotency / USSD session state (ARCHITECTURE §2). ---
+  redis:
+    image: redis:7-alpine
+    container_name: taarifu-redis
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # --- Backend (Spring Boot, :8081). Built from the multi-stage backend/Dockerfile. ---
+  # Flyway runs migrations on startup (validate-on-migrate); ddl-auto=validate.
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: taarifu-backend
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # --- Datasource: points at the `db` service on the compose network. ---
+      TAARIFU_DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-taarifu}
+      TAARIFU_DB_USER: ${POSTGRES_USER:-taarifu}
+      TAARIFU_DB_PASSWORD: ${POSTGRES_PASSWORD:-taarifu}
+
+      # --- Server port (matches Dockerfile EXPOSE 8081 + application.yml default). ---
+      SERVER_PORT: "8081"
+
+      # --- Required secrets: NO defaults. Compose fails fast if missing (see .env.example). ---
+      TAARIFU_JWT_SECRET: ${TAARIFU_JWT_SECRET:?set TAARIFU_JWT_SECRET in .env (openssl rand -base64 48)}
+      TAARIFU_CRYPTO_DEV_KEY: ${TAARIFU_CRYPTO_DEV_KEY:?set TAARIFU_CRYPTO_DEV_KEY in .env (openssl rand -base64 32)}
+
+      # --- Optional, with safe local defaults. ---
+      TAARIFU_JWT_ISSUER: ${TAARIFU_JWT_ISSUER:-taarifu}
+      TAARIFU_JWT_AUDIENCE: ${TAARIFU_JWT_AUDIENCE:-taarifu-clients}
+      # CORS allow-list — explicit origins only, NEVER '*' with credentials (PRD §18).
+      TAARIFU_CORS_ORIGINS: ${TAARIFU_CORS_ORIGINS:-http://localhost:4200}
+      # Geocoder: 'stub' locally (no seeded ward boundaries needed); 'postgis' in real envs.
+      TAARIFU_GEOCODER: ${TAARIFU_GEOCODER:-stub}
+      # Identity verification adapter (D-Q2): operator-assisted (MVP) or auto-stub (E2E/dev).
+      TAARIFU_VERIFICATION_PROVIDER: ${TAARIFU_VERIFICATION_PROVIDER:-operator-assisted}
+    ports:
+      - "${BACKEND_HOST_PORT:-8081}:8081"
+    healthcheck:
+      # Context-path is /api/v1, so the actuator liveness probe lives here.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/api/v1/actuator/health/liveness || exit 1"]
+      interval: 30s
+      timeout: 3s
+      start_period: 40s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  # Named volume so local DB state survives `docker compose down` (drop with `down -v`).
+  taarifu-db-data:

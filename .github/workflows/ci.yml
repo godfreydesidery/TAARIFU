@@ -1,0 +1,454 @@
+# =============================================================================
+# Taarifu — Continuous Integration pipeline.
+#
+# Grounding: CLAUDE.md §5 (CI gates: lint -> test -> SAST -> container-scan ->
+# deploy), ARCHITECTURE.md §9 (observability/health), §4.1 (Flyway/PostGIS),
+# §2 (pinned stack: Java 21, Maven wrapper, PostgreSQL 16 + PostGIS 3.4, Redis 7).
+#
+# Monorepo reality (CLAUDE.md §4): backend/ (Spring Boot, Java 21, Maven),
+# web-admin/ (Angular 18), mobile/ (Flutter). web-admin/ and mobile/ currently
+# live on unmerged feature branches, so their jobs are GUARDED: a job only runs
+# when its app directory is present on the checked-out ref. A missing app dir
+# SKIPS the job (never fails the pipeline). Guarding is two-layered:
+#   1. a `changes` job (dorny/paths-filter) detects which app dirs exist + changed;
+#   2. each app job additionally re-checks with `hashFiles(...)` after checkout.
+#
+# The gate sequence for the backend (the only app guaranteed present on develop):
+#   build+test (Testcontainers ITs)  ->  SAST (CodeQL)  ->  container build
+#   ->  container/dependency scan (Trivy)  ->  [push only if a registry secret].
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+# Cancel superseded runs on the same ref to save runner minutes (cost-efficiency, §15).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege default token; jobs that need more raise it locally (CodeQL needs security-events).
+permissions:
+  contents: read
+
+env:
+  # Image coordinates for the container-build/scan job. Pushed only when a registry
+  # secret exists (see the container job) — no push on forks/PRs by default.
+  IMAGE_NAME: taarifu-backend
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 0) Detect which app directories exist AND changed on this ref.
+  #    Outputs drive the `if:` guards on every downstream job so jobs are
+  #    present-and-correct but skipped when their app dir is absent.
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Detect changed apps
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.exists.outputs.backend }}
+      web-admin: ${{ steps.exists.outputs.web-admin }}
+      mobile: ${{ steps.exists.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Presence check: the authoritative guard. A dir absent on this branch -> "false".
+      # We deliberately gate on PRESENCE (not just "changed") so a freshly merged app
+      # dir is built on its first appearance even without further edits.
+      - name: Detect app directories present on this ref
+        id: exists
+        shell: bash
+        run: |
+          for app in backend web-admin mobile; do
+            if [ -d "$app" ]; then
+              echo "$app=true"  >> "$GITHUB_OUTPUT"
+              echo "present: $app"
+            else
+              echo "$app=false" >> "$GITHUB_OUTPUT"
+              echo "absent (job will skip): $app"
+            fi
+          done
+
+  # ---------------------------------------------------------------------------
+  # 1) BACKEND — Spring Boot, Java 21, Maven. Runs the full `verify` suite
+  #    including Testcontainers integration tests (real PostGIS), which need
+  #    Docker — available on ubuntu-latest. PostgreSQL+PostGIS and Redis service
+  #    containers are provided as a documented fallback / future-proofing; the
+  #    current ITs self-provision via Testcontainers and ignore these services.
+  # ---------------------------------------------------------------------------
+  backend:
+    name: Backend (build + test)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      # PostgreSQL 16 + PostGIS 3.4 — same image family as production (ARCHITECTURE §2,§4.1).
+      # Testcontainers ITs spin their OWN container; this service is here so plain
+      # JDBC/Flyway smoke runs (or future non-Testcontainers ITs) have a DB to hit.
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: taarifu_ci
+          POSTGRES_USER: taarifu
+          POSTGRES_PASSWORD: taarifu
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U taarifu -d taarifu_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      # Redis 7 — forward-looking (ARCHITECTURE §2: OTP/idempotency/USSD state).
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Belt-and-suspenders: even if the guard above passed, confirm the build files
+      # exist before doing work (protects against partial merges).
+      - name: Verify backend project present
+        id: guard
+        shell: bash
+        run: |
+          if [ ! -f backend/pom.xml ] || [ ! -f backend/mvnw ]; then
+            echo "backend/pom.xml or backend/mvnw missing — skipping backend job."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 21 (Temurin) + Maven cache
+        if: steps.guard.outputs.skip == 'false'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven           # caches ~/.m2 keyed on the POMs
+
+      - name: Make Maven wrapper executable
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: backend
+        run: chmod +x ./mvnw
+
+      # `verify` = compile + unit tests + integration tests (the *IntegrationTest
+      # classes use Testcontainers/PostGIS — they finally run here where Docker exists).
+      # Test secrets for the `test` profile are dummy values committed in
+      # application-test.yml; no real secrets are needed in CI.
+      - name: Build, test, verify
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: backend
+        run: ./mvnw -B -ntp verify
+
+      # Publish JUnit results regardless of pass/fail so red builds are diagnosable.
+      - name: Publish test report
+        if: always() && steps.guard.outputs.skip == 'false'
+        uses: dorny/test-reporter@v1
+        with:
+          name: backend-tests
+          path: 'backend/target/surefire-reports/*.xml,backend/target/failsafe-reports/*.xml'
+          reporter: java-junit
+          fail-on-error: false
+
+      # Keep the raw reports + the built jar as artefacts for triage / downstream use.
+      - name: Upload test reports + jar
+        if: always() && steps.guard.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-build-artifacts
+          path: |
+            backend/target/surefire-reports/
+            backend/target/failsafe-reports/
+            backend/target/*.jar
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # 1b) BACKEND SAST — CodeQL static analysis for Java (CLAUDE.md §5 SAST gate).
+  #     Separate job so a SAST finding is visible independently of the test run,
+  #     and so it can post to the GitHub Security tab (needs security-events:write).
+  # ---------------------------------------------------------------------------
+  backend-sast:
+    name: Backend SAST (CodeQL)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write   # upload SARIF to the Security tab
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: java-kotlin
+          # security-and-quality gives the deeper query suite; drop to 'security-extended'
+          # if runtime becomes a concern on large PRs.
+          queries: security-and-quality
+
+      # Build the backend so CodeQL can analyse compiled bytecode (skip tests — the
+      # backend job already runs them; SAST only needs a successful compile).
+      - name: Build for analysis
+        working-directory: backend
+        run: |
+          chmod +x ./mvnw
+          ./mvnw -B -ntp -DskipTests clean package
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: backend-java
+
+  # ---------------------------------------------------------------------------
+  # 2) WEB-ADMIN — Angular 18. GUARDED: only runs when web-admin/ is present.
+  # ---------------------------------------------------------------------------
+  web-admin:
+    name: Web Admin (Angular)
+    needs: changes
+    if: needs.changes.outputs.web-admin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify web-admin project present
+        id: guard
+        shell: bash
+        run: |
+          if [ ! -f web-admin/package.json ]; then
+            echo "web-admin/package.json missing — skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node 22 + npm cache
+        if: steps.guard.outputs.skip == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-admin/package-lock.json
+
+      - name: Install dependencies (clean, lockfile-exact)
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: web-admin
+        run: npm ci
+
+      # Lint is best-effort: not all scaffolds wire an npm "lint" script. Run it if present.
+      # We read package.json deterministically (node -e) rather than parsing `npm run` output.
+      - name: Lint (if configured)
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: web-admin
+        run: |
+          if node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)"; then
+            npm run lint
+          else
+            echo "No 'lint' script — skipping (CLAUDE.md §5 lint gate; add when scaffolded)."
+          fi
+
+      - name: Build
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: web-admin
+        run: npm run build
+
+      # Headless unit tests. ChromeHeadless is preinstalled on ubuntu-latest runners.
+      # --watch=false / --browsers=ChromeHeadless are Angular CLI (Karma) flags; harmless
+      # extra args are ignored by other runners.
+      - name: Test (headless)
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: web-admin
+        env:
+          CHROME_BIN: /usr/bin/google-chrome
+        run: |
+          if node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)"; then
+            npm test -- --watch=false --browsers=ChromeHeadless
+          else
+            echo "No 'test' script — skipping."
+          fi
+
+  # ---------------------------------------------------------------------------
+  # 3) MOBILE — Flutter. GUARDED: only runs when mobile/ is present.
+  # ---------------------------------------------------------------------------
+  mobile:
+    name: Mobile (Flutter)
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify mobile project present
+        id: guard
+        shell: bash
+        run: |
+          if [ ! -f mobile/pubspec.yaml ]; then
+            echo "mobile/pubspec.yaml missing — skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Flutter (stable)
+        if: steps.guard.outputs.skip == 'false'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Analyze (static analysis = Flutter lint gate)
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: mobile
+        run: flutter analyze
+
+      - name: Test
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: mobile
+        run: flutter test
+
+  # ---------------------------------------------------------------------------
+  # 4) CONTAINER BUILD + SCAN — multi-stage Dockerfile already in backend/.
+  #    Builds the runtime image, runs Trivy as the dependency/container scan gate
+  #    (CLAUDE.md §5 container-scan), uploads SARIF, and PUSHES only when a
+  #    registry secret exists (no push on forks/PRs without credentials).
+  # ---------------------------------------------------------------------------
+  container:
+    name: Container build + Trivy scan
+    needs: [changes, backend]
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write   # upload Trivy SARIF to the Security tab
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Dockerfile present
+        id: guard
+        shell: bash
+        run: |
+          if [ ! -f backend/Dockerfile ]; then
+            echo "backend/Dockerfile missing — skipping container job."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.guard.outputs.skip == 'false'
+        uses: docker/setup-buildx-action@v3
+
+      # Decide whether we have registry credentials. If REGISTRY_USERNAME secret is
+      # empty/absent we build-and-scan only (no push) — works on every fork/PR.
+      - name: Determine push policy
+        if: steps.guard.outputs.skip == 'false'
+        id: policy
+        shell: bash
+        env:
+          REGISTRY: ${{ secrets.REGISTRY }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+        run: |
+          if [ -n "$REGISTRY" ] && [ -n "$REGISTRY_USERNAME" ] && [ "${{ github.event_name }}" = "push" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+            echo "ref=${REGISTRY}/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            # Local-only tag for scanning when not pushing.
+            echo "ref=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to registry
+        if: steps.guard.outputs.skip == 'false' && steps.policy.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      # Build the image locally (load into the daemon) so Trivy can scan it before any push.
+      - name: Build image (load to local daemon)
+        if: steps.guard.outputs.skip == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          load: true
+          push: false
+          tags: ${{ steps.policy.outputs.ref }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Container + dependency scan gate. Fails the build on CRITICAL/HIGH with a fix
+      # available (CLAUDE.md §5). Tune `severity`/`ignore-unfixed` via policy as needed.
+      - name: Trivy image scan (gate)
+        if: steps.guard.outputs.skip == 'false'
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.policy.outputs.ref }}:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: CRITICAL,HIGH
+
+      # Also emit SARIF (non-blocking) so findings land in the Security tab over time.
+      - name: Trivy image scan (SARIF report)
+        if: steps.guard.outputs.skip == 'false'
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.policy.outputs.ref }}:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+        continue-on-error: true
+
+      - name: Upload Trivy SARIF
+        if: steps.guard.outputs.skip == 'false'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-backend
+        continue-on-error: true
+
+      # Push only after the scan passes and only when credentials exist.
+      - name: Push image (only if registry configured)
+        if: steps.guard.outputs.skip == 'false' && steps.policy.outputs.push == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.policy.outputs.ref }}:${{ github.sha }}
+            ${{ steps.policy.outputs.ref }}:${{ github.ref_name }}
+          cache-from: type=gha

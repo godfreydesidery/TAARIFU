@@ -96,6 +96,23 @@ public enum AuditEventType {
     AUTHZ_SELF_ACTION_BLOCKED,
 
     /**
+     * A petition was successfully signed — a binding civic act (engagement; R-4, PRD §23.5/§12.2).
+     * actor = signer account publicId, subject = petition publicId, {@code reason_code} = the petition
+     * target type (e.g. {@code REPRESENTATIVE}/{@code OFFICE}). The most sensitive civic acts carry a
+     * complete immutable success trail (not only denials). No comment, signature content, or PII is attached
+     * (PRD §18, PDPA).
+     */
+    PETITION_SIGNED,
+
+    /**
+     * A binding rating was successfully submitted/revised — a binding civic act (accountability; R-4, PRD
+     * §23.5/§10 US-6.2). actor = rater account publicId, subject = rated subject publicId,
+     * {@code reason_code} = {@code <subjectType>:<period>}. No score, comment, or PII is attached
+     * (PRD §18, PDPA).
+     */
+    RATING_SUBMITTED,
+
+    /**
      * A moderator took an append-only moderation action on a queue item (actor=moderator,
      * subject=content author; {@code reason_code} = the moderation action taken,
      * e.g. {@code REMOVE}/{@code HIDE}/{@code APPROVE}). The immutable {@code moderation_action} row is the

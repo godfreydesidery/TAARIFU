@@ -161,13 +161,18 @@ public class PetitionService {
      *   <li><b>tier</b> — gated by {@code @RequiresTier("T3")} on the controller (live-resolved, MF-2);</li>
      *   <li><b>no-self-petition</b> — the signer may not be the petition's target (D13/D16);</li>
      *   <li><b>one-per-person</b> — pre-checked here and <b>guaranteed</b> by the DB unique constraint;</li>
-     *   <li><b>electoral scope</b> — for a {@code REPRESENTATIVE}-targeted petition, the signer must be an
-     *       elector of the target rep's constituency: resolved via {@link RepresentativeQueryApi} ×
-     *       {@link ElectoralScopeApi} (D13); a mismatch is {@link ErrorCode#OUT_OF_SCOPE}, audited. An
-     *       {@code OFFICE} target (or a constituency-less rep) carries no constituency gate.</li>
+     *   <li><b>electoral scope (two-tier — F1)</b> — for a {@code REPRESENTATIVE}-targeted petition, the
+     *       signer must be an elector of the target rep's <b>seat</b>, by mandate: a constituency-MP is gated
+     *       on the rep's constituency ({@link RepresentativeQueryApi#constituencyOf} ×
+     *       {@link ElectoralScopeApi#isElectorOf}); a councillor/ward-exec on the rep's <b>ward</b>
+     *       ({@link RepresentativeQueryApi#wardOf} × {@link ElectoralScopeApi#isElectorOfWard}); a
+     *       special-seats/nominated rep has no geographic gate (PRD §22.6). A mismatch is
+     *       {@link ErrorCode#OUT_OF_SCOPE}, audited. An {@code OFFICE} target carries no constituency/ward
+     *       gate.</li>
      * </ol>
      * <p>It <b>never</b> reads a token balance — that is the fence (PRD §23.5). The signature count bump is
-     * a derived counter, not a weight.</p>
+     * a derived counter, not a weight. On success a {@link AuditEventType#PETITION_SIGNED} event is appended
+     * (refs only, no PII — R-4).</p>
      *
      * @param petitionPublicId the petition to sign.
      * @param signerPublicId   the authenticated signer's account public id (from {@code CurrentUser}, never the body).
@@ -205,24 +210,25 @@ public class PetitionService {
             throw new ApiException(ErrorCode.CONFLICT);
         }
 
-        // FENCE: electoral scope (D13). A petition addressed to a REPRESENTATIVE is constituency-scoped:
-        // the signer must be an elector of that representative's constituency. The rep's constituency is
-        // resolved via institutions' published port; the signer's single isElectoral constituency is
-        // checked via identity's published port (ADR-0013 — engagement imports neither module's internals).
-        // A rep with no constituency (councillor/special-seats/nominated), and an OFFICE-targeted petition,
-        // carry no constituency gate. NOTE: token balance is NEVER consulted in this path (§23.5 fence).
-        if (petition.getTargetType() == PetitionTargetType.REPRESENTATIVE) {
-            Optional<UUID> targetConstituency = representativeQueryApi.constituencyOf(petition.getTargetId());
-            if (targetConstituency.isPresent()
-                    && !electoralScopeApi.isElectorOf(signerPublicId, targetConstituency.get())) {
-                audit.record(AuditEvent.Builder
-                        .of(AuditEventType.AUTHZ_SCOPE_DENIED, AuditOutcome.DENIED)
-                        .actor(signerPublicId)
-                        .subject(petition.getTargetId())
-                        .reason("SIGN_PETITION_OUT_OF_ELECTORAL_SCOPE")
-                        .build());
-                throw new ApiException(ErrorCode.OUT_OF_SCOPE);
-            }
+        // FENCE: electoral scope (D13, two-tier — F1). A petition addressed to a REPRESENTATIVE is scoped to
+        // that rep's electoral seat, keyed off the rep's MANDATE (resolved via institutions' published ports;
+        // the signer's electoral location via identity's published ports — engagement imports neither
+        // module's internals, ADR-0013):
+        //   * constituency-mandate MP  -> signer must be an elector of the rep's CONSTITUENCY;
+        //   * councillor / ward-exec   -> signer must be an elector of the rep's WARD (F1: previously skipped,
+        //                                  letting anyone nationwide petition any councillor);
+        //   * special-seats / nominated -> no geographic seat, no geographic gate (PRD §22.6).
+        // An OFFICE-targeted petition carries no constituency/ward gate (F5 — national office scope, unchanged).
+        // NOTE: token balance is NEVER consulted in this path (§23.5 fence).
+        if (petition.getTargetType() == PetitionTargetType.REPRESENTATIVE
+                && !isElectorOfRepSeat(signerPublicId, petition.getTargetId())) {
+            audit.record(AuditEvent.Builder
+                    .of(AuditEventType.AUTHZ_SCOPE_DENIED, AuditOutcome.DENIED)
+                    .actor(signerPublicId)
+                    .subject(petition.getTargetId())
+                    .reason("SIGN_PETITION_OUT_OF_ELECTORAL_SCOPE")
+                    .build());
+            throw new ApiException(ErrorCode.OUT_OF_SCOPE);
         }
 
         PetitionSignature signature = PetitionSignature.of(petition, signerPublicId, comment, publicSignature);
@@ -234,12 +240,41 @@ public class PetitionService {
         }
         petition.registerSignature();
 
-        // NOTE: a dedicated PETITION_SIGNED audit type is requested centrally (see CENTRAL INTEGRATION
-        // NEEDS) — the common AuditEventType enum is a shared file this module must not edit. Until it is
-        // added, the binding-sign success path is not separately audited here; the denial paths above use
-        // the existing AUTHZ_SELF_ACTION_BLOCKED type. No PII is ever written either way (PRD §18).
+        // R-4: append the PETITION_SIGNED success event — the most sensitive civic acts carry a complete
+        // immutable trail (binding-success, not just denials). References/public-ids and a non-PII reason
+        // only (the petition target type) — never the comment or any PII (PRD §18, PDPA, L-1).
+        audit.record(AuditEvent.Builder
+                .of(AuditEventType.PETITION_SIGNED, AuditOutcome.SUCCESS)
+                .actor(signerPublicId)
+                .subject(petition.getPublicId())
+                .reason(petition.getTargetType().name())
+                .build());
 
         return mapper.toPetitionDto(petition);
+    }
+
+    /**
+     * Resolves whether the signer is an elector of the target representative's seat, dispatching on the
+     * rep's mandate (F1, D13): a constituency-mandate MP is gated on the rep's constituency; a
+     * councillor/ward-exec on the rep's ward; a genuinely seat-less rep (special-seats/nominated) carries no
+     * geographic gate and is always allowed. Both ports throw {@code NOT_FOUND} for a non-existent rep.
+     *
+     * @param signerPublicId the authenticated signer's account public id.
+     * @param targetId       the petition's target representative public id.
+     * @return {@code true} if the signer may sign against this rep on the electoral-scope axis.
+     */
+    private boolean isElectorOfRepSeat(UUID signerPublicId, UUID targetId) {
+        Optional<UUID> constituency = representativeQueryApi.constituencyOf(targetId);
+        if (constituency.isPresent()) {
+            return electoralScopeApi.isElectorOf(signerPublicId, constituency.get());
+        }
+        // No constituency: a councillor/ward-exec is ward-tier — gate on the ward (F1).
+        Optional<UUID> ward = representativeQueryApi.wardOf(targetId);
+        if (ward.isPresent()) {
+            return electoralScopeApi.isElectorOfWard(signerPublicId, ward.get());
+        }
+        // Genuinely seat-less (special-seats / nominated) — no geographic electoral gate (PRD §22.6).
+        return true;
     }
 
     /** Loads a petition by public id or throws a localised not-found. */

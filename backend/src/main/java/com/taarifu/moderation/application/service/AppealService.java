@@ -69,23 +69,33 @@ public class AppealService {
     /**
      * Files an appeal against a moderation action (UC-H03), allowed only to the affected content author.
      *
-     * @param appellantProfileId the appellant's profile public id (from the security context).
-     * @param actionPublicId     the action being appealed.
-     * @param request            the validated appeal request.
+     * <p>WHY the grain is the <b>account</b> public id (R-2, D16): {@code appellantAccountPublicId} carries
+     * the caller's immutable <b>account</b> public id ({@code CurrentUser.requirePublicId()} = the JWT
+     * subject), <b>not</b> a {@code Profile} id. The "only the affected author may appeal" check compares it
+     * against {@code ModerationAction.subjectAuthorProfileId}, which is itself the author's account public id
+     * (the same grain frozen when the queue item was opened). The two ids must be the same grain or a
+     * legitimate author would be wrongly forbidden / an arbitrary account wrongly allowed — so the parameter
+     * name now states the account grain. The persistence column keeps its historical {@code *_profile_id}
+     * name; the value is the account id.</p>
+     *
+     * @param appellantAccountPublicId the appellant's <b>account</b> public id (from the security context,
+     *                                 never a body-supplied id).
+     * @param actionPublicId           the action being appealed.
+     * @param request                  the validated appeal request.
      * @return the created {@link AppealDto}.
      * @throws ApiException {@link ErrorCode#NOT_FOUND} if the action is unknown,
      *                      {@link ErrorCode#FORBIDDEN} if the appellant is not the affected author,
      *                      {@link ErrorCode#CONFLICT} if the action already has a live appeal.
      */
     @Transactional
-    public AppealDto fileAppeal(UUID appellantProfileId, UUID actionPublicId, FileAppealRequest request) {
+    public AppealDto fileAppeal(UUID appellantAccountPublicId, UUID actionPublicId, FileAppealRequest request) {
         ModerationAction action = actionRepository.findByPublicId(actionPublicId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND));
 
         // Only the affected party may appeal. When the action has no surfaced author, no one is the
         // affected party here — deny-by-default (FORBIDDEN) rather than allow an arbitrary appellant.
         UUID affectedAuthor = action.getSubjectAuthorProfileId();
-        if (affectedAuthor == null || !affectedAuthor.equals(appellantProfileId)) {
+        if (affectedAuthor == null || !affectedAuthor.equals(appellantAccountPublicId)) {
             throw new ApiException(ErrorCode.FORBIDDEN);
         }
 
@@ -93,7 +103,7 @@ public class AppealService {
             throw new ApiException(ErrorCode.CONFLICT);
         }
 
-        Appeal appeal = Appeal.open(action, appellantProfileId, request.grounds());
+        Appeal appeal = Appeal.open(action, appellantAccountPublicId, request.grounds());
         try {
             Appeal saved = appealRepository.save(appeal);
             return AppealDto.from(saved);

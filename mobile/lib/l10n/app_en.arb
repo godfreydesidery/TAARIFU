@@ -163,5 +163,21 @@
   "prefsEmpty": "You haven't set preferences yet; defaults apply.",
   "prefChannelLabel": "Channel: {channel}",
 
-  "feedDetailTitle": "Update"
+  "feedDetailTitle": "Update",
+
+  "wardPickerTitle": "Choose a ward",
+  "wardPickerSearchTab": "Search",
+  "wardPickerBrowseTab": "Browse",
+  "wardPickerSearchHint": "Type a ward name",
+  "wardPickerPickRegion": "Choose a region",
+  "wardPickerPickDistrict": "Choose a district",
+  "wardPickerPickWard": "Choose a ward",
+  "wardPickerNoResults": "No ward found. Try another name.",
+  "wardPickerNoWards": "No wards for this district.",
+  "wardPickerChosenLabel": "Ward: {ward}",
+  "wardPickerChooseButton": "Choose a ward",
+  "wardPickerChangeButton": "Change ward",
+
+  "announcementDetailTitle": "Announcement",
+  "announcementNotFound": "This announcement is unavailable or has expired."
 }

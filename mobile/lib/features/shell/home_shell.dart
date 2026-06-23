@@ -63,7 +63,9 @@ class _HomeShellState extends State<HomeShell> {
             categoryRepository: _deps.categoryRepository,
             reportRepository: _deps.reportRepository,
           )..loadCategories(),
-          child: const ReportFormScreen(),
+          child: ReportFormScreen(
+            geographyRepository: _deps.geographyRepository,
+          ),
         ),
       ),
     );
@@ -191,7 +193,10 @@ class _HomeShellState extends State<HomeShell> {
         drawer: _buildDrawer(context, l10n),
         body: IndexedStack(
           index: _index,
-          children: const [FeedScreen(), MyRepsScreen()],
+          children: [
+            const FeedScreen(),
+            MyRepsScreen(geographyRepository: _deps.geographyRepository),
+          ],
         ),
         floatingActionButton: FloatingActionButton.extended(
           onPressed: _openReportForm,

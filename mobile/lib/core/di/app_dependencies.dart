@@ -17,9 +17,14 @@ import '../../features/profile/data/profile_repository.dart';
 import '../../features/reporting/data/category_repository.dart';
 import '../../features/reporting/data/report_repository.dart';
 import '../../features/representatives/data/representative_repository.dart';
+import 'dart:io';
+
+import 'package:path_provider/path_provider.dart';
+
 import '../config/app_config.dart';
 import '../network/api_client.dart';
 import '../network/connectivity_service.dart';
+import '../storage/file_outbox_store.dart';
 import '../storage/json_cache.dart';
 import '../storage/outbox_store.dart';
 import '../storage/token_store.dart';
@@ -31,7 +36,11 @@ class AppDependencies {
     : _tokenStore = TokenStore(),
       _connectivity = ConnectivityService(),
       _cache = InMemoryJsonCache(),
-      _outbox = InMemoryOutboxStore() {
+      // Durable, disk-backed outbox: a report drafted offline survives the app
+      // being killed before it could sync (PRD §15, UC-D03). The backing file is
+      // resolved lazily (async path_provider) on first use, so the composition
+      // root stays synchronous. See core/storage/file_outbox_store.dart.
+      _outbox = FileOutboxStore(fileResolver: _resolveOutboxFile) {
     _apiClient = ApiClient(
       config: config,
       tokenStore: _tokenStore,
@@ -101,4 +110,13 @@ class AppDependencies {
 
   /// Notification inbox + preferences.
   late final NotificationRepository notificationRepository;
+
+  /// Resolves the durable outbox's backing file under the platform's
+  /// app-support directory (private to the app, not user-visible like Documents,
+  /// and not auto-cleared like the cache dir — the queue must persist until it
+  /// syncs). Created lazily on the first outbox write.
+  static Future<File> _resolveOutboxFile() async {
+    final dir = await getApplicationSupportDirectory();
+    return File('${dir.path}/taarifu_outbox.json');
+  }
 }

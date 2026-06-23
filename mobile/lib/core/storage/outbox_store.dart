@@ -8,12 +8,13 @@
 /// replayed submit — a report filed offline is **never** duplicated on sync
 /// (ARCHITECTURE §5.4, PRD §17 idempotency).
 ///
-/// This is the write-side analogue of [JsonCache]'s read-through cache. Like that
-/// seam, the default implementation here is deliberately **in-memory** behind an
-/// interface: it proves the queue/replay pattern end-to-end while the production
-/// swap to a durable store (Drift/Isar, surviving cold start) is a drop-in that
-/// does not touch the repositories or BLoCs depending on this interface. The need
-/// for cold-start durability is flagged under CENTRAL INTEGRATION NEEDS.
+/// This is the write-side analogue of [JsonCache]'s read-through cache, behind a
+/// small interface. The **production** implementation is [FileOutboxStore] — a
+/// disk-backed queue that survives cold start (a draft is not lost if the app is
+/// killed before it syncs); it is wired in the composition root. The
+/// [InMemoryOutboxStore] below remains for fast, isolated unit tests. Both honour
+/// the same contract, so repositories/BLoCs depend only on this interface (clean
+/// boundaries, CLAUDE.md §3).
 ///
 /// It is NOT a secure store — a draft may contain free text the citizen typed but
 /// never PII like tokens (those live in [TokenStore]); attachments are referenced

@@ -99,6 +99,36 @@ class ModuleBoundaryTest {
     }
 
     /**
+     * No type in a module's <b>published port surface</b> ({@code ..api..}, which includes the event
+     * records under {@code ..api.event..}) may be a JPA {@code @Entity}. This mechanically guards the
+     * "no entity / no PII in published ports & events" invariant — the cross-module contract is
+     * ids/codes/enums + DTOs only, never a persistence aggregate (ADR-0013 §3 follow-up; ADR-0014 §1, §4
+     * — outbox payloads carry no PII; security review P3-1).
+     *
+     * <p>WHY this is the cheap mechanical insurance the review asked for: the no-PII / no-entity rule on
+     * published ports and event payloads was enforced only by contract + reviewer discipline. An
+     * {@code @Entity} sitting in {@code ..api..} is the load-bearing failure mode — it would drag a
+     * persistence aggregate (and any PII fields, lazy associations, or {@code domain.model} types) into a
+     * sibling module's compile surface and into serialised event payloads. This rule makes that
+     * impossible to commit unnoticed. It complements {@link #entitiesStayWithinDomainModel()} (entities
+     * live in {@code domain.model}) by asserting the same boundary from the {@code api} side — together
+     * they pin entities strictly to {@code domain.model}.</p>
+     *
+     * <p>{@code allowEmptyShould(true)} because a module may have an {@code api} package with no entities
+     * at all (the expected, healthy state) — an empty match set is a pass, not a configuration error.</p>
+     */
+    @Test
+    void noEntityInPublishedApiOrEvents() {
+        ArchRule rule = noClasses()
+                .that().resideInAPackage("..api..")
+                .should().beAnnotatedWith("jakarta.persistence.Entity")
+                .because("published ports and api.event payloads carry ids/codes/enums + DTOs only — never a "
+                        + "JPA entity (no entity / no PII leak in the cross-module contract; "
+                        + "ADR-0013 §3, ADR-0014 §1/§4, review P3-1)");
+        rule.allowEmptyShould(true).check(productionClasses);
+    }
+
+    /**
      * No module may import another module's internal layers ({@code domain} / {@code infrastructure}).
      * Cross-module integration is permitted ONLY through the callee's published {@code ..api..} package
      * (ADR-0013): synchronous reads via a published {@code *QueryApi}/{@code *Api}/{@code *LifecycleApi}

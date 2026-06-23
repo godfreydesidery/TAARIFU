@@ -1,0 +1,72 @@
+<!--
+  Announcement detail (GET /announcements/{id}). Public, server-gated read: only PUBLISHED, in-window
+  announcements resolve; anything else 404s → neutral "not available" state (PRD §12, §18, §22.6).
+-->
+<section style="max-width: 760px">
+  <a routerLink="/announcements" class="btn btn-sm btn-link px-0 mb-2">&laquo; {{ 'announcements.title' | translate }}</a>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <span class="visually-hidden">{{ 'common.loading' | translate }}</span>
+    </div>
+  } @else if (notAvailable()) {
+    <div class="alert alert-info" role="status">{{ 'announcements.notAvailable' | translate }}</div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="load()">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else if (announcement()) {
+    @let a = announcement()!;
+    <article>
+      <div class="d-flex align-items-start justify-content-between gap-2 flex-wrap mb-2">
+        <h1 class="h3 mb-0">{{ a.title }}</h1>
+        <span class="badge text-bg-success align-self-center">{{ 'announcements.statusValue.' + a.status | translate }}</span>
+      </div>
+
+      <p class="text-muted small mb-3">
+        @if (a.publishAt) {
+          {{ 'announcements.published' | translate }}: {{ a.publishAt | date: 'medium' : undefined : localeTag() }}
+        }
+        @if (a.expireAt) {
+          · {{ 'announcements.expires' | translate }}: {{ a.expireAt | date: 'medium' : undefined : localeTag() }}
+        }
+      </p>
+
+      <!-- Locale-appropriate body (EN when locale is EN and an EN body exists, else the SW default). -->
+      <div class="mb-4" style="white-space: pre-wrap">{{ localisedBody() }}</div>
+
+      <dl class="row small mb-0">
+        @if (a.audienceRole) {
+          <dt class="col-sm-3 text-muted">{{ 'announcements.audience' | translate }}</dt>
+          <dd class="col-sm-9">{{ a.audienceRole }}</dd>
+        }
+        @if (a.categoryId) {
+          <dt class="col-sm-3 text-muted">{{ 'announcements.category' | translate }}</dt>
+          <dd class="col-sm-9"><code>{{ a.categoryId }}</code></dd>
+        }
+        <dt class="col-sm-3 text-muted">{{ 'announcements.areas' | translate }}</dt>
+        <dd class="col-sm-9">
+          @if (a.areaIds.length === 0) {
+            {{ 'announcements.allAreas' | translate }}
+          } @else {
+            <ul class="list-inline mb-0">
+              @for (areaId of a.areaIds; track areaId) {
+                <li class="list-inline-item"><code>{{ areaId }}</code></li>
+              }
+            </ul>
+          }
+        </dd>
+        @if (a.channels.length > 0) {
+          <dt class="col-sm-3 text-muted">{{ 'announcements.channels' | translate }}</dt>
+          <dd class="col-sm-9">
+            @for (ch of a.channels; track ch) {
+              <span class="badge text-bg-light border me-1">{{ ch }}</span>
+            }
+          </dd>
+        }
+      </dl>
+    </article>
+  }
+</section>

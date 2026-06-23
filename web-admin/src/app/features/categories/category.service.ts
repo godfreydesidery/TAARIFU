@@ -28,6 +28,21 @@ export class CategoryService {
   }
 
   /**
+   * Lists ACTIVE categories only (the citizen/admin picker list). `GET /issue-categories`.
+   *
+   * <p>Backs the category typeahead picker used in admin forms (responder capability, routing rules). The
+   * public active list is the right source for a "choose a category" control — retired categories must not
+   * be selectable for new routing. The taxonomy is small, so callers fetch a generous page once and filter
+   * client-side rather than re-querying per keystroke (PRD §15 — fewer round-trips on a slow link).</p>
+   *
+   * @param params optional `page`/`size`/`sort` (default a large size to fetch the whole small taxonomy).
+   * @returns a {@link Page} of active {@link IssueCategory}.
+   */
+  listActive(params: { page?: number; size?: number; sort?: string }): Observable<Page<IssueCategory>> {
+    return this.api.getPage<IssueCategory>('/issue-categories', params);
+  }
+
+  /**
    * Fetches one category. `GET /issue-categories/{id}`.
    * @param id the category's public id.
    * @returns the {@link IssueCategory}.

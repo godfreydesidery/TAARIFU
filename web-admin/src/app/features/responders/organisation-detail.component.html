@@ -38,8 +38,15 @@
       </div>
       <div class="mb-3">
         <label class="form-label" for="r-cats">{{ 'responders.handledCategories' | translate }}</label>
-        <input id="r-cats" type="text" class="form-control" formControlName="handledCategoryIds" [placeholder]="'responders.idsHint' | translate" />
+        <app-category-picker inputId="r-cats" formControlName="handledCategoryIds" />
       </div>
+      @if (needsAreas) {
+        <div class="mb-3">
+          <label class="form-label" for="r-areas">{{ 'responders.coverageAreas' | translate }}</label>
+          <app-area-picker inputId="r-areas" formControlName="coverageAreaIds" />
+          <div class="form-text">{{ 'responders.coverageAreasHint' | translate }}</div>
+        </div>
+      }
       <div class="mb-3">
         <label class="form-label" for="r-sla">{{ 'responders.slaPolicy' | translate }}</label>
         <input id="r-sla" type="text" class="form-control" formControlName="slaPolicy" />

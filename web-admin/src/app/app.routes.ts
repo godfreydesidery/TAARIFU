@@ -65,6 +65,11 @@ export const routes: Routes = [
         loadChildren: () => import('./features/responders/responders.routes').then((m) => m.RESPONDERS_ROUTES),
       },
       {
+        path: 'announcements',
+        loadChildren: () =>
+          import('./features/announcements/announcements.routes').then((m) => m.ANNOUNCEMENTS_ROUTES),
+      },
+      {
         path: 'moderation',
         loadChildren: () => import('./features/moderation/moderation.routes').then((m) => m.MODERATION_ROUTES),
       },

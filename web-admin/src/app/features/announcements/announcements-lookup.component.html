@@ -1,0 +1,28 @@
+<!--
+  Announcements landing: by-id lookup into the detail view + an honest API-gap note.
+  No console-wide list endpoint exists yet (only GET /announcements/{id} + /mine) — PRD §12.
+-->
+<section style="max-width: 640px">
+  <h1 class="h3 mb-3">{{ 'announcements.title' | translate }}</h1>
+
+  <div class="alert alert-info" role="note">{{ 'announcements.apiGapNote' | translate }}</div>
+
+  <form (ngSubmit)="open()" novalidate>
+    <label class="form-label" for="ann-id">{{ 'announcements.lookupLabel' | translate }}</label>
+    <div class="input-group">
+      <input
+        id="ann-id"
+        type="text"
+        class="form-control"
+        [ngModel]="idInput()"
+        (ngModelChange)="idInput.set($event)"
+        name="announcementId"
+        [placeholder]="'announcements.lookupPlaceholder' | translate"
+        autocomplete="off"
+      />
+      <button type="submit" class="btn btn-primary" [disabled]="!idInput().trim()">
+        {{ 'announcements.open' | translate }}
+      </button>
+    </div>
+  </form>
+</section>

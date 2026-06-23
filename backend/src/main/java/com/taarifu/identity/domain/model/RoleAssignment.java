@@ -105,6 +105,24 @@ public class RoleAssignment extends BaseEntity {
     protected RoleAssignment() {
     }
 
+    /**
+     * Grants a role to a user with a given lifecycle status and no attribute scope (unrestricted
+     * within the role). Scope sets are added later by the granting module; the base CITIZEN grant at
+     * signup is unscoped (AUTH-DESIGN §3).
+     *
+     * @param user   the account receiving the grant.
+     * @param role   the granted role.
+     * @param status the initial lifecycle status (e.g. {@link RoleStatus#ACTIVE} for CITIZEN).
+     * @return the populated, transient assignment.
+     */
+    public static RoleAssignment grant(User user, Role role, RoleStatus status) {
+        RoleAssignment ra = new RoleAssignment();
+        ra.user = user;
+        ra.role = role;
+        ra.status = status;
+        return ra;
+    }
+
     /** @return the account holding the grant. */
     public User getUser() {
         return user;

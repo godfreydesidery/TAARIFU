@@ -1,6 +1,7 @@
 package com.taarifu.identity.domain.repository;
 
 import com.taarifu.identity.domain.model.Profile;
+import com.taarifu.identity.domain.model.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;
@@ -22,6 +23,18 @@ public interface ProfileRepository extends JpaRepository<Profile, Long> {
      * @return the profile, or empty.
      */
     Optional<Profile> findByPublicId(UUID publicId);
+
+    /**
+     * @param user the owning account.
+     * @return the account's 1:1 profile, or empty (used by {@code /me}, tier resolution).
+     */
+    Optional<Profile> findByUser(User user);
+
+    /**
+     * @param userPublicId the owning account's public id.
+     * @return the profile for that account, or empty.
+     */
+    Optional<Profile> findByUser_PublicId(UUID userPublicId);
 
     /**
      * Dedup lookup by deterministic blind index — never decrypts (D15).

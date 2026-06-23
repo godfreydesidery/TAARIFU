@@ -8,6 +8,7 @@ import com.taarifu.geography.api.dto.RegionDto;
 import com.taarifu.geography.application.mapper.GeographyMapper;
 import com.taarifu.geography.domain.model.Constituency;
 import com.taarifu.geography.domain.model.Location;
+import com.taarifu.geography.domain.model.WardConstituency;
 import com.taarifu.geography.domain.model.enums.LocationType;
 import com.taarifu.geography.domain.repository.ConstituencyRepository;
 import com.taarifu.geography.domain.repository.LocationRepository;
@@ -120,9 +121,46 @@ public class GeographyQueryService {
         return mapper.toConstituencyDto(constituency, currentWards);
     }
 
+    /**
+     * Resolves a ward (by public id) to the entity pair another module needs to <b>pin</b> a location:
+     * the ward {@link Location} and the {@link Constituency} in effect today (via the effective-dated
+     * bridge), or {@code null} constituency if the ward has no current mapping.
+     *
+     * <p>WHY this is geography's public API (not a cross-module repository reach-around): the
+     * {@code identity} module's {@code ProfileLocation} FK-references these geography entities (the
+     * documented persistence exception, ARCHITECTURE §4.3), but it must resolve them through geography's
+     * own service so the boundary holds at the application layer (CLAUDE.md §8). The minimum pin
+     * granularity is a Ward (PRD §9.0); a non-ward public id is rejected as not-found.</p>
+     *
+     * @param wardPublicId the ward's public id.
+     * @return the ward + effective constituency entity pair.
+     * @throws ResourceNotFoundException if no ward with that id exists (or it is not a WARD).
+     */
+    @Transactional(readOnly = true)
+    public WardPin resolveWardPin(UUID wardPublicId) {
+        Location ward = requireLocation(wardPublicId);
+        if (ward.getType() != LocationType.WARD) {
+            throw new ResourceNotFoundException("geography.ward.notFound", wardPublicId);
+        }
+        LocalDate today = LocalDate.ofInstant(clock.now(), java.time.ZoneOffset.UTC);
+        Constituency constituency = wardConstituencyRepository.findEffectiveMapping(wardPublicId, today)
+                .map(WardConstituency::getConstituency)
+                .orElse(null);
+        return new WardPin(ward, constituency);
+    }
+
     /** Loads a location by public id or throws a localised not-found. */
     private Location requireLocation(UUID publicId) {
         return locationRepository.findByPublicId(publicId)
                 .orElseThrow(() -> new ResourceNotFoundException("geography.location.notFound", publicId));
+    }
+
+    /**
+     * A ward and its effective constituency, as entity references for FK use by another module's pin.
+     *
+     * @param ward         the ward {@link Location} (minimum pin granularity, PRD §9.0).
+     * @param constituency the constituency in effect today, or {@code null} if unmapped.
+     */
+    public record WardPin(Location ward, Constituency constituency) {
     }
 }

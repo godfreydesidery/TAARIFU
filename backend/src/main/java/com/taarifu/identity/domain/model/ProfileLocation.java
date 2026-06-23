@@ -108,6 +108,33 @@ public class ProfileLocation extends BaseEntity {
     protected ProfileLocation() {
     }
 
+    /**
+     * Pins a place to a profile. The "at most one primary" rule is the DB partial-unique index's job
+     * (the caller must clear any prior primary first); this factory only constructs the row.
+     *
+     * @param profile         the owning profile.
+     * @param ward            the pinned ward (geography {@code Location} of type WARD; min granularity).
+     * @param constituency    the derived constituency at pin time, or {@code null} if unresolved.
+     * @param associationType how the profile relates to the place.
+     * @param primary         whether this is the single primary (default-context) location.
+     * @return the populated, transient location row (PRIVATE PII — never in a public DTO).
+     */
+    public static ProfileLocation pin(Profile profile, Location ward, Constituency constituency,
+                                      AssociationType associationType, boolean primary) {
+        ProfileLocation pl = new ProfileLocation();
+        pl.profile = profile;
+        pl.ward = ward;
+        pl.constituency = constituency;
+        pl.associationType = associationType;
+        pl.primary = primary;
+        return pl;
+    }
+
+    /** Clears the primary flag (when re-assigning the single primary to a new location, D12). */
+    public void clearPrimary() {
+        this.primary = false;
+    }
+
     /** @return the owning profile. */
     public Profile getProfile() {
         return profile;

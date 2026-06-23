@@ -16,9 +16,14 @@
 # TAARIFU_DB_USER=taarifu
 # TAARIFU_DB_PASSWORD=<set-in-env>
 
-# --- JWT (ADR-0007) ---
+# --- JWT (ADR-0007 / ADR-0011) ---
+# Boot FAILS FAST if TAARIFU_JWT_SECRET is absent or < 256-bit (MF-1) — set a strong value.
 # TAARIFU_JWT_SECRET=<output of: openssl rand -base64 48>
 # TAARIFU_JWT_ISSUER=taarifu
+# TAARIFU_JWT_AUDIENCE=taarifu-clients   # validated on verify (MF-1)
+
+# --- OTP (AUTH-DESIGN §9) ---
+# TAARIFU_OTP_TTL_SECONDS=300            # 5-minute single-use OTP lifetime
 
 # --- CORS allow-list (PRD §18) ---
 # Comma-separated EXACT origins. Never use '*' with credentials.

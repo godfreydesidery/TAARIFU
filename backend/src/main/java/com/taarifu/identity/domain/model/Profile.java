@@ -126,6 +126,62 @@ public class Profile extends BaseEntity {
     protected Profile() {
     }
 
+    /**
+     * Creates a natural-person profile for an account, with phone already verified (the signup path —
+     * a citizen reaches a phone-verified profile at T1, AUTH-DESIGN §3).
+     *
+     * @param user the owning account (1:1).
+     * @return the populated, transient profile.
+     */
+    public static Profile createPersonForSignup(User user) {
+        Profile p = new Profile();
+        p.user = user;
+        p.type = ProfileType.PERSON;
+        p.phoneVerified = true;
+        return p;
+    }
+
+    /**
+     * Updates the profile's name/demographic fields during profile completion (AUTH-DESIGN §6).
+     * Only the named fields are touched; {@code null} arguments leave the existing value unchanged so a
+     * PATCH semantics holds. Never logs values (S-4).
+     *
+     * @param firstName    given/first name, or {@code null} to leave unchanged.
+     * @param lastName     family name, or {@code null} to leave unchanged.
+     * @param dateOfBirth  date of birth, or {@code null} to leave unchanged.
+     * @param gender       gender, or {@code null} to leave unchanged.
+     * @param nationality  nationality code, or {@code null} to leave unchanged.
+     */
+    public void updateDetails(String firstName, String lastName, java.time.LocalDate dateOfBirth,
+                              String gender, String nationality) {
+        if (firstName != null) {
+            this.firstName = firstName;
+        }
+        if (lastName != null) {
+            this.lastName = lastName;
+        }
+        if (dateOfBirth != null) {
+            this.dateOfBirth = dateOfBirth;
+        }
+        if (gender != null) {
+            this.gender = gender;
+        }
+        if (nationality != null) {
+            this.nationality = nationality;
+        }
+    }
+
+    /** Marks the profile's email verified (after an EMAIL OTP verify — AUTH-DESIGN §6). */
+    public void markEmailVerified() {
+        this.emailVerified = true;
+        this.verifiedAt = Instant.now();
+    }
+
+    /** Marks the profile's phone verified (signup / re-verify). */
+    public void markPhoneVerified() {
+        this.phoneVerified = true;
+    }
+
     /** @return the owning account. */
     public User getUser() {
         return user;

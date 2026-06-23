@@ -68,6 +68,44 @@ public class RefreshToken extends BaseEntity {
     protected RefreshToken() {
     }
 
+    /**
+     * Issues a new (unused, un-revoked) refresh-token row in a rotation family.
+     *
+     * @param user      the owning account.
+     * @param tokenHash the SHA-256 hash of the raw token (never the raw token — PRD §18).
+     * @param familyId  the rotation-family id (a new family on login; the same family on rotation).
+     * @param expiresAt the expiry instant (UTC).
+     * @return the populated, transient token row.
+     */
+    public static RefreshToken issue(User user, String tokenHash, UUID familyId, Instant expiresAt) {
+        RefreshToken t = new RefreshToken();
+        t.user = user;
+        t.tokenHash = tokenHash;
+        t.familyId = familyId;
+        t.expiresAt = expiresAt;
+        t.used = false;
+        t.revoked = false;
+        return t;
+    }
+
+    /** Marks this token consumed on a successful rotation (single-use, S-3). */
+    public void markUsed() {
+        this.used = true;
+    }
+
+    /** Revokes this token (family revocation on reuse-detection, or logout — S-3). */
+    public void revoke() {
+        this.revoked = true;
+    }
+
+    /**
+     * @param now the current instant.
+     * @return whether this token is still presentable: not used, not revoked, not expired.
+     */
+    public boolean isLive(Instant now) {
+        return !used && !revoked && now.isBefore(expiresAt);
+    }
+
     /** @return the owning account. */
     public User getUser() {
         return user;

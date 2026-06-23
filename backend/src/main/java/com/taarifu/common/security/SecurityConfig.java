@@ -69,6 +69,21 @@ public class SecurityConfig {
     };
 
     /**
+     * Unauthenticated auth endpoints (POST): OTP request/verify, signup, login (password/OTP), and
+     * refresh — these mint or rotate tokens and therefore <b>cannot</b> require a prior token
+     * (AUTH-DESIGN §14.1). Logout is deliberately NOT here — it requires authentication. Anti-automation
+     * (rate-limit/lockout) and anti-enumeration protect these open endpoints (S-2).
+     */
+    private static final String[] PUBLIC_POST_PATTERNS = {
+            "/api/v1/auth/otp/request",
+            "/api/v1/auth/signup",
+            "/api/v1/auth/login/password",
+            "/api/v1/auth/login/otp",
+            "/api/v1/auth/login/otp/request",
+            "/api/v1/auth/refresh"
+    };
+
+    /**
      * Defines the single security filter chain.
      *
      * @param http            the Spring Security builder.
@@ -95,6 +110,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_ANY_PATTERNS).permitAll()
                         .requestMatchers(HttpMethod.GET, PUBLIC_GET_PATTERNS).permitAll()
+                        // Token-minting auth endpoints are open (they cannot require a prior token);
+                        // logout + everything else stays authenticated (AUTH-DESIGN §14.1).
+                        .requestMatchers(HttpMethod.POST, PUBLIC_POST_PATTERNS).permitAll()
                         // Deny-by-default: any other request must at least be authenticated; the
                         // precise permission is then enforced by @PreAuthorize on the handler.
                         .anyRequest().authenticated())

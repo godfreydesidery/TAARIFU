@@ -88,6 +88,13 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!-- ============================ AOP ================================= -->
+        <!-- AspectJ @Around advice backs the live @RequiresTier interceptor (MF-2, ADR-0011 §3). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
         <!-- ============================ Actuator ============================= -->
         <!-- Health/liveness/readiness + metrics (ARCHITECTURE §9). -->
         <dependency>

@@ -32,6 +32,7 @@ taarifu:
     jwt:
       secret: dGVzdC1qd3Qtc2VjcmV0LWZvci10YWFyaWZ1LWJhY2tlbmQtdGVzdHMtb25seQ==
       issuer: taarifu-test
+      audience: taarifu-test-clients
     cors:
       allowed-origins:
     crypto:

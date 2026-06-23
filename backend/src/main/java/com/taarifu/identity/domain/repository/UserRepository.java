@@ -33,4 +33,10 @@ public interface UserRepository extends JpaRepository<User, Long> {
      * @return {@code true} if an account already uses this phone (one account per phone — D11/D15).
      */
     boolean existsByPhone(String phone);
+
+    /**
+     * @param email login-alias email (not unique; first match wins).
+     * @return the account with that email, or empty (used by email-password login).
+     */
+    Optional<User> findByEmail(String email);
 }

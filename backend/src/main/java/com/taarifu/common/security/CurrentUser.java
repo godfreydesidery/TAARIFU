@@ -1,6 +1,10 @@
 package com.taarifu.common.security;
 
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -25,4 +29,32 @@ public record CurrentUser(
         List<String> roles,
         String trustTier
 ) {
+
+    /**
+     * Reads the authenticated {@link CurrentUser} from the security context.
+     *
+     * <p>WHY this lives here (not duplicated in every service): the {@link JwtAuthenticationFilter}
+     * stores the rich principal as the authentication <i>details</i>; this accessor is the single,
+     * DRY way for aspects/guards/services to recover it. Returns empty when unauthenticated — the
+     * caller decides whether that is an error (deny-by-default).</p>
+     *
+     * @return the current authenticated user, or {@link Optional#empty()} if no JWT principal is present.
+     */
+    public static Optional<CurrentUser> current() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.isAuthenticated() && auth.getDetails() instanceof CurrentUser cu) {
+            return Optional.of(cu);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * @return the authenticated user's {@code publicId}.
+     * @throws IllegalStateException if there is no authenticated principal — call only on guarded paths.
+     */
+    public static UUID requirePublicId() {
+        return current()
+                .map(CurrentUser::publicId)
+                .orElseThrow(() -> new IllegalStateException("No authenticated principal in context"));
+    }
 }

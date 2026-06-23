@@ -87,6 +87,57 @@ public class User extends BaseEntity {
     protected User() {
     }
 
+    /**
+     * Creates a new account in {@link UserStatus#PENDING} at {@link TrustTier#T0} (the signup entry
+     * state). Status and tier are promoted by the application after OTP verification; the client never
+     * sets them (AUTH-DESIGN §3, MF-2).
+     *
+     * @param phone the unique E.164 phone (the one-account-per-phone key — D11/D15).
+     * @return the populated, transient account.
+     */
+    public static User createPending(String phone) {
+        User u = new User();
+        u.phone = phone;
+        u.status = UserStatus.PENDING;
+        u.trustTier = TrustTier.T0;
+        return u;
+    }
+
+    /** Marks the account active (e.g. after OTP signup verification). */
+    public void activate() {
+        this.status = UserStatus.ACTIVE;
+    }
+
+    /**
+     * Sets the cached trust tier. This is a <b>convenience/claim source only</b>; high-stakes gating
+     * always re-resolves the live tier from the DB ({@code TierService}/MF-2), so a stale cached value
+     * can never authorise an action.
+     *
+     * @param trustTier the newly computed tier.
+     */
+    public void setTrustTier(TrustTier trustTier) {
+        this.trustTier = trustTier;
+    }
+
+    /**
+     * Sets the BCrypt password hash (optional; OTP-only accounts leave it {@code null}).
+     *
+     * @param passwordHash a BCrypt hash — never plaintext (ADR-0007).
+     */
+    public void setPasswordHash(String passwordHash) {
+        this.passwordHash = passwordHash;
+    }
+
+    /** Sets the optional email (login alias / notifications). */
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    /** Records the instant of a successful login. */
+    public void recordLogin(Instant when) {
+        this.lastLoginAt = when;
+    }
+
     /** @return the unique E.164 phone (account key). */
     public String getPhone() {
         return phone;

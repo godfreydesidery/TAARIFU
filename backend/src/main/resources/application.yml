@@ -78,16 +78,22 @@ taarifu:
   security:
     jwt:
       # JWT signing secret MUST come from the environment — no default in source (PRD §18).
+      # Boot FAILS FAST if absent or < 256-bit (MF-1, ADR-0011 §10): no forgeable-token startup.
       secret: ${TAARIFU_JWT_SECRET:}
       issuer: ${TAARIFU_JWT_ISSUER:taarifu}
+      audience: ${TAARIFU_JWT_AUDIENCE:taarifu-clients}   # aud claim; validated on verify (MF-1)
       access-ttl: PT15M                # ~15 min access token (ADR-0007)
       refresh-ttl: P30D                # ~30 day rotating refresh (ADR-0007)
+      clock-skew: PT30S                # tolerated clock skew on exp/nbf (MF-1)
     cors:
       # Explicit allow-list; NEVER wildcard-with-credentials (PRD §18). Empty by default.
       allowed-origins: ${TAARIFU_CORS_ORIGINS:}
     crypto:
       # Base64 256-bit dev key for field-level PII encryption — env-provided, never committed (EI-19).
       dev-key: ${TAARIFU_CRYPTO_DEV_KEY:}
+    otp:
+      # OTP lifetime in seconds (single-use, attempt-capped). 5 min default (AUTH-DESIGN §9, §25.1).
+      ttl-seconds: ${TAARIFU_OTP_TTL_SECONDS:300}
   geography:
     # Active Geocoder adapter: 'postgis' (default, source of truth) or 'stub' (dev/test).
     geocoder: ${TAARIFU_GEOCODER:postgis}

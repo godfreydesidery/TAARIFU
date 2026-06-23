@@ -32,6 +32,23 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>WHY HTTP (TestRestTemplate) rather than calling the service directly: it proves the envelope,
  * status codes, and method-security {@code permitAll()} actually apply on the wire — the contract a
  * client depends on (ADR-0009 contract testing).</p>
+ *
+ * <p><b>WHY context-relative paths (e.g. {@code "/regions"}, not {@code "/api/v1/regions"}).</b> The
+ * application sets {@code server.servlet.context-path=/api/v1} (ARCHITECTURE §5.4). Under
+ * {@code RANDOM_PORT}, Spring Boot's {@code LocalHostUriTemplateHandler} builds the
+ * {@link TestRestTemplate} root URI as {@code http://localhost:<port>/api/v1} — the context-path is
+ * <b>already baked into the base URI</b>. Passing a {@code /api/v1/...} path therefore double-prefixes
+ * to {@code /api/v1/api/v1/...}, which matches no controller, falls through to the static-resource
+ * handler, and fails. Every request below is written context-relative so the handler resolves exactly
+ * as it does behind the real container.</p>
+ *
+ * <p><b>WHY an explicit anonymous-read assertion (regression guard for security fix b64b108).</b>
+ * {@link TestRestTemplate} sends <b>no</b> Authorization header, so every call here is an anonymous
+ * (unauthenticated) request. {@link #listRegions_anonymousGet_returns200_guardsPublicAllowList()}
+ * asserts that an anonymous public GET returns {@code 200}, not {@code 401} — locking the
+ * {@code SecurityConfig} context-relative GET allow-list (e.g. {@code /regions/**}) so the silent-401
+ * regression fixed in b64b108 (allow-list patterns drifting back to context-path-prefixed forms that
+ * no longer match the dispatched servlet path) can never recur.</p>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -54,7 +71,7 @@ class GeographyReadIntegrationTest extends AbstractPostgisIntegrationTest {
     @Test
     void listRegions_returnsPagedEnvelope() {
         ResponseEntity<ApiResponse<List<RegionDto>>> response = restTemplate.exchange(
-                "/api/v1/regions?page=0&size=10",
+                "/regions?page=0&size=10",
                 org.springframework.http.HttpMethod.GET, null,
                 new ParameterizedTypeReference<>() {
                 });
@@ -71,10 +88,39 @@ class GeographyReadIntegrationTest extends AbstractPostgisIntegrationTest {
         assertThat(body.data()).extracting(RegionDto::name).contains("Kilimanjaro");
     }
 
+    /**
+     * Regression guard for security fix b64b108: an UNAUTHENTICATED (anonymous) GET to a public
+     * reference-data endpoint must return {@code 200}, never {@code 401}.
+     *
+     * <p>{@link TestRestTemplate} attaches no Authorization header, so this request is genuinely
+     * anonymous. The assertion locks two coupled facts that the silent-401 bug broke together: (1) the
+     * {@code SecurityConfig} GET allow-list is written <b>context-relative</b> ({@code /regions/**}, not
+     * {@code /api/v1/regions/**}) so it matches the dispatched servlet path under the {@code /api/v1}
+     * context-path; and (2) the public read is reachable without a token. If either regresses — the
+     * allow-list pattern drifts back to a context-path-prefixed form, or the endpoint is accidentally
+     * moved behind authentication — this test fails with a {@code 401}/{@code 403} instead of {@code 200}.</p>
+     */
+    @Test
+    void listRegions_anonymousGet_returns200_guardsPublicAllowList() {
+        ResponseEntity<ApiResponse<List<RegionDto>>> response = restTemplate.exchange(
+                "/regions?page=0&size=1",
+                org.springframework.http.HttpMethod.GET, null,
+                new ParameterizedTypeReference<>() {
+                });
+
+        // The headline guard: anonymous public read is permitted (200), NOT silently rejected (401).
+        assertThat(response.getStatusCode())
+                .as("anonymous GET /regions must be permitted (b64b108 silent-401 regression guard)")
+                .isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().success()).isTrue();
+        assertThat(response.getBody().statusCode()).isEqualTo(200);
+    }
+
     @Test
     void listDistricts_returnsRegionChildren() {
         ResponseEntity<ApiResponse<List<Object>>> response = restTemplate.exchange(
-                "/api/v1/regions/" + fixture.regionPublicId() + "/districts",
+                "/regions/" + fixture.regionPublicId() + "/districts",
                 org.springframework.http.HttpMethod.GET, null,
                 new ParameterizedTypeReference<>() {
                 });
@@ -90,7 +136,7 @@ class GeographyReadIntegrationTest extends AbstractPostgisIntegrationTest {
         // Error bodies carry an ApiError in data → deserialize as ApiResponse<ApiError> so we can read
         // the top-level int statusCode and the preserved machine code at data.code (ADR-0008).
         ResponseEntity<ApiResponse<ApiError>> response = restTemplate.exchange(
-                "/api/v1/locations/" + java.util.UUID.randomUUID(),
+                "/locations/" + java.util.UUID.randomUUID(),
                 org.springframework.http.HttpMethod.GET, null,
                 new ParameterizedTypeReference<>() {
                 });
@@ -109,7 +155,7 @@ class GeographyReadIntegrationTest extends AbstractPostgisIntegrationTest {
     @Test
     void getConstituency_includesCurrentWardsViaEffectiveDatedBridge() {
         ResponseEntity<ApiResponse<ConstituencyDto>> response = restTemplate.exchange(
-                "/api/v1/constituencies/" + fixture.constituencyPublicId(),
+                "/constituencies/" + fixture.constituencyPublicId(),
                 org.springframework.http.HttpMethod.GET, null,
                 new ParameterizedTypeReference<>() {
                 });
@@ -124,7 +170,7 @@ class GeographyReadIntegrationTest extends AbstractPostgisIntegrationTest {
     @Test
     void resolve_viaStubGeocoder_returnsWardAndConstituency() {
         ResponseEntity<ApiResponse<LocationResolutionDto>> response = restTemplate.exchange(
-                "/api/v1/locations/resolve?lat=-3.07&lng=37.55",
+                "/locations/resolve?lat=-3.07&lng=37.55",
                 org.springframework.http.HttpMethod.GET, null,
                 new ParameterizedTypeReference<>() {
                 });

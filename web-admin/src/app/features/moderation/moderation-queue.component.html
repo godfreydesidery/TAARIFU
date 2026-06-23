@@ -1,0 +1,103 @@
+<!-- Moderation flag queue: filter by status, take an action inline (reason required). -->
+<section>
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <h1 class="h3 mb-0">{{ 'moderation.title' | translate }}</h1>
+    <a routerLink="/moderation/appeals" class="btn btn-outline-secondary btn-sm" routerLinkActive="active">
+      {{ 'moderation.appeals' | translate }}
+    </a>
+  </div>
+
+  <div class="mb-3" style="max-width: 280px">
+    <label class="visually-hidden" for="mod-status">{{ 'moderation.status' | translate }}</label>
+    <select id="mod-status" class="form-select form-select-sm" [ngModel]="statusFilter()" (ngModelChange)="onStatusChange($event)">
+      @for (s of statuses; track s) {
+        <option [value]="s">{{ 'moderation.statusValue.' + s | translate }}</option>
+      }
+    </select>
+  </div>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
+    </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="loadPage(0)">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else if (rows().length === 0) {
+    <div class="alert alert-info" role="status">{{ 'moderation.noItems' | translate }}</div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th scope="col">{{ 'moderation.subject' | translate }}</th>
+            <th scope="col">{{ 'moderation.severity' | translate }}</th>
+            <th scope="col">{{ 'moderation.flags' | translate }}</th>
+            <th scope="col">{{ 'moderation.sla' | translate }}</th>
+            <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (item of rows(); track item.id) {
+            <tr>
+              <td>
+                <span class="badge text-bg-light">{{ item.subjectType }}</span>
+                <code class="small d-block">{{ item.subjectId }}</code>
+              </td>
+              <td>{{ 'moderation.severityValue.' + item.severity | translate }}</td>
+              <td>{{ item.flagCount }}</td>
+              <td>
+                @if (slaBreached(item)) {
+                  <span class="badge text-bg-danger">{{ 'moderation.breached' | translate }}</span>
+                } @else if (item.slaDueAt) {
+                  <small class="text-muted">{{ item.slaDueAt | date: 'short' }}</small>
+                } @else {
+                  <span class="text-muted">—</span>
+                }
+              </td>
+              <td class="text-end">
+                <button type="button" class="btn btn-sm btn-outline-primary" (click)="toggleAction(item.id)">
+                  {{ 'moderation.takeAction' | translate }}
+                </button>
+              </td>
+            </tr>
+            @if (activeItemId() === item.id) {
+              <tr>
+                <td colspan="5" class="bg-light">
+                  <div class="row g-2 align-items-end">
+                    <div class="col-md-3">
+                      <label class="form-label small" [attr.for]="'act-type-' + item.id">{{ 'moderation.actionType' | translate }}</label>
+                      <select [id]="'act-type-' + item.id" class="form-select form-select-sm" [ngModel]="actionType()" (ngModelChange)="actionType.set($event)">
+                        @for (t of actionTypes; track t) {
+                          <option [value]="t">{{ 'moderation.actionValue.' + t | translate }}</option>
+                        }
+                      </select>
+                    </div>
+                    <div class="col-md-3">
+                      <label class="form-label small" [attr.for]="'act-reason-' + item.id">{{ 'moderation.reasonCode' | translate }}</label>
+                      <input [id]="'act-reason-' + item.id" type="text" class="form-control form-control-sm" [ngModel]="reasonCode()" (ngModelChange)="reasonCode.set($event)" />
+                    </div>
+                    <div class="col-md-4">
+                      <label class="form-label small" [attr.for]="'act-note-' + item.id">{{ 'moderation.note' | translate }}</label>
+                      <input [id]="'act-note-' + item.id" type="text" class="form-control form-control-sm" [ngModel]="note()" (ngModelChange)="note.set($event)" />
+                    </div>
+                    <div class="col-md-2">
+                      <button type="button" class="btn btn-sm btn-primary w-100" [disabled]="acting() || !reasonCode().trim()" (click)="submitAction()">
+                        {{ 'common.confirm' | translate }}
+                      </button>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="loadPage($event)" />
+  }
+</section>

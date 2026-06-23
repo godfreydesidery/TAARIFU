@@ -1,0 +1,60 @@
+<!-- Parliament terms admin list: CRUD entry points + soft-delete. -->
+<section>
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <h1 class="h3 mb-0">{{ 'institutions.parliamentsTitle' | translate }}</h1>
+    <div class="d-flex gap-2">
+      <a routerLink="/institutions/parliament-roles" class="btn btn-outline-secondary btn-sm">{{ 'institutions.roles' | translate }}</a>
+      <a routerLink="/institutions/parliaments/new" class="btn btn-primary btn-sm">+ {{ 'institutions.newParliament' | translate }}</a>
+    </div>
+  </div>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
+    </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="loadPage(0)">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else if (rows().length === 0) {
+    <div class="alert alert-info" role="status">{{ 'institutions.noParliaments' | translate }}</div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th scope="col">{{ 'institutions.term' | translate }}</th>
+            <th scope="col">{{ 'institutions.name' | translate }}</th>
+            <th scope="col">{{ 'institutions.legislature' | translate }}</th>
+            <th scope="col">{{ 'institutions.current' | translate }}</th>
+            <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (p of rows(); track p.id) {
+            <tr>
+              <td>{{ p.termNumber }}</td>
+              <td>{{ p.name }}</td>
+              <td>{{ p.legislature || '—' }}</td>
+              <td>
+                @if (p.current) {
+                  <span class="badge text-bg-success">{{ 'common.yes' | translate }}</span>
+                } @else {
+                  <span class="text-muted">{{ 'common.no' | translate }}</span>
+                }
+              </td>
+              <td class="text-end">
+                <a [routerLink]="['/institutions/parliaments', p.id, 'edit']" class="btn btn-sm btn-outline-secondary me-1">{{ 'common.edit' | translate }}</a>
+                <button type="button" class="btn btn-sm btn-outline-danger" (click)="remove(p)">{{ 'common.delete' | translate }}</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="loadPage($event)" />
+  }
+</section>

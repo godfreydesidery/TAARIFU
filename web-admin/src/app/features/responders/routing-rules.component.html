@@ -1,0 +1,51 @@
+<!-- Routing rules view: how reports route to responders (read-only audit). -->
+<section>
+  <a routerLink="/responders" class="btn btn-sm btn-link px-0 mb-2">&laquo; {{ 'responders.backToList' | translate }}</a>
+  <h1 class="h3 mb-3">{{ 'responders.routingRules' | translate }}</h1>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+    </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="loadPage(0)">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else if (rows().length === 0) {
+    <div class="alert alert-info" role="status">{{ 'responders.noRules' | translate }}</div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th scope="col">{{ 'responders.priority' | translate }}</th>
+            <th scope="col">{{ 'responders.categoryId' | translate }}</th>
+            <th scope="col">{{ 'responders.responderType' | translate }}</th>
+            <th scope="col">{{ 'responders.selectionMode' | translate }}</th>
+            <th scope="col">{{ 'common.active' | translate }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (rule of rows(); track rule.id) {
+            <tr>
+              <td>{{ rule.priority }}</td>
+              <td><code class="small">{{ rule.categoryPublicId }}</code></td>
+              <td>{{ 'responders.typeValue.' + rule.responderType | translate }}</td>
+              <td>{{ rule.selectionMode }}</td>
+              <td>
+                @if (rule.active) {
+                  <span class="badge text-bg-success">{{ 'common.active' | translate }}</span>
+                } @else {
+                  <span class="badge text-bg-secondary">{{ 'common.inactive' | translate }}</span>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="loadPage($event)" />
+  }
+</section>

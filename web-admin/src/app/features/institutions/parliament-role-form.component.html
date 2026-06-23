@@ -1,0 +1,39 @@
+<!-- Create/edit a parliament role. Code immutable after creation. -->
+<section style="max-width: 640px">
+  <h1 class="h3 mb-3">{{ (isEdit ? 'institutions.editRole' : 'institutions.newRole') | translate }}</h1>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+    </div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+      <div class="mb-3">
+        <label class="form-label" for="role-code">{{ 'institutions.code' | translate }}</label>
+        <input id="role-code" type="text" class="form-control" formControlName="code" />
+        <small class="text-muted">{{ 'institutions.codeHint' | translate }}</small>
+        @if (form.controls.code.touched && form.controls.code.invalid) {
+          <div class="text-danger small">{{ form.controls.code.getError('server') || ('institutions.codeInvalid' | translate) }}</div>
+        }
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="role-name">{{ 'institutions.name' | translate }}</label>
+        <input id="role-name" type="text" class="form-control" formControlName="name" />
+        @if (form.controls.name.touched && form.controls.name.invalid) {
+          <div class="text-danger small">{{ form.controls.name.getError('server') || ('common.required' | translate) }}</div>
+        }
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="role-desc">{{ 'institutions.description' | translate }}</label>
+        <textarea id="role-desc" class="form-control" rows="3" formControlName="description"></textarea>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary" [disabled]="submitting()">
+          {{ (submitting() ? 'common.loading' : 'common.save') | translate }}
+        </button>
+        <button type="button" class="btn btn-outline-secondary" (click)="cancel()">{{ 'common.cancel' | translate }}</button>
+      </div>
+    </form>
+  }
+</section>

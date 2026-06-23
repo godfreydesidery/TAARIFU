@@ -48,8 +48,33 @@ export const routes: Routes = [
         title: 'Taarifu Admin — Parties',
       },
       {
+        path: 'institutions',
+        loadChildren: () =>
+          import('./features/institutions/institutions.routes').then((m) => m.INSTITUTIONS_ROUTES),
+      },
+      {
         path: 'issue-categories',
         loadChildren: () => import('./features/categories/categories.routes').then((m) => m.CATEGORIES_ROUTES),
+      },
+      {
+        path: 'reports',
+        loadChildren: () => import('./features/reporting/reporting.routes').then((m) => m.REPORTING_ROUTES),
+      },
+      {
+        path: 'responders',
+        loadChildren: () => import('./features/responders/responders.routes').then((m) => m.RESPONDERS_ROUTES),
+      },
+      {
+        path: 'moderation',
+        loadChildren: () => import('./features/moderation/moderation.routes').then((m) => m.MODERATION_ROUTES),
+      },
+      {
+        path: 'tokens',
+        loadChildren: () => import('./features/tokens/tokens.routes').then((m) => m.TOKENS_ROUTES),
+      },
+      {
+        path: 'users',
+        loadChildren: () => import('./features/users/users.routes').then((m) => m.USERS_ROUTES),
       },
     ],
   },

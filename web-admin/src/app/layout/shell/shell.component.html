@@ -57,6 +57,41 @@
           <span aria-hidden="true">&#9632;</span>{{ 'nav.dashboard' | translate }}
         </a>
       </li>
+      @if (canModerate()) {
+        <li class="nav-item">
+          <a
+            class="nav-link d-flex align-items-center gap-2"
+            routerLink="/reports"
+            routerLinkActive="active"
+            ariaCurrentWhenActive="page"
+            (click)="onNavigate()"
+          >
+            <span aria-hidden="true">&#9993;</span>{{ 'nav.reports' | translate }}
+          </a>
+        </li>
+        <li class="nav-item">
+          <a
+            class="nav-link d-flex align-items-center gap-2"
+            routerLink="/moderation"
+            routerLinkActive="active"
+            ariaCurrentWhenActive="page"
+            (click)="onNavigate()"
+          >
+            <span aria-hidden="true">&#9873;</span>{{ 'nav.moderation' | translate }}
+          </a>
+        </li>
+        <li class="nav-item">
+          <a
+            class="nav-link d-flex align-items-center gap-2"
+            routerLink="/responders"
+            routerLinkActive="active"
+            ariaCurrentWhenActive="page"
+            (click)="onNavigate()"
+          >
+            <span aria-hidden="true">&#9881;</span>{{ 'nav.responders' | translate }}
+          </a>
+        </li>
+      }
       <li class="nav-item">
         <a
           class="nav-link d-flex align-items-center gap-2"
@@ -100,6 +135,39 @@
             (click)="onNavigate()"
           >
             <span aria-hidden="true">&#9998;</span>{{ 'nav.issueCategories' | translate }}
+          </a>
+        </li>
+        <li class="nav-item">
+          <a
+            class="nav-link d-flex align-items-center gap-2"
+            routerLink="/institutions/parliaments"
+            routerLinkActive="active"
+            ariaCurrentWhenActive="page"
+            (click)="onNavigate()"
+          >
+            <span aria-hidden="true">&#9962;</span>{{ 'nav.institutions' | translate }}
+          </a>
+        </li>
+        <li class="nav-item">
+          <a
+            class="nav-link d-flex align-items-center gap-2"
+            routerLink="/tokens"
+            routerLinkActive="active"
+            ariaCurrentWhenActive="page"
+            (click)="onNavigate()"
+          >
+            <span aria-hidden="true">&#9679;</span>{{ 'nav.tokens' | translate }}
+          </a>
+        </li>
+        <li class="nav-item">
+          <a
+            class="nav-link d-flex align-items-center gap-2"
+            routerLink="/users"
+            routerLinkActive="active"
+            ariaCurrentWhenActive="page"
+            (click)="onNavigate()"
+          >
+            <span aria-hidden="true">&#9787;</span>{{ 'nav.users' | translate }}
           </a>
         </li>
       }

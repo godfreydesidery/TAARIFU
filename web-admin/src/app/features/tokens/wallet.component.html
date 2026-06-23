@@ -1,0 +1,64 @@
+<!-- Own wallet + ledger (transparency). Tokens never buy democratic weight. -->
+<section>
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <h1 class="h3 mb-0">{{ 'tokens.walletTitle' | translate }}</h1>
+    <a routerLink="/tokens/config" class="btn btn-outline-secondary btn-sm">{{ 'tokens.config' | translate }}</a>
+  </div>
+
+  <p class="text-muted small">{{ 'tokens.fenceNote' | translate }}</p>
+
+  @if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="load()">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else {
+    @if (wallet(); as w) {
+      <div class="card mb-4" style="max-width: 320px">
+        <div class="card-body">
+          <h2 class="h6 text-muted">{{ 'tokens.balance' | translate }}</h2>
+          <p class="display-6 mb-0">{{ w.balance | number }}</p>
+          <small class="text-muted">{{ 'tokens.statusValue.' + w.status | translate }}</small>
+        </div>
+      </div>
+    }
+
+    <h2 class="h5">{{ 'tokens.ledger' | translate }}</h2>
+    @if (loading()) {
+      <div class="text-center py-4" role="status" aria-live="polite">
+        <span class="spinner-border" aria-hidden="true"></span>
+      </div>
+    } @else if (rows().length === 0) {
+      <div class="alert alert-info" role="status">{{ 'tokens.noLedger' | translate }}</div>
+    } @else {
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th scope="col">{{ 'tokens.date' | translate }}</th>
+              <th scope="col">{{ 'tokens.txType' | translate }}</th>
+              <th scope="col" class="text-end">{{ 'tokens.amount' | translate }}</th>
+              <th scope="col" class="text-end">{{ 'tokens.balanceAfter' | translate }}</th>
+              <th scope="col">{{ 'tokens.reason' | translate }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (tx of rows(); track tx.id) {
+              <tr>
+                <td><small>{{ tx.createdAt | date: 'short' }}</small></td>
+                <td>{{ tx.type }}</td>
+                <td class="text-end" [class.text-success]="tx.amount > 0" [class.text-danger]="tx.amount < 0">
+                  {{ tx.amount | number }}
+                </td>
+                <td class="text-end">{{ tx.balanceAfter | number }}</td>
+                <td><small class="text-muted">{{ tx.reason || tx.actionCode || '—' }}</small></td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <app-pagination [meta]="meta()" (pageChange)="loadPage($event)" />
+    }
+  }
+</section>

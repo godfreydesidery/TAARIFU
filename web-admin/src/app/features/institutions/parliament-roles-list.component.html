@@ -1,0 +1,52 @@
+<!-- Parliament roles admin list: CRUD entry points + soft-delete. -->
+<section>
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <h1 class="h3 mb-0">{{ 'institutions.rolesTitle' | translate }}</h1>
+    <div class="d-flex gap-2">
+      <a routerLink="/institutions/parliaments" class="btn btn-outline-secondary btn-sm">{{ 'institutions.parliaments' | translate }}</a>
+      <a routerLink="/institutions/parliament-roles/new" class="btn btn-primary btn-sm">+ {{ 'institutions.newRole' | translate }}</a>
+    </div>
+  </div>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
+    </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="loadPage(0)">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else if (rows().length === 0) {
+    <div class="alert alert-info" role="status">{{ 'institutions.noRoles' | translate }}</div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th scope="col">{{ 'institutions.code' | translate }}</th>
+            <th scope="col">{{ 'institutions.name' | translate }}</th>
+            <th scope="col">{{ 'institutions.description' | translate }}</th>
+            <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (role of rows(); track role.id) {
+            <tr>
+              <td><code>{{ role.code }}</code></td>
+              <td>{{ role.name }}</td>
+              <td><small class="text-muted">{{ role.description || '—' }}</small></td>
+              <td class="text-end">
+                <a [routerLink]="['/institutions/parliament-roles', role.id, 'edit']" class="btn btn-sm btn-outline-secondary me-1">{{ 'common.edit' | translate }}</a>
+                <button type="button" class="btn btn-sm btn-outline-danger" (click)="remove(role)">{{ 'common.delete' | translate }}</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="loadPage($event)" />
+  }
+</section>

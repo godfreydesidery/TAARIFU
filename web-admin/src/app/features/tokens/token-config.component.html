@@ -1,0 +1,139 @@
+<!-- Token admin config: cost/quota policies + behaviour rewards. Fence D18 enforced server-side. -->
+<section>
+  <a routerLink="/tokens" class="btn btn-sm btn-link px-0 mb-2">&laquo; {{ 'tokens.backToWallet' | translate }}</a>
+  <h1 class="h3 mb-2">{{ 'tokens.config' | translate }}</h1>
+  <p class="text-muted small">{{ 'tokens.fenceNote' | translate }}</p>
+
+  @if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="loadAll()">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+    </div>
+  } @else {
+    <!-- Cost/quota policies -->
+    <h2 class="h5 mt-3">{{ 'tokens.policies' | translate }}</h2>
+    <form [formGroup]="policyForm" (ngSubmit)="upsertPolicy()" class="row g-2 align-items-end border rounded p-3 mb-3" novalidate>
+      <div class="col-md-3">
+        <label class="form-label small" for="p-action">{{ 'tokens.actionCode' | translate }}</label>
+        <input id="p-action" type="text" class="form-control form-control-sm" formControlName="actionCode" />
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small" for="p-role">{{ 'tokens.role' | translate }}</label>
+        <input id="p-role" type="text" class="form-control form-control-sm" formControlName="roleName" />
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small" for="p-cost">{{ 'tokens.cost' | translate }}</label>
+        <input id="p-cost" type="number" min="0" class="form-control form-control-sm" formControlName="tokenCost" />
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small" for="p-period">{{ 'tokens.quotaPeriod' | translate }}</label>
+        <select id="p-period" class="form-select form-select-sm" formControlName="freeQuotaPeriod">
+          @for (p of periods; track p) {
+            <option [value]="p">{{ 'tokens.periodValue.' + p | translate }}</option>
+          }
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small" for="p-quota">{{ 'tokens.freeQuota' | translate }}</label>
+        <input id="p-quota" type="number" min="0" class="form-control form-control-sm" formControlName="freeQuotaCount" />
+      </div>
+      <div class="col-md-1">
+        <button type="submit" class="btn btn-sm btn-primary w-100" [disabled]="savingPolicy()">{{ 'common.save' | translate }}</button>
+      </div>
+    </form>
+
+    @if (policies().length === 0) {
+      <div class="alert alert-info" role="status">{{ 'tokens.noPolicies' | translate }}</div>
+    } @else {
+      <div class="table-responsive mb-4">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th scope="col">{{ 'tokens.actionCode' | translate }}</th>
+              <th scope="col">{{ 'tokens.role' | translate }}</th>
+              <th scope="col" class="text-end">{{ 'tokens.cost' | translate }}</th>
+              <th scope="col">{{ 'tokens.freeQuota' | translate }}</th>
+              <th scope="col">{{ 'tokens.version' | translate }}</th>
+              <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (policy of policies(); track policy.id) {
+              <tr>
+                <td><code>{{ policy.actionCode }}</code></td>
+                <td>{{ policy.roleName || ('common.all' | translate) }}</td>
+                <td class="text-end">{{ policy.tokenCost }}</td>
+                <td>{{ policy.freeQuotaCount }} / {{ 'tokens.periodValue.' + policy.freeQuotaPeriod | translate }}</td>
+                <td>v{{ policy.policyVersion }}</td>
+                <td class="text-end">
+                  <button type="button" class="btn btn-sm btn-outline-danger" (click)="retirePolicy(policy)">{{ 'common.delete' | translate }}</button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+
+    <!-- Behaviour rewards -->
+    <h2 class="h5">{{ 'tokens.rewards' | translate }}</h2>
+    <form [formGroup]="rewardForm" (ngSubmit)="upsertReward()" class="row g-2 align-items-end border rounded p-3 mb-3" novalidate>
+      <div class="col-md-3">
+        <label class="form-label small" for="r-behaviour">{{ 'tokens.behaviour' | translate }}</label>
+        <input id="r-behaviour" type="text" class="form-control form-control-sm" formControlName="behaviour" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small" for="r-grant">{{ 'tokens.grantAmount' | translate }}</label>
+        <input id="r-grant" type="number" min="1" class="form-control form-control-sm" formControlName="grantAmount" />
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small" for="r-cap">{{ 'tokens.capCount' | translate }}</label>
+        <input id="r-cap" type="number" min="0" class="form-control form-control-sm" formControlName="capCount" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small" for="r-period">{{ 'tokens.capPeriod' | translate }}</label>
+        <select id="r-period" class="form-select form-select-sm" formControlName="capPeriod">
+          @for (p of periods; track p) {
+            <option [value]="p">{{ 'tokens.periodValue.' + p | translate }}</option>
+          }
+        </select>
+      </div>
+      <div class="col-md-1">
+        <button type="submit" class="btn btn-sm btn-primary w-100" [disabled]="savingReward()">{{ 'common.save' | translate }}</button>
+      </div>
+    </form>
+
+    @if (rewards().length === 0) {
+      <div class="alert alert-info" role="status">{{ 'tokens.noRewards' | translate }}</div>
+    } @else {
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th scope="col">{{ 'tokens.behaviour' | translate }}</th>
+              <th scope="col" class="text-end">{{ 'tokens.grantAmount' | translate }}</th>
+              <th scope="col">{{ 'tokens.cap' | translate }}</th>
+              <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (reward of rewards(); track reward.id) {
+              <tr>
+                <td><code>{{ reward.behaviour }}</code></td>
+                <td class="text-end">{{ reward.grantAmount }}</td>
+                <td>{{ reward.capCount }} / {{ 'tokens.periodValue.' + reward.capPeriod | translate }}</td>
+                <td class="text-end">
+                  <button type="button" class="btn btn-sm btn-outline-danger" (click)="retireReward(reward)">{{ 'common.delete' | translate }}</button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  }
+</section>

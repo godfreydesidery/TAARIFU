@@ -43,8 +43,14 @@ export class ShellComponent {
   /** The current session (for greeting + role-gated nav), read from {@link AuthService}. */
   readonly session = this.auth.session;
 
-  /** Whether the current user may see Admin-only nav (issue-category CRUD). UI hint only — server gates. */
+  /** Whether the current user may see Admin-only nav (issue-category CRUD, etc.). UI hint only — server gates. */
   readonly isAdmin = computed(() => this.session()?.roles.includes('ADMIN') ?? false);
+
+  /** Whether the user may see Moderator/Admin nav (reports, responders, moderation). UI hint — server gates. */
+  readonly canModerate = computed(() => {
+    const roles = this.session()?.roles ?? [];
+    return roles.includes('ADMIN') || roles.includes('MODERATOR');
+  });
 
   /** Toggles the sidenav (mobile). */
   toggleSidenav(): void {

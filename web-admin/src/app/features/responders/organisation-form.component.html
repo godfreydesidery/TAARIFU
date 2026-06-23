@@ -1,0 +1,64 @@
+<!-- Create/edit a responder organisation. Verification is a separate audited toggle (not here). -->
+<section style="max-width: 640px">
+  <h1 class="h3 mb-3">{{ (isEdit ? 'responders.editOrganisation' : 'responders.newOrganisation') | translate }}</h1>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+    </div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+      <div class="mb-3">
+        <label class="form-label" for="org-name">{{ 'responders.name' | translate }}</label>
+        <input id="org-name" type="text" class="form-control" formControlName="name" />
+        @if (form.controls.name.touched && form.controls.name.invalid) {
+          <div class="text-danger small">{{ form.controls.name.getError('server') || ('common.required' | translate) }}</div>
+        }
+      </div>
+
+      <div class="row">
+        <div class="col-md-6 mb-3">
+          <label class="form-label" for="org-type">{{ 'responders.type' | translate }}</label>
+          <select id="org-type" class="form-select" formControlName="type">
+            @for (t of types; track t) {
+              <option [value]="t">{{ 'responders.typeValue.' + t | translate }}</option>
+            }
+          </select>
+        </div>
+        @if (isEdit) {
+          <div class="col-md-6 mb-3">
+            <label class="form-label" for="org-status">{{ 'responders.status' | translate }}</label>
+            <select id="org-status" class="form-select" formControlName="status">
+              @for (s of statuses; track s) {
+                <option [value]="s">{{ 'responders.statusValue.' + s | translate }}</option>
+              }
+            </select>
+          </div>
+        }
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label" for="org-phone">{{ 'responders.contactPhone' | translate }}</label>
+        <input id="org-phone" type="tel" class="form-control" formControlName="contactPhone" />
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="org-email">{{ 'responders.contactEmail' | translate }}</label>
+        <input id="org-email" type="email" class="form-control" formControlName="contactEmail" />
+        @if (form.controls.contactEmail.touched && form.controls.contactEmail.invalid) {
+          <div class="text-danger small">{{ form.controls.contactEmail.getError('server') || ('responders.invalidEmail' | translate) }}</div>
+        }
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="org-website">{{ 'responders.websiteUrl' | translate }}</label>
+        <input id="org-website" type="url" class="form-control" formControlName="websiteUrl" />
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary" [disabled]="submitting()">
+          {{ (submitting() ? 'common.loading' : 'common.save') | translate }}
+        </button>
+        <button type="button" class="btn btn-outline-secondary" (click)="cancel()">{{ 'common.cancel' | translate }}</button>
+      </div>
+    </form>
+  }
+</section>

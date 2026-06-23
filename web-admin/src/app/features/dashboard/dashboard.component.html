@@ -1,32 +1,102 @@
-<!-- Dashboard: link-only overview cards. Data-free landing for a fast first paint (PRD §15). -->
+<!-- Dashboard: stat cards + quick actions + feature nav. Counts degrade to a dash on failure. -->
 <section>
   <h1 class="h3 mb-1">{{ 'dashboard.title' | translate }}</h1>
   <p class="text-muted mb-4">{{ 'dashboard.subtitle' | translate }}</p>
 
+  <!-- Stat cards -->
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-lg-3">
+      <a routerLink="/reports" class="card h-100 text-decoration-none text-reset shadow-sm">
+        <div class="card-body text-center">
+          <p class="h2 mb-0">
+            @if (reportsCount() === undefined) {
+              <span class="placeholder col-4"></span>
+            } @else {
+              {{ reportsCount() === null ? '—' : (reportsCount() | number) }}
+            }
+          </p>
+          <small class="text-muted">{{ 'dashboard.statReports' | translate }}</small>
+        </div>
+      </a>
+    </div>
+    <div class="col-6 col-lg-3">
+      <a routerLink="/responders" class="card h-100 text-decoration-none text-reset shadow-sm">
+        <div class="card-body text-center">
+          <p class="h2 mb-0">
+            @if (organisationsCount() === undefined) {
+              <span class="placeholder col-4"></span>
+            } @else {
+              {{ organisationsCount() === null ? '—' : (organisationsCount() | number) }}
+            }
+          </p>
+          <small class="text-muted">{{ 'dashboard.statOrganisations' | translate }}</small>
+        </div>
+      </a>
+    </div>
+    <div class="col-6 col-lg-3">
+      <a routerLink="/representatives" class="card h-100 text-decoration-none text-reset shadow-sm">
+        <div class="card-body text-center">
+          <p class="h2 mb-0">
+            @if (representativesCount() === undefined) {
+              <span class="placeholder col-4"></span>
+            } @else {
+              {{ representativesCount() === null ? '—' : (representativesCount() | number) }}
+            }
+          </p>
+          <small class="text-muted">{{ 'dashboard.statRepresentatives' | translate }}</small>
+        </div>
+      </a>
+    </div>
+    <div class="col-6 col-lg-3">
+      <a routerLink="/moderation" class="card h-100 text-decoration-none text-reset shadow-sm">
+        <div class="card-body text-center">
+          <p class="h2 mb-0">
+            @if (moderationCount() === undefined) {
+              <span class="placeholder col-4"></span>
+            } @else {
+              {{ moderationCount() === null ? '—' : (moderationCount() | number) }}
+            }
+          </p>
+          <small class="text-muted">{{ 'dashboard.statModeration' | translate }}</small>
+        </div>
+      </a>
+    </div>
+  </div>
+
+  <!-- Quick actions -->
+  <h2 class="h5 mb-2">{{ 'dashboard.quickActions' | translate }}</h2>
+  <div class="d-flex flex-wrap gap-2 mb-4">
+    <a routerLink="/reports" class="btn btn-outline-primary btn-sm">{{ 'dashboard.qaReportQueue' | translate }}</a>
+    <a routerLink="/moderation" class="btn btn-outline-primary btn-sm">{{ 'dashboard.qaModeration' | translate }}</a>
+    <a routerLink="/responders/new" class="btn btn-outline-primary btn-sm">{{ 'dashboard.qaNewOrganisation' | translate }}</a>
+    <a routerLink="/institutions/representatives/new" class="btn btn-outline-primary btn-sm">{{ 'dashboard.qaLinkRepresentative' | translate }}</a>
+    <a routerLink="/issue-categories/new" class="btn btn-outline-primary btn-sm">{{ 'dashboard.qaNewCategory' | translate }}</a>
+  </div>
+
+  <!-- Feature nav -->
+  <h2 class="h5 mb-2">{{ 'dashboard.manage' | translate }}</h2>
   <div class="row g-3">
     <div class="col-12 col-md-6 col-lg-4">
       <a routerLink="/geography/regions" class="card h-100 text-decoration-none text-reset shadow-sm">
         <div class="card-body">
-          <h2 class="h5 card-title">{{ 'nav.geography' | translate }}</h2>
-          <p class="card-text text-muted mb-0">{{ 'dashboard.geographyCard' | translate }}</p>
+          <h3 class="h6 card-title">{{ 'nav.geography' | translate }}</h3>
+          <p class="card-text text-muted mb-0 small">{{ 'dashboard.geographyCard' | translate }}</p>
         </div>
       </a>
     </div>
-
     <div class="col-12 col-md-6 col-lg-4">
-      <a routerLink="/representatives" class="card h-100 text-decoration-none text-reset shadow-sm">
+      <a routerLink="/institutions/parliaments" class="card h-100 text-decoration-none text-reset shadow-sm">
         <div class="card-body">
-          <h2 class="h5 card-title">{{ 'nav.representatives' | translate }}</h2>
-          <p class="card-text text-muted mb-0">{{ 'dashboard.representativesCard' | translate }}</p>
+          <h3 class="h6 card-title">{{ 'nav.institutions' | translate }}</h3>
+          <p class="card-text text-muted mb-0 small">{{ 'dashboard.institutionsCard' | translate }}</p>
         </div>
       </a>
     </div>
-
     <div class="col-12 col-md-6 col-lg-4">
-      <a routerLink="/issue-categories" class="card h-100 text-decoration-none text-reset shadow-sm">
+      <a routerLink="/tokens" class="card h-100 text-decoration-none text-reset shadow-sm">
         <div class="card-body">
-          <h2 class="h5 card-title">{{ 'nav.issueCategories' | translate }}</h2>
-          <p class="card-text text-muted mb-0">{{ 'dashboard.categoriesCard' | translate }}</p>
+          <h3 class="h6 card-title">{{ 'nav.tokens' | translate }}</h3>
+          <p class="card-text text-muted mb-0 small">{{ 'dashboard.tokensCard' | translate }}</p>
         </div>
       </a>
     </div>

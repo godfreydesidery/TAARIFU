@@ -77,6 +77,60 @@ class LocationResolution {
   }
 }
 
+/// A ward search/list result for the **manual ward picker** (backend
+/// `WardSummaryDto`): `{ id, code, name, councilName, districtName }`.
+///
+/// WHY a leaner shape than [Ward]: the picker shows a human label, not parent
+/// UUIDs — so this carries the council (Halmashauri) and district (Wilaya)
+/// *names* the backend denormalises through the closure table, letting the UI
+/// disambiguate two same-named wards (e.g. two "Mji Mpya") without a second
+/// round-trip (data-frugal, PRD §15). The [id] is the ward public id every flow
+/// pins by (report form, profile locations, find-my-rep) — replacing the
+/// hand-typed ward UUID.
+class WardSummary {
+  /// Creates a ward summary.
+  const WardSummary({
+    required this.id,
+    required this.code,
+    required this.name,
+    this.councilName,
+    this.districtName,
+  });
+
+  /// Ward public id (UUID string) — the value clients pass when pinning.
+  final String id;
+
+  /// Official ward code.
+  final String code;
+
+  /// Ward display name (e.g. "Mengwe").
+  final String name;
+
+  /// Parent council/LGA (Halmashauri) name, or `null` if unresolved.
+  final String? councilName;
+
+  /// District (Wilaya) ancestor name, or `null` if unresolved.
+  final String? districtName;
+
+  /// A breadcrumb-style label disambiguating same-named wards, e.g.
+  /// "Mengwe · Moshi DC · Kilimanjaro". Falls back gracefully when ancestors
+  /// are missing (tolerates incomplete seed chains).
+  String get qualifiedLabel => [
+    name,
+    if (councilName != null && councilName!.isNotEmpty) councilName!,
+    if (districtName != null && districtName!.isNotEmpty) districtName!,
+  ].join(' · ');
+
+  /// Parses a ward-summary node.
+  factory WardSummary.fromJson(Map<String, dynamic> json) => WardSummary(
+    id: json['id'] as String,
+    code: json['code'] as String? ?? '',
+    name: json['name'] as String? ?? '',
+    councilName: json['councilName'] as String?,
+    districtName: json['districtName'] as String?,
+  );
+}
+
 /// A district — Wilaya (backend `DistrictDto`): `{ id, code, name, regionId }`.
 class District {
   /// Creates a district.

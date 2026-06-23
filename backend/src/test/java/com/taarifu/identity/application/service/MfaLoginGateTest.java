@@ -42,7 +42,8 @@ class MfaLoginGateTest {
         roleAssignmentRepository = Mockito.mock(RoleAssignmentRepository.class);
         userRepository = Mockito.mock(UserRepository.class);
         ClockPort clock = () -> Instant.parse("2026-06-23T00:00:00Z");
-        gate = new MfaLoginGate(roleAssignmentRepository, userRepository, clock);
+        // mfaEnforced=true: the default/prod posture these tests assert (staff -> second factor required).
+        gate = new MfaLoginGate(roleAssignmentRepository, userRepository, clock, true);
     }
 
     @Test

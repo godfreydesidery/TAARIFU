@@ -4,9 +4,13 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.persistence.CodeGenerator;
 import com.taarifu.reporting.api.dto.FileReportDto;
 import com.taarifu.reporting.api.dto.ReportDto;
+import com.taarifu.reporting.api.event.ReportEventTypes;
+import com.taarifu.reporting.api.event.ReportRouted;
 import com.taarifu.reporting.application.mapper.ReportingMapper;
 import com.taarifu.reporting.domain.model.IssueCategory;
 import com.taarifu.reporting.domain.model.Report;
@@ -19,6 +23,7 @@ import com.taarifu.reporting.domain.repository.ReportRepository;
 import com.taarifu.reporting.test.ReportingTestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -49,6 +54,7 @@ class ReportServiceTest {
     private WardResolver wardResolver;
     private CodeGenerator codeGenerator;
     private ClockPort clock;
+    private OutboxWriter outboxWriter;
     private ReportService service;
 
     private final UUID reporter = UUID.randomUUID();
@@ -64,9 +70,10 @@ class ReportServiceTest {
         wardResolver = mock(WardResolver.class);
         codeGenerator = mock(CodeGenerator.class);
         clock = mock(ClockPort.class);
+        outboxWriter = mock(OutboxWriter.class);
         ReportingMapper mapper = new ReportingMapper();
         service = new ReportService(reportRepository, categoryRepository, caseEventRepository,
-                wardResolver, codeGenerator, mapper, clock);
+                wardResolver, codeGenerator, mapper, clock, outboxWriter);
 
         when(clock.now()).thenReturn(now);
         when(codeGenerator.nextCode(any(), any(), org.mockito.ArgumentMatchers.anyInt()))
@@ -94,6 +101,48 @@ class ReportServiceTest {
         assertThat(dto.constituencyId()).isEqualTo(constituencyId);
         // An initial timeline event is appended (the case opened).
         verify(caseEventRepository).save(any());
+    }
+
+    @Test
+    void fileReport_appendsReportRoutedEvent_idsOnly_forOwnerRouting() {
+        // ROUTING (D21, ADR-0014 §5b): filing appends a REPORT_ROUTED outbox event in the SAME transaction so
+        // a responders handler creates the OWNER assignment asynchronously. This test FAILS the moment the
+        // emit is removed — proving the wiring, not just the happy path (CLAUDE.md §10).
+        IssueCategory category = ReportingTestFixtures.publicCategory("WATER_SANITATION");
+        when(categoryRepository.findByPublicId(category.getPublicId())).thenReturn(Optional.of(category));
+        FileReportDto request = new FileReportDto(category.getPublicId(), "Bomba", "Maji",
+                wardId, null, null, "PUBLIC", false, null);
+
+        ReportDto dto = service.fileReport(reporter, request);
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<EventEnvelope<?>> captor =
+                (ArgumentCaptor<EventEnvelope<?>>) (ArgumentCaptor) ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(outboxWriter).append(captor.capture());
+        EventEnvelope<?> envelope = captor.getValue();
+        assertThat(envelope.eventType()).isEqualTo(ReportEventTypes.REPORT_ROUTED);
+        assertThat(envelope.aggregateType()).isEqualTo(ReportEventTypes.AGGREGATE_REPORT);
+        assertThat(envelope.aggregateId()).isEqualTo(dto.id());
+
+        // Payload is IDS ONLY (report/category/ward) — no reporter, title, description, or geo (PRD §18).
+        assertThat(envelope.payload()).isInstanceOf(ReportRouted.class);
+        ReportRouted payload = (ReportRouted) envelope.payload();
+        assertThat(payload.reportId()).isEqualTo(dto.id());
+        assertThat(payload.categoryId()).isEqualTo(category.getPublicId());
+        assertThat(payload.wardId()).isEqualTo(wardId);
+    }
+
+    @Test
+    void fileReport_rejected_doesNotEmitRoutedEvent() {
+        // No report → no routing: an anonymous filing on a non-sensitive category is rejected before any
+        // outbox append (the routing intent must never be emitted for a report that was not created).
+        IssueCategory category = ReportingTestFixtures.publicCategory("ROADS");
+        when(categoryRepository.findByPublicId(category.getPublicId())).thenReturn(Optional.of(category));
+        FileReportDto request = new FileReportDto(category.getPublicId(), "Shimo", "Barabara",
+                wardId, null, null, "PUBLIC", true, null);
+
+        assertThatThrownBy(() -> service.fileReport(reporter, request)).isInstanceOf(ApiException.class);
+        verify(outboxWriter, never()).append(any());
     }
 
     @Test

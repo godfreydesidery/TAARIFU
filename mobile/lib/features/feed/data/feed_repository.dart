@@ -46,6 +46,33 @@ class FeedRepository {
     }
   }
 
+  /// Fetches one published announcement's full detail — `GET /announcements/{id}`
+  /// (US-4.2, PRD §22.6).
+  ///
+  /// WHY read-through cached per id: once a citizen has opened an announcement, its
+  /// full body should re-open instantly and offline without re-downloading (PRD §15
+  /// data-budget). On a network miss the last cached body for this id is returned if
+  /// present, else the error propagates so the screen can fall back to the lean feed
+  /// snippet it already holds. Public; the backend only ever returns a PUBLISHED,
+  /// in-window announcement (otherwise 404 — nothing in flight leaks, PRD §18).
+  Future<Announcement> getAnnouncement(String id) async {
+    final cacheKey = 'announcement.$id';
+    try {
+      final result = await _api.get<Map<String, dynamic>>(
+        '/announcements/$id',
+        parser: (data) => (data as Map<String, dynamic>?) ?? const {},
+      );
+      await _cache.write(cacheKey, result.data);
+      return Announcement.fromJson(result.data);
+    } on Object {
+      final cached = await _cache.read(cacheKey);
+      if (cached is Map<String, dynamic>) {
+        return Announcement.fromJson(cached);
+      }
+      rethrow;
+    }
+  }
+
   static List<Map<String, dynamic>> _asMapList(Object? data) {
     if (data is List) {
       return data.whereType<Map<String, dynamic>>().toList(growable: false);

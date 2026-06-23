@@ -138,9 +138,24 @@ public class User extends BaseEntity {
         return u;
     }
 
-    /** Marks the account active (e.g. after OTP signup verification). */
+    /**
+     * Marks the account active (e.g. after OTP signup verification, or an admin <b>reinstate</b> of a
+     * suspended account — M14, US-14.1). Reinstating a {@link UserStatus#SUSPENDED} account returns it to
+     * {@link UserStatus#ACTIVE} so it can authenticate/act again.
+     */
     public void activate() {
         this.status = UserStatus.ACTIVE;
+    }
+
+    /**
+     * Suspends the account (admin action — M14, US-14.1): sets {@link UserStatus#SUSPENDED} so it can no
+     * longer authenticate/act until reinstated. Recoverable (distinct from {@link UserStatus#DISABLED},
+     * which is permanent). The status change alone is the integrity control — the login path already refuses
+     * a non-{@code ACTIVE} account; existing sessions are bounded by the short access-token TTL + refresh
+     * rotation (a suspended account cannot refresh).
+     */
+    public void suspend() {
+        this.status = UserStatus.SUSPENDED;
     }
 
     /**

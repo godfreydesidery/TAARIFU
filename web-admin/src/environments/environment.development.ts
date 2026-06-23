@@ -14,9 +14,9 @@ export const environment = {
   /** Local backend base URL including the `/api/v1` context-path. */
   apiUrl: 'http://localhost:8081/api/v1',
 
-  /** Default UI locale (Swahili-first). */
-  defaultLocale: 'sw',
+  /** Default UI locale — admin console is English-first (Swahili is for the mobile app; toggle available). */
+  defaultLocale: 'en',
 
-  /** Fallback locale for the SW → EN → key chain. */
+  /** Fallback locale for the EN → key chain. */
   fallbackLocale: 'en',
 };

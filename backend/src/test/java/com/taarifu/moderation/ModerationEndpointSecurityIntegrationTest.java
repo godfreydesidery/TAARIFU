@@ -82,6 +82,28 @@ class ModerationEndpointSecurityIntegrationTest extends AbstractPostgisIntegrati
     }
 
     @Test
+    void appealsQueue_isForbidden_withoutModeratorRole() {
+        // The appeals queue is staff-only: a plain citizen token must 403 over the live filter chain
+        // (the @PreAuthorize("hasRole('MODERATOR')") guard + the upstream staff-MFA token gate).
+        ResponseEntity<Map> res = restTemplate.exchange(
+                "/api/v1/moderation/appeals", HttpMethod.GET,
+                new HttpEntity<>(bearer(UUID.randomUUID(), "CITIZEN")), Map.class);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(res.getBody()).containsEntry("statusCode", 403);
+    }
+
+    @Test
+    void appealsQueue_isAllowed_forModerator() {
+        ResponseEntity<Map> res = restTemplate.exchange(
+                "/api/v1/moderation/appeals?status=OPEN", HttpMethod.GET,
+                new HttpEntity<>(bearer(UUID.randomUUID(), ROLE_MODERATOR)), Map.class);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(res.getBody()).containsEntry("success", true);
+    }
+
+    @Test
     void takeAction_onOwnContent_isBlockedByConflictOfInterest() {
         UUID moderator = UUID.randomUUID();
         UUID itemPublicId = insertItem(moderator); // subject author IS this moderator (D16 set-up)

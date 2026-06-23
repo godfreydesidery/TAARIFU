@@ -7,6 +7,7 @@ import com.taarifu.identity.domain.model.User;
 import com.taarifu.identity.domain.model.enums.RoleName;
 import com.taarifu.identity.domain.repository.RoleAssignmentRepository;
 import com.taarifu.identity.domain.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -47,16 +48,29 @@ public class MfaLoginGate {
     private final ClockPort clock;
 
     /**
+     * Whether the staff TOTP second factor is enforced. <b>Defaults to {@code true}</b> — production and
+     * any unset environment MUST keep MFA on. It exists ONLY as a local-dev/test escape hatch
+     * ({@code TAARIFU_MFA_ENFORCED=false}) so the bootstrap admin can be exercised without an authenticator
+     * app; it is never to be disabled in a real deployment (N-4, VERIFICATION-DESIGN §7). When {@code false}
+     * a staff login completes on the first factor alone and the staff-endpoint gate skips the MFA re-check.
+     */
+    private final boolean mfaEnforced;
+
+    /**
      * @param roleAssignmentRepository the live, effective-window-aware role source (N-2, MF-3).
      * @param userRepository           account lookup for the live {@code mfaEnabled} re-check.
      * @param clock                    time source for the effective-window check (testable).
+     * @param mfaEnforced              {@code taarifu.security.mfa.enforced} (default {@code true}); set
+     *                                 {@code false} ONLY for local testing — keep {@code true} in prod.
      */
     public MfaLoginGate(RoleAssignmentRepository roleAssignmentRepository,
                         UserRepository userRepository,
-                        ClockPort clock) {
+                        ClockPort clock,
+                        @Value("${taarifu.security.mfa.enforced:true}") boolean mfaEnforced) {
         this.roleAssignmentRepository = roleAssignmentRepository;
         this.userRepository = userRepository;
         this.clock = clock;
+        this.mfaEnforced = mfaEnforced;
     }
 
     /**
@@ -66,6 +80,10 @@ public class MfaLoginGate {
      */
     @Transactional(readOnly = true)
     public boolean requiresSecondFactor(User user) {
+        // Local-dev/test escape hatch only (default true everywhere else).
+        if (!mfaEnforced) {
+            return false;
+        }
         return user.isMfaEnabled() || holdsStaffRole(user.getPublicId());
     }
 
@@ -87,7 +105,7 @@ public class MfaLoginGate {
     /** Live re-check: the account exists, has MFA enabled, and currently holds an effective staff role. */
     private boolean staffMfaSatisfiedFor(UUID userPublicId) {
         return userRepository.findByPublicId(userPublicId)
-                .filter(User::isMfaEnabled)
+                .filter(u -> !mfaEnforced || u.isMfaEnabled())
                 .map(u -> holdsStaffRole(userPublicId))
                 .orElse(false);
     }

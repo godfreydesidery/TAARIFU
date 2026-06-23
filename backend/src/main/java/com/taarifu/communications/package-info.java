@@ -12,9 +12,11 @@
  * <p>Outbound delivery sits behind ports in {@code domain.port}: the pre-existing {@code SmsGateway} (from
  * the auth increment — reused, not redefined) plus {@code PushSender} and {@code EmailSender}, each with a
  * dev/test stub in {@code infrastructure.adapter} so the system runs with <b>zero external calls</b>
- * (ARCHITECTURE §7). Publishing raises {@code AnnouncementPublished} (the public event), consumed
- * after-commit by the fan-out listener to dispatch per preference — FEED always retained, PUSH→SMS
- * fallback (EI-5).</p>
+ * (ARCHITECTURE §7). Publishing appends {@code AnnouncementPublished} (the public event) to the shared
+ * transactional outbox in the publish transaction (ADR-0014); the relay later delivers it to
+ * {@code AnnouncementPublishedHandler}, which dispatches per preference — FEED always retained, PUSH→SMS
+ * fallback (EI-5) — <b>idempotently</b> (a redelivered event never double-notifies, keyed on the
+ * announcement id).</p>
  *
  * <p>Boundary discipline: cross-module entities (author/recipient profiles, geography areas, institutions
  * representatives, reporting categories) are referenced by public {@code UUID} only — never FK-joined —

@@ -70,12 +70,157 @@ class GeographyRepository {
 
   /// Lists the districts (Wilaya) of [regionId].
   Future<List<District>> listDistricts(String regionId) async {
+    final cacheKey = 'geography.districts.$regionId';
+    try {
+      final result = await _api.get<List<Map<String, dynamic>>>(
+        '/regions/$regionId/districts',
+        query: {'page': 0, 'size': 100, 'sort': 'name,asc'},
+        parser: _asMapList,
+      );
+      await _cache.write(cacheKey, result.data);
+      return result.data.map(District.fromJson).toList(growable: false);
+    } on Object {
+      final cached = await _cache.read(cacheKey);
+      if (cached is List) {
+        return cached
+            .whereType<Map<String, dynamic>>()
+            .map(District.fromJson)
+            .toList(growable: false);
+      }
+      rethrow;
+    }
+  }
+
+  /// Lists the wards (Kata) under [districtId] for the **manual ward picker**.
+  ///
+  /// Maps to `GET /districts/{districtId}/wards` (public; GPS-free). The result
+  /// is cached per district so a citizen who once browsed a district's wards can
+  /// still pick offline (PRD §15) — reference data changes rarely, so caching it
+  /// is correct and data-frugal. Each [WardSummary] carries its council/district
+  /// names so the picker can disambiguate same-named wards.
+  Future<List<WardSummary>> listWardsInDistrict(
+    String districtId, {
+    int page = 0,
+    int size = 100,
+  }) async {
+    final cacheKey = 'geography.wards.district.$districtId.p$page';
+    try {
+      final result = await _api.get<List<Map<String, dynamic>>>(
+        '/districts/$districtId/wards',
+        query: {'page': page, 'size': size, 'sort': 'name,asc'},
+        parser: _asMapList,
+      );
+      await _cache.write(cacheKey, result.data);
+      return result.data.map(WardSummary.fromJson).toList(growable: false);
+    } on Object {
+      final cached = await _cache.read(cacheKey);
+      if (cached is List) {
+        return cached
+            .whereType<Map<String, dynamic>>()
+            .map(WardSummary.fromJson)
+            .toList(growable: false);
+      }
+      rethrow;
+    }
+  }
+
+  /// Searches wards (Kata) by name prefix for the **manual ward picker**.
+  ///
+  /// Maps to `GET /wards?q=&districtId=` (public; GPS-free). A blank [query]
+  /// short-circuits to an empty list — the backend returns an empty page for a
+  /// blank `q` (a picker must not pull the national ward table), so we save the
+  /// round-trip and the data (PRD §15). [districtId], when supplied, scopes the
+  /// search to one district. Search is intentionally NOT cached: it is keystroke
+  /// driven and unbounded, so caching every prefix would bloat storage for
+  /// little gain (the district listing above is the offline path).
+  Future<List<WardSummary>> searchWards(
+    String query, {
+    String? districtId,
+    int size = 20,
+  }) async {
+    final q = query.trim();
+    if (q.isEmpty) {
+      return const [];
+    }
     final result = await _api.get<List<Map<String, dynamic>>>(
-      '/regions/$regionId/districts',
-      query: {'page': 0, 'size': 100, 'sort': 'name,asc'},
+      '/wards',
+      query: {
+        'q': q,
+        if (districtId != null) 'districtId': districtId,
+        'page': 0,
+        'size': size,
+        'sort': 'name,asc',
+      },
       parser: _asMapList,
     );
-    return result.data.map(District.fromJson).toList(growable: false);
+    return result.data.map(WardSummary.fromJson).toList(growable: false);
+  }
+
+  /// Lists the wards (Kata) under a district (Wilaya) for the **manual ward
+  /// picker** — `GET /districts/{districtId}/wards` (PRD §9.0, §22.6).
+  ///
+  /// WHY cached per district: a district's ward set is reference data that changes
+  /// rarely, so caching it lets a citizen browse and pick a ward fully offline and
+  /// avoids re-downloading the list on every visit (PRD §15 data-budget). On a
+  /// network miss the last cached page for this district is served if present.
+  /// Public; no session required — works for a Guest on a feature phone.
+  Future<List<WardSummary>> listWardsInDistrict(
+    String districtId, {
+    int page = 0,
+    int size = 100,
+  }) async {
+    final cacheKey = 'geography.district.$districtId.wards.page$page';
+    try {
+      final result = await _api.get<List<Map<String, dynamic>>>(
+        '/districts/$districtId/wards',
+        query: {'page': page, 'size': size, 'sort': 'name,asc'},
+        parser: _asMapList,
+      );
+      await _cache.write(cacheKey, result.data);
+      return result.data.map(WardSummary.fromJson).toList(growable: false);
+    } on Object {
+      final cached = await _cache.read(cacheKey);
+      if (cached is List) {
+        return cached
+            .whereType<Map<String, dynamic>>()
+            .map(WardSummary.fromJson)
+            .toList(growable: false);
+      }
+      rethrow;
+    }
+  }
+
+  /// Searches wards (Kata) by name prefix for the **manual ward picker** —
+  /// `GET /wards?q=&districtId=` (PRD §9.0, §22.6).
+  ///
+  /// A blank [query] returns an empty list without a call (the backend returns an
+  /// empty page for blank `q`; we short-circuit to save the citizen's data — a
+  /// picker does not pull the whole national ward table on an empty box, PRD §15).
+  /// [districtId], when supplied, scopes the search to one district. NOT cached:
+  /// free-text queries are unbounded, so caching them would bloat storage for no
+  /// reuse; the listing path above is the cached, offline-friendly one. Public.
+  Future<List<WardSummary>> searchWards(
+    String query, {
+    String? districtId,
+    int page = 0,
+    int size = 20,
+  }) async {
+    final q = query.trim();
+    if (q.isEmpty) {
+      return const [];
+    }
+    final result = await _api.get<List<Map<String, dynamic>>>(
+      '/wards',
+      query: {
+        'q': q,
+        'districtId': ?districtId,
+        'page': page,
+        'size': size,
+        'sort': 'name,asc',
+      },
+      parser: _asMapList,
+    );
+    return result.data.map(WardSummary.fromJson).toList(growable: false);
   }
 
   /// Coerces the raw `data` list node into a list of JSON maps.

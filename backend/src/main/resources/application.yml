@@ -96,6 +96,10 @@ taarifu:
       # OTP lifetime in seconds (single-use, attempt-capped). 5 min default (AUTH-DESIGN §9, §25.1).
       ttl-seconds: ${TAARIFU_OTP_TTL_SECONDS:300}
     mfa:
+      # Whether the staff TOTP second factor is enforced. MUST stay true in prod (and when unset);
+      # set false ONLY for local testing (TAARIFU_MFA_ENFORCED=false) so staff can log in without an
+      # authenticator app. Never disable in a real deployment (N-4, VERIFICATION-DESIGN §7).
+      enforced: ${TAARIFU_MFA_ENFORCED:true}
       # Staff TOTP second factor (N-4). RFC 6238 step (30s) + MFA_CHALLENGE token TTL (~5 min).
       totp:
         step-seconds: ${TAARIFU_MFA_TOTP_STEP_SECONDS:30}

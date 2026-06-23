@@ -5,6 +5,10 @@
 /// The submit is **offline-aware**: with no network the draft is queued and the
 /// citizen is told it will sync later (the outbox lives in the repository).
 ///
+/// The incident ward is chosen through the **manual ward picker** (replacing the
+/// old hand-typed ward UUID) — see [WardPicker]; the GPS resolve seam remains
+/// flagged for when `geolocator` lands.
+///
 /// Seams flagged as CENTRAL INTEGRATION NEEDS (kept out of scope to stay
 /// dependency-light): the GPS button needs a `geolocator` + the GPS→ward resolve
 /// call; the voice mic needs a `speech_to_text` engine (EI-17); photo attach
@@ -18,14 +22,21 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/network/failure_messages.dart';
 import '../../../core/widgets/status_views.dart';
+import '../../../features/geography/data/geography_models.dart';
+import '../../../features/geography/data/geography_repository.dart';
+import '../../../features/geography/view/ward_picker.dart';
 import '../../../l10n/app_localizations.dart';
 import '../bloc/report_form_cubit.dart';
 import '../data/reporting_models.dart';
 
 /// The file-a-report form.
 class ReportFormScreen extends StatefulWidget {
-  /// Creates the screen.
-  const ReportFormScreen({super.key});
+  /// Creates the screen over the shared [geographyRepository] (for the ward
+  /// picker).
+  const ReportFormScreen({required this.geographyRepository, super.key});
+
+  /// Civic-geography reads backing the manual ward picker.
+  final GeographyRepository geographyRepository;
 
   @override
   State<ReportFormScreen> createState() => _ReportFormScreenState();
@@ -35,9 +46,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _descController = TextEditingController();
-  final _wardController = TextEditingController();
 
   IssueCategory? _category;
+  WardSummary? _ward;
   String _visibility = 'PUBLIC';
   bool _anonymous = false;
 
@@ -45,8 +56,18 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   void dispose() {
     _titleController.dispose();
     _descController.dispose();
-    _wardController.dispose();
     super.dispose();
+  }
+
+  /// Opens the manual ward picker and stores the chosen ward.
+  Future<void> _pickWard() async {
+    final chosen = await WardPicker.open(
+      context,
+      geographyRepository: widget.geographyRepository,
+    );
+    if (chosen != null && mounted) {
+      setState(() => _ward = chosen);
+    }
   }
 
   /// Whether the chosen category forces PRIVATE (sensitive) — disables the
@@ -54,14 +75,23 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   bool get _forcedPrivate => _category?.forcePrivate ?? false;
 
   void _submit(AppLocalizations l10n) {
-    if (!(_formKey.currentState?.validate() ?? false) || _category == null) {
+    // The ward is now picker-chosen, not a free-text field, so validate it
+    // explicitly (a report must be geo-scoped to route to the right authority).
+    if (!(_formKey.currentState?.validate() ?? false) ||
+        _category == null ||
+        _ward == null) {
+      if (_ward == null) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(l10n.requiredField)));
+      }
       return;
     }
     final draft = ReportDraft(
       categoryId: _category!.id,
       title: _titleController.text.trim(),
       description: _descController.text.trim(),
-      wardId: _wardController.text.trim(),
+      wardId: _ward!.id,
       visibility: _forcedPrivate ? 'PRIVATE' : _visibility,
       anonymous: _anonymous && (_category?.sensitive ?? false),
     );
@@ -189,11 +219,26 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
             label: Text(l10n.reportAddPhotoButton),
           ),
           const SizedBox(height: 16),
-          TextFormField(
-            controller: _wardController,
-            decoration: InputDecoration(labelText: l10n.reportWardLabel),
-            validator: (v) =>
-                (v == null || v.trim().isEmpty) ? l10n.requiredField : null,
+          // Ward chosen through the manual ward picker (no hand-typed UUID).
+          Card(
+            margin: EdgeInsets.zero,
+            child: ListTile(
+              leading: const Icon(Icons.location_city_outlined),
+              title: Text(
+                _ward == null
+                    ? l10n.reportWardLabel
+                    : l10n.wardPickerChosenLabel(_ward!.qualifiedLabel),
+              ),
+              trailing: TextButton(
+                onPressed: submitting ? null : _pickWard,
+                child: Text(
+                  _ward == null
+                      ? l10n.wardPickerChooseButton
+                      : l10n.wardPickerChangeButton,
+                ),
+              ),
+              onTap: submitting ? null : _pickWard,
+            ),
           ),
           const SizedBox(height: 8),
           // GPS resolve seam (EI-7) — disabled until geolocator + resolve wired.

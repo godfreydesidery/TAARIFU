@@ -5,6 +5,7 @@ import com.taarifu.common.audit.domain.model.AuditEvent;
 import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.moderation.api.dto.AppealSummaryDto;
 import com.taarifu.moderation.api.dto.DecideAppealRequest;
 import com.taarifu.moderation.api.dto.FileAppealRequest;
 import com.taarifu.moderation.application.service.AppealService;
@@ -22,9 +23,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.lang.reflect.Field;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -167,6 +173,48 @@ class AppealServiceTest {
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getErrorCode())
                 .isEqualTo(ErrorCode.CONFLICT);
+    }
+
+    // -------- appeals queue (read) --------
+
+    @Test
+    void appealQueue_withStatus_delegatesToStatusFilteredQuery() {
+        Pageable pageable = PageRequest.of(0, 20);
+        AppealSummaryDto row = new AppealSummaryDto(UUID.randomUUID(), FlagSubjectType.COMMENT,
+                author, AppealStatus.OPEN, NOW);
+        Page<AppealSummaryDto> page = new PageImpl<>(List.of(row), pageable, 1);
+        when(appealRepository.findSummariesByStatus(AppealStatus.OPEN, pageable)).thenReturn(page);
+
+        Page<AppealSummaryDto> result = service.appealQueue(AppealStatus.OPEN, pageable);
+
+        assertThat(result.getContent()).containsExactly(row);
+        // The all-status query must NOT be used when a status filter is supplied.
+        verify(appealRepository, never()).findSummaries(any());
+    }
+
+    @Test
+    void appealQueue_withoutStatus_delegatesToAllStatusQuery() {
+        Pageable pageable = PageRequest.of(0, 20);
+        Page<AppealSummaryDto> page = new PageImpl<>(List.of(), pageable, 0);
+        when(appealRepository.findSummaries(pageable)).thenReturn(page);
+
+        Page<AppealSummaryDto> result = service.appealQueue(null, pageable);
+
+        assertThat(result).isEmpty();
+        verify(appealRepository, never()).findSummariesByStatus(any(), any());
+    }
+
+    @Test
+    void appealSummaryOutcome_isNullWhileOpen_andTerminalOnceDecided() {
+        UUID id = UUID.randomUUID();
+        // WHY: the summary outcome is the DERIVED terminal status — null while OPEN, the status itself
+        // once UPHELD/OVERTURNED. This proves the projection's single `status` selection never drifts.
+        assertThat(new AppealSummaryDto(id, FlagSubjectType.REPORT, author, AppealStatus.OPEN, NOW)
+                .outcome()).isNull();
+        assertThat(new AppealSummaryDto(id, FlagSubjectType.REPORT, author, AppealStatus.UPHELD, NOW)
+                .outcome()).isEqualTo(AppealStatus.UPHELD);
+        assertThat(new AppealSummaryDto(id, FlagSubjectType.REPORT, author, AppealStatus.OVERTURNED, NOW)
+                .outcome()).isEqualTo(AppealStatus.OVERTURNED);
     }
 
     private static void setPublicId(Object entity, UUID id) {

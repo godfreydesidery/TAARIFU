@@ -53,7 +53,10 @@
       </div>
       <div class="col-md-6 mb-3">
         <label class="form-label" for="rep-ward">{{ 'representatives.ward' | translate }}</label>
-        <input id="rep-ward" type="text" class="form-control" formControlName="wardId" [placeholder]="'institutions.uuidOptional' | translate" />
+        <app-ward-picker inputId="rep-ward" formControlName="wardId" />
+        @if (form.controls.wardId.getError('server')) {
+          <div class="text-danger small">{{ form.controls.wardId.getError('server') }}</div>
+        }
       </div>
     </div>
 

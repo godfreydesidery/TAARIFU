@@ -125,6 +125,17 @@
           <span aria-hidden="true">&#9873;</span>{{ 'nav.parties' | translate }}
         </a>
       </li>
+      <li class="nav-item">
+        <a
+          class="nav-link d-flex align-items-center gap-2"
+          routerLink="/announcements"
+          routerLinkActive="active"
+          ariaCurrentWhenActive="page"
+          (click)="onNavigate()"
+        >
+          <span aria-hidden="true">&#128226;</span>{{ 'nav.announcements' | translate }}
+        </a>
+      </li>
       @if (isAdmin()) {
         <li class="nav-item">
           <a

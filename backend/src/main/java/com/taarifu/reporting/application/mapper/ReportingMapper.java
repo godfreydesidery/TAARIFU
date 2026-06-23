@@ -1,5 +1,7 @@
 package com.taarifu.reporting.application.mapper;
 
+import com.taarifu.reporting.api.dto.AdminReportDetail;
+import com.taarifu.reporting.api.dto.AdminReportSummary;
 import com.taarifu.reporting.api.dto.CaseEventDto;
 import com.taarifu.reporting.api.dto.IssueCategoryDto;
 import com.taarifu.reporting.api.dto.PublicReportDto;
@@ -9,6 +11,8 @@ import com.taarifu.reporting.domain.model.IssueCategory;
 import com.taarifu.reporting.domain.model.Report;
 import org.locationtech.jts.geom.Point;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
  * Maps reporting entities to their boundary DTOs (ARCHITECTURE.md §3.3, CLAUDE.md §8).
@@ -100,6 +104,75 @@ public class ReportingMapper {
                 report.getUpvotes(),
                 report.getFollowers(),
                 report.getCreatedAt());
+    }
+
+    /**
+     * Maps a report to the admin/owner-grade <b>queue row</b> projection (M14; PRD §10 US-3.4, §24.3).
+     *
+     * <p>WHY this is distinct from {@link #toReportDto}: the queue row is PII-minimised for a list — it
+     * drops the description body, the reporter linkage (only the {@code anonymous} flag), and the precise
+     * point (only the ward), keeping the back-office list to routing/triage fields (data minimisation,
+     * PRD §18 / PDPA). {@code slaBreached} is computed by the caller against "now" (the entity has no
+     * clock) and passed in.</p>
+     *
+     * @param report      the report.
+     * @param slaBreached whether the case is currently SLA-breached (computed by the service).
+     * @return the {@link AdminReportSummary} queue row.
+     */
+    public AdminReportSummary toAdminReportSummary(Report report, boolean slaBreached) {
+        return new AdminReportSummary(
+                report.getPublicId(),
+                report.getCode(),
+                report.getCategory().getPublicId(),
+                report.getCategory().getName(),
+                report.getTitle(),
+                report.getReporterWardId(),
+                report.getStatus().name(),
+                report.getPriority().name(),
+                report.getDueAt(),
+                slaBreached,
+                report.getAssignedResponderId(),
+                report.isAnonymous(),
+                report.getCreatedAt());
+    }
+
+    /**
+     * Maps a report + its full timeline to the staff <b>case-detail</b> projection (M14; PRD §10 US-3.4).
+     *
+     * <p>Includes the case content (description) and the <b>full</b> timeline (public + internal events)
+     * because the caller is an authorised operator; still drops the reporter linkage (only {@code anonymous})
+     * and the precise point (only the ward) — the operator triages the case, not the citizen (D-Q1, §18).
+     * {@code slaBreached} and the mapped {@code timeline} are computed/assembled by the caller and passed
+     * in so this mapper stays a pure translation (no repository/clock access).</p>
+     *
+     * @param report      the report.
+     * @param slaBreached whether the case is currently SLA-breached (computed by the service).
+     * @param timeline    the full timeline already mapped to DTOs (newest first), public + internal.
+     * @return the {@link AdminReportDetail}.
+     */
+    public AdminReportDetail toAdminReportDetail(Report report, boolean slaBreached,
+                                                 List<CaseEventDto> timeline) {
+        return new AdminReportDetail(
+                report.getPublicId(),
+                report.getCode(),
+                report.getCategory().getPublicId(),
+                report.getCategory().getName(),
+                report.getTitle(),
+                report.getDescription(),
+                report.getReporterWardId(),
+                report.getConstituencyId(),
+                report.getVisibility().name(),
+                report.getStatus().name(),
+                report.getPriority().name(),
+                report.getDueAt(),
+                slaBreached,
+                report.getResolution(),
+                report.getConfirmation(),
+                report.getDuplicateOfId(),
+                report.getAssignedResponderId(),
+                report.isAnonymous(),
+                report.getCreatedAt(),
+                timeline);
     }
 
     /**

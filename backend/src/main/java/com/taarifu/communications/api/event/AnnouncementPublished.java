@@ -16,10 +16,16 @@ import java.util.UUID;
  *
  * <p>WHY an immutable record in {@code api.event} (not a Spring event class): events are the only async
  * cross-module contract (ARCHITECTURE §3.2/§8); keeping the record in the module's public {@code api}
- * package lets other modules subscribe without importing this module's internals. TODO(wiring): once the
- * shared transactional-outbox base exists ({@code common.outbox}), this event is written to the outbox
- * in the same transaction as the publish and relayed to the bus; until then the publish service raises
- * it in-process for the dispatcher (ARCHITECTURE §8 MVP "even in-process ApplicationEventPublisher").</p>
+ * package lets other modules subscribe without importing this module's internals. As of ADR-0014 this
+ * record is the {@code EventEnvelope} payload: the publish application-service writes it to the shared
+ * transactional outbox ({@code common.outbox.OutboxWriter}) <b>in the same transaction as the publish</b>,
+ * and the relay later delivers it to {@code AnnouncementPublishedHandler} — there is no longer an
+ * in-process {@code ApplicationEventPublisher} hop. The taxonomy key the dispatcher routes on is
+ * {@link #EVENT_TYPE}; the producing aggregate type is {@link #AGGREGATE_TYPE}.</p>
+ *
+ * <p><b>🔒 ids/codes/enums only — never PII</b> (PRD §18): this record carries public {@code UUID}s, the
+ * audience descriptor, and channel names; never the title/body or any author/recipient identity beyond the
+ * opaque profile id. The handler re-reads any richer detail by id (ADR-0013).</p>
  *
  * @param announcementId   the published announcement's public id (consumers re-read by this id).
  * @param authorProfileId  the authoring profile's public id (for conflict-of-interest checks downstream).
@@ -38,4 +44,14 @@ public record AnnouncementPublished(
         Set<String> channels,
         Instant publishedAt
 ) {
+
+    /**
+     * The outbox {@code eventType} taxonomy key for this event (ADR-0014 §5a). The producer stamps it on
+     * the {@link com.taarifu.common.outbox.EventEnvelope} and the consuming {@code DomainEventHandler}
+     * registers on it; sharing one constant keeps producer and handler in lock-step (DRY).
+     */
+    public static final String EVENT_TYPE = "ANNOUNCEMENT_PUBLISHED";
+
+    /** The outbox {@code aggregateType} for the producing {@code Announcement} aggregate (ADR-0014 §1). */
+    public static final String AGGREGATE_TYPE = "ANNOUNCEMENT";
 }

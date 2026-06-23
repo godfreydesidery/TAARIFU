@@ -1,0 +1,77 @@
+<!--
+  Multi-select issue-category typeahead. Replaces the comma-separated category-UUID text input (PRD §24).
+  Type to filter the active taxonomy; chosen categories show as removable chips. Bound value: string[] of ids.
+-->
+<div>
+  <!-- Selected category chips. -->
+  @if (selectedIds().length > 0) {
+    <div class="d-flex flex-wrap gap-1 mb-2">
+      @for (id of selectedIds(); track id) {
+        <span class="badge text-bg-secondary d-inline-flex align-items-center gap-1">
+          {{ labelFor(id) }}
+          <button
+            type="button"
+            class="btn-close btn-close-white"
+            style="font-size: 0.6rem"
+            [disabled]="disabled()"
+            [attr.aria-label]="('categoryPicker.remove' | translate) + ' ' + labelFor(id)"
+            (click)="remove(id)"
+          ></button>
+        </span>
+      }
+    </div>
+  }
+
+  @if (errored()) {
+    <div class="text-danger small">{{ 'categoryPicker.loadError' | translate }}</div>
+  } @else {
+    <div class="position-relative">
+      <input
+        [id]="inputId"
+        type="text"
+        class="form-control"
+        role="combobox"
+        autocomplete="off"
+        aria-autocomplete="list"
+        [attr.aria-expanded]="open()"
+        [attr.aria-controls]="inputId + '-list'"
+        [disabled]="disabled() || loading()"
+        [value]="query()"
+        [placeholder]="(loading() ? 'common.loading' : 'categoryPicker.placeholder') | translate"
+        (input)="onInput($any($event.target).value)"
+        (focus)="open.set(true)"
+        (blur)="onBlur()"
+      />
+
+      @if (open() && !loading()) {
+        <ul
+          [id]="inputId + '-list'"
+          class="list-group position-absolute w-100 shadow-sm mt-1"
+          role="listbox"
+          style="z-index: 1050; max-height: 16rem; overflow-y: auto"
+        >
+          @if (filtered().length === 0) {
+            <li class="list-group-item small text-muted" role="status" aria-live="polite">
+              {{ 'categoryPicker.noResults' | translate }}
+            </li>
+          } @else {
+            @for (category of filtered(); track category.id) {
+              <li
+                class="list-group-item list-group-item-action small"
+                role="option"
+                [attr.aria-selected]="false"
+                tabindex="0"
+                (click)="add(category)"
+                (keydown.enter)="add(category)"
+                (keydown.space)="add(category); $event.preventDefault()"
+              >
+                <span class="fw-semibold">{{ category.name }}</span>
+                <span class="text-muted">— {{ category.code }}</span>
+              </li>
+            }
+          }
+        </ul>
+      }
+    </div>
+  }
+</div>

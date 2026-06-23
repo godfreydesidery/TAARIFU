@@ -40,6 +40,7 @@
     "reports": "Reports",
     "moderation": "Moderation",
     "responders": "Responders",
+    "announcements": "Announcements",
     "institutions": "Institutions",
     "tokens": "Tokens",
     "users": "Users & Roles",
@@ -215,7 +216,9 @@
     "newResponder": "New Responder",
     "noResponders": "No responders for this organisation.",
     "coverage": "Coverage",
-    "handledCategories": "Handled category ids",
+    "handledCategories": "Handled categories",
+    "coverageAreas": "Coverage areas (wards)",
+    "coverageAreasHint": "Add the specific wards (Kata) this responder covers.",
     "slaPolicy": "SLA policy",
     "idsHint": "Comma-separated UUIDs",
     "priority": "Priority",
@@ -418,6 +421,43 @@
       "MODERATOR": "Admin",
       "ADMIN": "Root / Admin",
       "ROOT": "Root"
+    }
+  },
+  "wardPicker": {
+    "placeholder": "Search a ward (Kata) by name…",
+    "noResults": "No matching wards. Refine your search.",
+    "clear": "Clear selected ward"
+  },
+  "categoryPicker": {
+    "placeholder": "Search a category by name or code…",
+    "noResults": "No matching categories.",
+    "remove": "Remove",
+    "loadError": "Could not load categories. Reload and try again."
+  },
+  "areaPicker": {
+    "placeholder": "Search a ward (Kata) to add…",
+    "noResults": "No matching wards. Refine your search.",
+    "remove": "Remove"
+  },
+  "announcements": {
+    "title": "Announcements",
+    "apiGapNote": "A console-wide announcements list is not yet available server-side. Enter a published announcement's id to view its detail.",
+    "lookupLabel": "Announcement id",
+    "lookupPlaceholder": "Paste the announcement's public id (UUID)",
+    "open": "Open",
+    "notAvailable": "This announcement is not available. It may be unpublished, expired, or the id is unknown.",
+    "published": "Published",
+    "expires": "Expires",
+    "audience": "Audience",
+    "category": "Category",
+    "areas": "Target areas",
+    "allAreas": "All areas (no geo-targeting)",
+    "channels": "Channels",
+    "statusValue": {
+      "DRAFT": "Draft",
+      "SCHEDULED": "Scheduled",
+      "PUBLISHED": "Published",
+      "EXPIRED": "Expired"
     }
   },
   "errors": {

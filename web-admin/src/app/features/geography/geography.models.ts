@@ -26,3 +26,26 @@ export interface District {
   /** The parent region's public id. */
   regionId: string;
 }
+
+/**
+ * Lean ward (Kata) projection for the manual ward picker — mirrors the backend `WardSummaryDto`
+ * (`GET /wards?q=`, `GET /districts/{id}/wards`; PRD §9.0, §22.6).
+ *
+ * <p>This is the smallest shape a picker needs to render a ward choice when GPS is unavailable: the ward's
+ * public {@link id} (the value report/profile/responder forms take by hand), its display {@link name} and
+ * {@link code}, plus the parent {@link councilName} and {@link districtName} so a picker can disambiguate
+ * same-named wards (e.g. two "Mji Mpya" wards in different councils) without a second round-trip. Carries
+ * no PII — only public reference data, safe for the unauthenticated reads it backs.</p>
+ */
+export interface WardSummary {
+  /** The ward's public id (UUID) — the value clients pass when pinning a location/area. */
+  id: string;
+  /** Official ward code. */
+  code: string;
+  /** Ward display name (e.g. "Mengwe"). */
+  name: string;
+  /** Parent Council/LGA (Halmashauri) name, or `null` if unresolved. */
+  councilName: string | null;
+  /** District (Wilaya) ancestor name, or `null` if unresolved. */
+  districtName: string | null;
+}

@@ -7,6 +7,7 @@ import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { ApiError } from '../../core/api/api-error';
 import { ErrorDetail } from '../../core/api/api-response.model';
 import { ToastService } from '../../core/notifications/toast.service';
+import { WardPickerComponent } from '../../shared/components/ward-picker.component';
 import {
   LEGISLATURES,
   REPRESENTATIVE_MANDATES,
@@ -28,14 +29,15 @@ import { InstitutionsAdminService } from './institutions-admin.service';
  * never touches verified ID fields (those are owned by verification). Subscriptions use
  * {@link takeUntilDestroyed}.</p>
  *
- * <p>WHY UUID inputs (not pickers) for profile/constituency/ward/party/parliament: those reference lists
- * are large and live in other features; a typeahead picker per field is a follow-up. For MVP the admin
- * pastes the public ids (which they obtain from the respective lists), and the server validates each.</p>
+ * <p>The <b>ward</b> scope now uses the typed {@link WardPickerComponent} (manual Kata search) instead of a
+ * raw UUID box — the admin searches by ward name and the picker writes the ward public id into the
+ * {@code wardId} control. The remaining reference fields (profile/constituency/party/parliament) still take
+ * public ids by hand for MVP — their dedicated pickers are a follow-up — and the server validates each.</p>
  */
 @Component({
   selector: 'app-representative-form',
   standalone: true,
-  imports: [ReactiveFormsModule, RouterLink, TranslateModule],
+  imports: [ReactiveFormsModule, RouterLink, TranslateModule, WardPickerComponent],
   templateUrl: './representative-form.component.html',
 })
 export class RepresentativeFormComponent {

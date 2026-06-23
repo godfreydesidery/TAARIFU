@@ -56,6 +56,56 @@ class AdminSecurityIntegrationTest extends AbstractHttpIntegrationTest {
                 .andExpect(status().isOk());
     }
 
+    // ---- reports queue / case detail / overview stats ----------------------------------------------
+
+    @Test
+    void reportsQueue_unauthenticated_is401() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/reports"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @WithMockUser(roles = "CITIZEN")
+    void reportsQueue_asCitizen_is403() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/reports"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(roles = "MODERATOR")
+    void reportsQueue_asModerator_is2xx() throws Exception {
+        // Empty DB → empty-but-successful queue; proves the surface is reachable for staff.
+        mockMvc.perform(get("/api/v1/admin/reports"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @WithMockUser(roles = "CITIZEN")
+    void caseDetail_asCitizen_is403() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/reports/" + UUID.randomUUID()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void adminStats_unauthenticated_is401() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/stats"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @WithMockUser(roles = "CITIZEN")
+    void adminStats_asCitizen_is403() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/stats"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void adminStats_asAdmin_is2xx() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/stats"))
+                .andExpect(status().isOk());
+    }
+
     // ---- user/role management ----------------------------------------------------------------------
 
     @Test

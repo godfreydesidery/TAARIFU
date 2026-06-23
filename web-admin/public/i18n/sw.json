@@ -40,6 +40,7 @@
     "reports": "Ripoti",
     "moderation": "Usimamizi wa Maudhui",
     "responders": "Watoa Huduma",
+    "announcements": "Matangazo",
     "institutions": "Taasisi",
     "tokens": "Tokeni",
     "users": "Watumiaji na Majukumu",
@@ -215,7 +216,9 @@
     "newResponder": "Mtoa Huduma Mpya",
     "noResponders": "Hakuna watoa huduma kwa shirika hili.",
     "coverage": "Eneo la huduma",
-    "handledCategories": "Vitambulisho vya aina zinazoshughulikiwa",
+    "handledCategories": "Aina zinazoshughulikiwa",
+    "coverageAreas": "Maeneo ya huduma (kata)",
+    "coverageAreasHint": "Ongeza kata mahususi ambazo mtoa huduma huyu anazihudumia.",
     "slaPolicy": "Sera ya SLA",
     "idsHint": "UUID zikitenganishwa kwa koma",
     "priority": "Kipaumbele",
@@ -418,6 +421,43 @@
       "MODERATOR": "Msimamizi",
       "ADMIN": "Root / Msimamizi",
       "ROOT": "Root"
+    }
+  },
+  "wardPicker": {
+    "placeholder": "Tafuta kata kwa jina…",
+    "noResults": "Hakuna kata zinazolingana. Boresha utafutaji.",
+    "clear": "Ondoa kata iliyochaguliwa"
+  },
+  "categoryPicker": {
+    "placeholder": "Tafuta aina kwa jina au msimbo…",
+    "noResults": "Hakuna aina zinazolingana.",
+    "remove": "Ondoa",
+    "loadError": "Imeshindikana kupakia aina. Pakia upya ujaribu tena."
+  },
+  "areaPicker": {
+    "placeholder": "Tafuta kata ya kuongeza…",
+    "noResults": "Hakuna kata zinazolingana. Boresha utafutaji.",
+    "remove": "Ondoa"
+  },
+  "announcements": {
+    "title": "Matangazo",
+    "apiGapNote": "Orodha ya matangazo yote bado haijapatikana upande wa seva. Weka kitambulisho cha tangazo lililochapishwa ili kuona maelezo yake.",
+    "lookupLabel": "Kitambulisho cha tangazo",
+    "lookupPlaceholder": "Bandika kitambulisho cha umma cha tangazo (UUID)",
+    "open": "Fungua",
+    "notAvailable": "Tangazo hili halipatikani. Huenda halijachapishwa, limeisha muda, au kitambulisho hakijulikani.",
+    "published": "Lilichapishwa",
+    "expires": "Linaisha",
+    "audience": "Walengwa",
+    "category": "Aina",
+    "areas": "Maeneo lengwa",
+    "allAreas": "Maeneo yote (bila kulenga eneo)",
+    "channels": "Njia",
+    "statusValue": {
+      "DRAFT": "Rasimu",
+      "SCHEDULED": "Limepangwa",
+      "PUBLISHED": "Limechapishwa",
+      "EXPIRED": "Limeisha muda"
     }
   },
   "errors": {

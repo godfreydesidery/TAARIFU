@@ -4,12 +4,13 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.communications.api.event.AnnouncementPublished;
 import com.taarifu.communications.domain.model.Announcement;
 import com.taarifu.communications.domain.model.enums.AnnouncementStatus;
 import com.taarifu.communications.domain.model.enums.Channel;
 import com.taarifu.communications.domain.repository.AnnouncementRepository;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,28 +37,34 @@ import java.util.stream.Collectors;
  * service stays free of identity internals (ARCHITECTURE §3.2). TODO(wiring): subscribe to the moderation
  * approval event to auto-publish a cleared hold.</p>
  *
- * <p>WHY the event is raised via {@link ApplicationEventPublisher} now (not a broker): the transactional
- * outbox + bus is a later increment (ARCHITECTURE §8). The in-process publisher is the MVP transport the
- * architecture explicitly permits; the consumer (fan-out/dispatch) is a drop-in for the future outbox
- * relay, so no domain change is needed when the bus arrives.</p>
+ * <p>WHY the event is appended to the transactional <b>outbox</b> (ADR-0014), not raised in-process:
+ * {@link OutboxWriter#append} runs with {@code Propagation.MANDATORY} inside <i>this</i> service's
+ * {@code @Transactional}, so the {@code Announcement} row and the {@link AnnouncementPublished} outbox row
+ * commit (or roll back) <b>atomically</b> — a crash between "published" and "fanned out" can never drop the
+ * notification fan-out (PRD §15 DI3), which an {@code ApplicationEventPublisher}/{@code AFTER_COMMIT}
+ * listener could. The author's publish call still returns fast: the {@code OutboxRelay} dispatches the
+ * fan-out asynchronously, off the request thread, and at-least-once with idempotent handlers
+ * ({@code AnnouncementPublishedHandler}).</p>
  */
 @Service
 public class AnnouncementService {
 
     private final AnnouncementRepository announcementRepository;
-    private final ApplicationEventPublisher events;
+    private final OutboxWriter outboxWriter;
     private final ClockPort clock;
 
     /**
      * @param announcementRepository announcement persistence.
-     * @param events                 in-process event publisher (MVP transport for fan-out/dispatch).
+     * @param outboxWriter           transactional-outbox writer; appends the {@link AnnouncementPublished}
+     *                               event in this service's transaction so it commits atomically with the
+     *                               publish (ADR-0014 §2) and is relayed to the fan-out handler.
      * @param clock                  injectable "now" for scheduling/transition (testability).
      */
     public AnnouncementService(AnnouncementRepository announcementRepository,
-                               ApplicationEventPublisher events,
+                               OutboxWriter outboxWriter,
                                ClockPort clock) {
         this.announcementRepository = announcementRepository;
-        this.events = events;
+        this.outboxWriter = outboxWriter;
         this.clock = clock;
     }
 
@@ -205,10 +212,19 @@ public class AnnouncementService {
         return saved;
     }
 
-    /** Raises the published event (in-process) only when the announcement actually went live now. */
+    /**
+     * Appends the {@link AnnouncementPublished} event to the transactional outbox — only when the
+     * announcement actually went live now — so the fan-out intent commits atomically with the publish
+     * (ADR-0014 §2/§5a). Called inside this service's {@code @Transactional}; {@link OutboxWriter#append}
+     * (Propagation.MANDATORY) joins that transaction, guaranteeing the event row and the announcement row
+     * share one commit. The payload carries ids/codes/enums only — never the title/body (PRD §18); the
+     * fan-out handler re-reads any detail it needs by id (ADR-0013).
+     *
+     * @param a the just-saved announcement; the event is appended only if it is {@code PUBLISHED}.
+     */
     private void emitIfPublished(Announcement a) {
-        if (a.getStatus() == com.taarifu.communications.domain.model.enums.AnnouncementStatus.PUBLISHED) {
-            events.publishEvent(new AnnouncementPublished(
+        if (a.getStatus() == AnnouncementStatus.PUBLISHED) {
+            AnnouncementPublished payload = new AnnouncementPublished(
                     a.getPublicId(),
                     a.getAuthorProfileId(),
                     a.getAudienceAreaIds(),
@@ -216,7 +232,13 @@ public class AnnouncementService {
                     a.getAudienceRole(),
                     a.getChannels().stream().map(Channel::name)
                             .collect(Collectors.toCollection(LinkedHashSet::new)),
-                    a.getPublishAt() == null ? clock.now() : a.getPublishAt()));
+                    a.getPublishAt() == null ? clock.now() : a.getPublishAt());
+            outboxWriter.append(EventEnvelope.of(
+                    AnnouncementPublished.EVENT_TYPE,
+                    AnnouncementPublished.AGGREGATE_TYPE,
+                    a.getPublicId(),
+                    payload,
+                    payload.publishedAt()));
         }
     }
 

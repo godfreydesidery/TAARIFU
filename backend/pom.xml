@@ -52,6 +52,13 @@
         <rest-assured.version>5.5.0</rest-assured.version>
         <!-- Hibernate Spatial ships matching the Boot-managed Hibernate 6.5.x line. -->
         <hibernate.version>6.5.3.Final</hibernate.version>
+        <!--
+          AWS SDK v2 — used ONLY by the media module's optional S3-compatible ObjectStore
+          adapter (S3 presigned PUT/GET, EI-8). The BOM aligns s3 + s3-presigner transitive
+          versions. The dev/test default stays the in-memory stub (no AWS on the boot path),
+          so this dependency is dormant unless taarifu.media.object-store=s3.
+        -->
+        <aws-sdk.version>2.30.6</aws-sdk.version>
     </properties>
 
     <dependencies>
@@ -136,6 +143,21 @@
             <version>${springdoc.version}</version>
         </dependency>
 
+        <!-- ============================ Object storage (S3) ================= -->
+        <!--
+          AWS SDK v2 S3 + presigner for the media module's optional S3ObjectStore adapter
+          (PRD §21 EI-8). Provides time-bounded presigned PUT/GET so bytes never stream
+          through the application. Works against AWS S3 and any S3-compatible store (MinIO)
+          via an endpoint override + path-style addressing. Credentials come from the AWS
+          DefaultCredentialsProvider chain (env/instance role) — NEVER from source. The
+          adapter is @ConditionalOnProperty(taarifu.media.object-store=s3); the in-memory
+          stub remains the dev/test default, so these artefacts are inert unless S3 is selected.
+        -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+        </dependency>
+
         <!-- ============================ Lombok (sparingly) ================== -->
         <!-- CLAUDE.md §8: allowed but sparingly. Used for boilerplate-free constructors/getters. -->
         <dependency>
@@ -190,6 +212,18 @@
                 <groupId>org.testcontainers</groupId>
                 <artifactId>testcontainers-bom</artifactId>
                 <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!--
+              Align AWS SDK v2 artefacts (s3, s3-presigner, transitive http/auth) to one
+              version for the media S3ObjectStore adapter. BOM import keeps the single S3
+              dependency above version-free and transitively consistent.
+            -->
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws-sdk.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

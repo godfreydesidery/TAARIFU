@@ -319,5 +319,38 @@
   },
 
   "feedDetailTitle": "Taarifa",
-  "@feedDetailTitle": { "description": "Title of the feed-item detail screen." }
+  "@feedDetailTitle": { "description": "Title of the feed-item detail screen." },
+
+  "wardPickerTitle": "Chagua kata",
+  "@wardPickerTitle": { "description": "Title of the manual ward-picker screen." },
+  "wardPickerSearchTab": "Tafuta",
+  "@wardPickerSearchTab": { "description": "Tab/segment for searching a ward by name." },
+  "wardPickerBrowseTab": "Vinjari",
+  "@wardPickerBrowseTab": { "description": "Tab/segment for browsing Region → District → Ward." },
+  "wardPickerSearchHint": "Andika jina la kata",
+  "@wardPickerSearchHint": { "description": "Hint in the ward-name search box." },
+  "wardPickerPickRegion": "Chagua mkoa",
+  "@wardPickerPickRegion": { "description": "Step prompt: choose a region (Mkoa)." },
+  "wardPickerPickDistrict": "Chagua wilaya",
+  "@wardPickerPickDistrict": { "description": "Step prompt: choose a district (Wilaya)." },
+  "wardPickerPickWard": "Chagua kata",
+  "@wardPickerPickWard": { "description": "Step prompt: choose a ward (Kata)." },
+  "wardPickerNoResults": "Hakuna kata iliyopatikana. Jaribu jina jingine.",
+  "@wardPickerNoResults": { "description": "Empty state for a ward search with no matches." },
+  "wardPickerNoWards": "Hakuna kata kwa wilaya hii.",
+  "@wardPickerNoWards": { "description": "Empty state when a district lists no wards." },
+  "wardPickerChosenLabel": "Kata: {ward}",
+  "@wardPickerChosenLabel": {
+    "description": "Shows the currently chosen ward on a form field.",
+    "placeholders": { "ward": { "type": "String" } }
+  },
+  "wardPickerChooseButton": "Chagua kata",
+  "@wardPickerChooseButton": { "description": "Button opening the ward picker from a form." },
+  "wardPickerChangeButton": "Badilisha kata",
+  "@wardPickerChangeButton": { "description": "Button to change an already-chosen ward." },
+
+  "announcementDetailTitle": "Tangazo",
+  "@announcementDetailTitle": { "description": "Title of the announcement-detail screen." },
+  "announcementNotFound": "Tangazo hili halipatikani au limeisha muda.",
+  "@announcementNotFound": { "description": "Shown when an announcement is missing/expired (404)." }
 }

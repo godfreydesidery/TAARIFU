@@ -1,10 +1,13 @@
 package com.taarifu.moderation.domain.repository;
 
+import com.taarifu.moderation.api.dto.AppealSummaryDto;
 import com.taarifu.moderation.domain.model.Appeal;
 import com.taarifu.moderation.domain.model.enums.AppealStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -14,7 +17,9 @@ import java.util.UUID;
  *
  * <p>Responsibility: drives the appeal queue (UC-H03) and the one-live-appeal-per-action rule —
  * {@link #existsByActionPublicId} backs the pre-insert check (the DB UNIQUE constraint is the backstop),
- * and {@link #findByStatus} renders the open-appeals queue for an <i>independent</i> moderator.</p>
+ * {@link #findByStatus} renders the open-appeals queue, and {@link #findSummaries}/
+ * {@link #findSummariesByStatus} render the paged moderator appeals queue summary
+ * ({@code GET /moderation/appeals}) for an <i>independent</i> moderator.</p>
  */
 public interface AppealRepository extends JpaRepository<Appeal, Long> {
 
@@ -36,4 +41,45 @@ public interface AppealRepository extends JpaRepository<Appeal, Long> {
      * @return the paged appeal queue.
      */
     Page<Appeal> findByStatus(AppealStatus status, Pageable pageable);
+
+    /**
+     * Renders the moderator <b>appeals queue</b> summary across every status (UC-H03;
+     * {@code GET /moderation/appeals} with no {@code status} filter).
+     *
+     * <p>WHY a single constructor-expression projection joining {@code appeal → action → item}: the queue
+     * row needs the actioned content kind ({@code item.subjectType}), which lives on the queue item the
+     * appealed action resolved. Selecting it in one query avoids the N+1 that a {@code Page<Appeal>} mapped
+     * in Java would trigger (each row lazy-loading {@code action.item}), and it returns only the lean
+     * summary fields — no grounds, no decision note, no moderated content (data minimisation, §18). Sort +
+     * paging are applied by the caller's {@link Pageable} (default {@code createdAt,desc} → newest first).</p>
+     *
+     * @param pageable page + sort (e.g. {@code createdAt,desc}).
+     * @return the paged appeal summary rows.
+     */
+    @Query("""
+            SELECT new com.taarifu.moderation.api.dto.AppealSummaryDto(
+                a.publicId, a.action.item.subjectType, a.appellantProfileId, a.status, a.createdAt)
+            FROM Appeal a
+            """)
+    Page<AppealSummaryDto> findSummaries(Pageable pageable);
+
+    /**
+     * Renders the moderator <b>appeals queue</b> summary filtered to one status (UC-H03;
+     * {@code GET /moderation/appeals?status=OPEN}).
+     *
+     * <p>Same projection contract as {@link #findSummaries}, restricted to the requested
+     * {@link AppealStatus}. The {@code status} predicate plus {@code createdAt} ordering is backed by the
+     * V100 composite index {@code ix_mod_appeal_status_created}.</p>
+     *
+     * @param status   the appeal status to list (e.g. {@code OPEN}).
+     * @param pageable page + sort.
+     * @return the paged appeal summary rows for that status.
+     */
+    @Query("""
+            SELECT new com.taarifu.moderation.api.dto.AppealSummaryDto(
+                a.publicId, a.action.item.subjectType, a.appellantProfileId, a.status, a.createdAt)
+            FROM Appeal a
+            WHERE a.status = :status
+            """)
+    Page<AppealSummaryDto> findSummariesByStatus(@Param("status") AppealStatus status, Pageable pageable);
 }

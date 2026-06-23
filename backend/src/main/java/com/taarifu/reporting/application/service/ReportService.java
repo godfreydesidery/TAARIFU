@@ -4,12 +4,16 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.persistence.CodeGenerator;
 import com.taarifu.reporting.api.ReportLifecycleApi;
 import com.taarifu.reporting.api.dto.CaseEventDto;
 import com.taarifu.reporting.api.dto.FileReportDto;
 import com.taarifu.reporting.api.dto.PublicReportDto;
 import com.taarifu.reporting.api.dto.ReportDto;
+import com.taarifu.reporting.api.event.ReportEventTypes;
+import com.taarifu.reporting.api.event.ReportRouted;
 import com.taarifu.reporting.application.mapper.ReportingMapper;
 import com.taarifu.reporting.domain.model.CaseEvent;
 import com.taarifu.reporting.domain.model.IssueCategory;
@@ -57,9 +61,14 @@ import java.util.UUID;
  *       {@link PublicReportDto}; the repository filters visibility as defence-in-depth (PRD §25.3).</li>
  * </ul>
  *
- * <p>Routing to a responder is <b>DEFERRED</b>: reports are created {@code NEW} and never auto-assigned
- * here (see {@code // TODO(wiring)}). The notifications fan-out (ack/status-change) is likewise a later
- * increment; this service records the timeline event that those notifications will key off.</p>
+ * <p><b>Routing to a responder OWNER is now wired</b> via the transactional outbox (ADR-0014 §5b, D21):
+ * filing appends a {@link ReportEventTypes#REPORT_ROUTED} event (ids only — report/category/ward) in the
+ * <i>same</i> transaction as the report row, and a responders routing handler creates the OWNER
+ * {@code ResponderAssignment} <b>asynchronously</b>. WHY async (not a direct call into responders): a
+ * synchronous {@code reporting → responders} edge would be a dependency cycle and would couple the
+ * citizen's filing to a responders outage (ADR-0013 §1; PRD §15 DI3). The notifications fan-out
+ * (ack/status-change) is likewise a later increment; this service records the timeline event those
+ * notifications will key off.</p>
  */
 @Service
 @Transactional(readOnly = true)
@@ -81,6 +90,7 @@ public class ReportService implements ReportLifecycleApi {
     private final CodeGenerator codeGenerator;
     private final ReportingMapper mapper;
     private final ClockPort clock;
+    private final OutboxWriter outboxWriter;
 
     /**
      * @param reportRepository    report persistence port.
@@ -90,10 +100,14 @@ public class ReportService implements ReportLifecycleApi {
      * @param codeGenerator       DB-sequence ticket-code generator.
      * @param mapper              entity→DTO mapper.
      * @param clock               injectable time source (testability).
+     * @param outboxWriter        the transactional-outbox port; {@link #fileReport} appends a
+     *                            {@link ReportEventTypes#REPORT_ROUTED} event in the filing transaction so a
+     *                            responders handler creates the OWNER assignment asynchronously (ADR-0014 §5b).
      */
     public ReportService(ReportRepository reportRepository, IssueCategoryRepository categoryRepository,
                          CaseEventRepository caseEventRepository, WardResolver wardResolver,
-                         CodeGenerator codeGenerator, ReportingMapper mapper, ClockPort clock) {
+                         CodeGenerator codeGenerator, ReportingMapper mapper, ClockPort clock,
+                         OutboxWriter outboxWriter) {
         this.reportRepository = reportRepository;
         this.categoryRepository = categoryRepository;
         this.caseEventRepository = caseEventRepository;
@@ -101,6 +115,7 @@ public class ReportService implements ReportLifecycleApi {
         this.codeGenerator = codeGenerator;
         this.mapper = mapper;
         this.clock = clock;
+        this.outboxWriter = outboxWriter;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -166,8 +181,22 @@ public class ReportService implements ReportLifecycleApi {
         appendEvent(report, CaseEventType.STATUS_CHANGE, true, effectiveReporterId,
                 "Ripoti imepokelewa (NEW)");
 
-        // TODO(wiring): route to a responder OWNER (D21) and emit a "report received" notification +
-        // outbox event once the responders/notifications modules are integrated. Report stays NEW for now.
+        // ROUTE → responder OWNER (D21, ADR-0014 §5b): append a REPORT_ROUTED event in THIS transaction so
+        // the report row and the routing intent commit atomically — a crash can never leave the report filed
+        // but unrouted. The payload is ids ONLY (report/category/ward — NO PII, NO reporter; PRD §18,
+        // ADR-0014 §1): the responders RoutingHandler resolves the responsible responder and creates the
+        // single OWNER ResponderAssignment ASYNCHRONOUSLY, off this thread. There is deliberately NO
+        // synchronous reporting → responders call here — that edge would be a dependency cycle (responders
+        // already reads reporting synchronously for validation, ADR-0013 §1) and would couple the citizen's
+        // filing to a responders outage. The report stays NEW until the responders side assigns an OWNER and
+        // emits ResponderAssigned back (a later reporting handler sets Report.assignedResponderId, D21).
+        outboxWriter.append(EventEnvelope.of(
+                ReportEventTypes.REPORT_ROUTED,
+                ReportEventTypes.AGGREGATE_REPORT,
+                report.getPublicId(),
+                new ReportRouted(report.getPublicId(), category.getPublicId(),
+                        report.getReporterWardId(), clock.now()),
+                clock.now()));
 
         return mapper.toReportDto(report);
     }

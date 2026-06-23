@@ -1,32 +1,22 @@
 package com.taarifu.admin.infrastructure.config;
 
-import com.taarifu.admin.api.spi.IdentityAdminPort;
-import com.taarifu.admin.infrastructure.adapter.StubIdentityAdminAdapter;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Module wiring for {@code admin} (ARCHITECTURE §3.3 {@code infrastructure.config}).
+ * Module wiring for {@code admin} (ARCHITECTURE.md §3.3 {@code infrastructure.config}).
  *
- * <p>Responsibility: provide the fallback {@link IdentityAdminPort} stub so the admin module is
- * self-sufficient until the {@code identity} module registers its real adapter. {@code @ConditionalOnMissingBean}
- * means the real identity-backed bean — once it exists — wins, and this stub is never created (it cannot
- * shadow production). The {@code List<ModuleStatsProvider>} the dashboard consumes needs no bean here:
- * Spring injects an empty list when no module has published a provider yet, and the real provider beans
- * register themselves in their own modules.</p>
+ * <p>Responsibility: a placeholder for admin-module bean wiring. The cross-module dependencies the admin
+ * surface needs are satisfied by the callees' published {@code api} ports, injected as interfaces (ADR-0013
+ * §1): the reporting read port ({@link com.taarifu.reporting.api.ReportQueryApi}) and the identity user-admin
+ * ports ({@link com.taarifu.identity.api.UserAdminQueryApi} / {@link com.taarifu.identity.api.UserAdminApi}),
+ * each implemented by a {@code @Service} in the owning module — so no stub or fallback bean is needed here
+ * (the owning modules always register the real implementation in the full backend context, exactly as
+ * {@code ReportsAdminService} consumes reporting).</p>
+ *
+ * <p>The {@code List<ModuleStatsProvider>} the dashboard consumes needs no bean here either: Spring injects
+ * an empty list when no module has published a provider yet, and the real provider beans register themselves
+ * in their own modules.</p>
  */
 @Configuration
 public class AdminModuleConfig {
-
-    /**
-     * @return a no-op {@link IdentityAdminPort} used only when no real implementation is on the context
-     *         (pre-wiring / isolated tests). Production supplies the identity-backed adapter, which takes
-     *         precedence.
-     */
-    @Bean
-    @ConditionalOnMissingBean(IdentityAdminPort.class)
-    public IdentityAdminPort stubIdentityAdminPort() {
-        return new StubIdentityAdminAdapter();
-    }
 }

@@ -130,5 +130,33 @@ public enum AuditEventType {
     MODERATION_APPEAL_RESOLVED,
 
     /** An identity was anonymised on erasure — a tombstone event; history is never mutated (§25.1). */
-    IDENTITY_ERASED
+    IDENTITY_ERASED,
+
+    /**
+     * An admin granted a role to an account additively (M14, US-14.1, D15; actor = the granting admin,
+     * subject = the target account, {@code reason_code} = the granted {@code RoleName}). The canonical
+     * "who granted what to whom" trail for back-office RBAC changes. References/public-ids only — never PII
+     * (PRD §18, PDPA, L-1). Append-only; never repurpose.
+     */
+    ROLE_GRANTED,
+
+    /**
+     * An admin revoked (end-dated) an account's role grant (M14, US-14.1; actor = the revoking admin,
+     * subject = the target account, {@code reason_code} = the revoked {@code RoleName}). The grant is set
+     * {@code FORMER} (never hard-deleted, §6.4/§18). References only — never PII.
+     */
+    ROLE_REVOKED,
+
+    /**
+     * An admin suspended an account (M14, US-14.1; actor = the acting admin, subject = the suspended
+     * account, {@code reason_code} = the optional machine suspension reason, or {@code null}). The account
+     * can no longer authenticate/act until reinstated (recoverable). References only — never PII.
+     */
+    USER_SUSPENDED,
+
+    /**
+     * An admin reinstated a suspended account back to {@code ACTIVE} (M14, US-14.1; actor = the acting
+     * admin, subject = the reinstated account). References only — never PII.
+     */
+    USER_REINSTATED
 }

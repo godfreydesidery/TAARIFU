@@ -31,6 +31,12 @@ dependencies:
   # Reachability hint only — we still confirm with a real lightweight call before trusting it.
   connectivity_plus: ^6.1.0
 
+  # Resolves the platform's app-support directory for the DURABLE offline outbox
+  # (a single JSON file that survives cold start). WHY not Drift/Isar/Hive: the
+  # outbox is a tiny FIFO of report drafts, not a queryable dataset, so a flat
+  # file keeps the APK small (PRD §15) — see core/storage/file_outbox_store.dart.
+  path_provider: ^2.1.4
+
   # i18n message lookups (gen-l10n uses this); Swahili default + English secondary.
   intl: any
 

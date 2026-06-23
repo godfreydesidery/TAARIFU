@@ -6,6 +6,8 @@ import { TranslateModule, TranslateService } from '@ngx-translate/core';
 
 import { PageMeta } from '../../core/api/api-response.model';
 import { ToastService } from '../../core/notifications/toast.service';
+import { AreaPickerComponent } from '../../shared/components/area-picker.component';
+import { CategoryPickerComponent } from '../../shared/components/category-picker.component';
 import { PaginationComponent } from '../../shared/components/pagination.component';
 import { COVERAGE_TYPES, CreateResponder, RESPONDER_TYPES, Responder } from './responders.models';
 import { RespondersService } from './responders.service';
@@ -20,7 +22,14 @@ import { RespondersService } from './responders.service';
 @Component({
   selector: 'app-organisation-detail',
   standalone: true,
-  imports: [RouterLink, ReactiveFormsModule, TranslateModule, PaginationComponent],
+  imports: [
+    RouterLink,
+    ReactiveFormsModule,
+    TranslateModule,
+    PaginationComponent,
+    CategoryPickerComponent,
+    AreaPickerComponent,
+  ],
   templateUrl: './organisation-detail.component.html',
 })
 export class OrganisationDetailComponent implements OnInit {
@@ -48,17 +57,24 @@ export class OrganisationDetailComponent implements OnInit {
   private readonly pageSize = 20;
 
   /**
-   * The add-responder form. Categories/areas are entered as comma-separated UUIDs (kept simple for MVP;
-   * a category/area picker is a follow-up when those reference lists are exposed for selection here).
+   * The add-responder form. Categories are chosen via the {@link CategoryPickerComponent} typeahead and
+   * coverage areas (wards) via the {@link AreaPickerComponent} — both bind a {@code string[]} of public ids
+   * directly, replacing the old comma-separated UUID text inputs. The area picker is only meaningful for
+   * non-NATIONAL coverage (national coverage needs no enumerated wards).
    */
   readonly form = this.fb.nonNullable.group({
     name: ['', [Validators.required, Validators.maxLength(200)]],
     responderType: ['GOVERNMENT', [Validators.required]],
     coverageType: ['NATIONAL', [Validators.required]],
-    handledCategoryIds: [''],
-    coverageAreaIds: [''],
+    handledCategoryIds: this.fb.nonNullable.control<string[]>([]),
+    coverageAreaIds: this.fb.nonNullable.control<string[]>([]),
     slaPolicy: ['', [Validators.maxLength(1000)]],
   });
+
+  /** True when the chosen coverage is anything other than NATIONAL — gates the area picker's visibility. */
+  get needsAreas(): boolean {
+    return this.form.controls.coverageType.value !== 'NATIONAL';
+  }
 
   /** Loads the first page on init. */
   ngOnInit(): void {
@@ -105,8 +121,9 @@ export class OrganisationDetailComponent implements OnInit {
       name: v.name,
       responderType: v.responderType,
       coverageType: v.coverageType,
-      handledCategoryIds: this.splitIds(v.handledCategoryIds),
-      coverageAreaIds: this.splitIds(v.coverageAreaIds),
+      handledCategoryIds: v.handledCategoryIds,
+      // NATIONAL coverage carries no enumerated wards; only send areas when the scope needs them.
+      coverageAreaIds: v.coverageType === 'NATIONAL' ? [] : v.coverageAreaIds,
       slaPolicy: v.slaPolicy || undefined,
     };
     this.responders
@@ -116,19 +133,18 @@ export class OrganisationDetailComponent implements OnInit {
         next: () => {
           this.creating.set(false);
           this.toast.success(this.translate.instant('common.saved'));
-          this.form.reset({ responderType: 'GOVERNMENT', coverageType: 'NATIONAL', name: '', handledCategoryIds: '', coverageAreaIds: '', slaPolicy: '' });
+          this.form.reset({
+            responderType: 'GOVERNMENT',
+            coverageType: 'NATIONAL',
+            name: '',
+            handledCategoryIds: [],
+            coverageAreaIds: [],
+            slaPolicy: '',
+          });
           this.showForm.set(false);
           this.loadPage(this.meta()?.page ?? 0);
         },
         error: () => this.creating.set(false),
       });
-  }
-
-  /** Splits a comma/space-separated id list into a clean array (empty → undefined-safe empty). */
-  private splitIds(raw: string): string[] {
-    return raw
-      .split(/[,\s]+/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
   }
 }

@@ -149,6 +149,46 @@ public class GeographyQueryService {
         return new WardPin(ward, constituency);
     }
 
+    /**
+     * Resolves a constituency (by public id) to its <b>entity</b>, for a sibling module that legitimately
+     * FK-references geography (ARCHITECTURE §3.2, §4.3) — e.g. {@code institutions} attaching a
+     * constituency to a {@code Representative}.
+     *
+     * <p>WHY this is geography's public API (and the caller must NOT inject {@code ConstituencyRepository}):
+     * the cross-module FK resolution must pass through geography's own application service so the closed
+     * module boundary holds at the application layer (CLAUDE.md §8; the same discipline as
+     * {@link #resolveWardPin}). The returned entity is a foundation-module type the caller may FK; it never
+     * exposes geography's repositories/internals to the caller.</p>
+     *
+     * @param constituencyPublicId the constituency's public id.
+     * @return the {@link Constituency} entity.
+     * @throws ResourceNotFoundException if no constituency with that id exists/soft-deleted.
+     */
+    @Transactional(readOnly = true)
+    public Constituency resolveConstituency(UUID constituencyPublicId) {
+        return constituencyRepository.findByPublicId(constituencyPublicId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("geography.constituency.notFound", constituencyPublicId));
+    }
+
+    /**
+     * Resolves a <b>ward</b> (by public id) to its {@link Location} entity for a sibling's FK use, enforcing
+     * the minimum-pin-granularity rule (the location must be a {@code WARD}, PRD §9.0). Mirrors
+     * {@link #resolveConstituency} — the sanctioned application-layer FK-resolution seam.
+     *
+     * @param wardPublicId the ward's public id.
+     * @return the ward {@link Location} entity.
+     * @throws ResourceNotFoundException if no ward with that id exists or it is not a {@code WARD}.
+     */
+    @Transactional(readOnly = true)
+    public Location resolveWard(UUID wardPublicId) {
+        Location ward = requireLocation(wardPublicId);
+        if (ward.getType() != LocationType.WARD) {
+            throw new ResourceNotFoundException("geography.ward.notFound", wardPublicId);
+        }
+        return ward;
+    }
+
     /** Loads a location by public id or throws a localised not-found. */
     private Location requireLocation(UUID publicId) {
         return locationRepository.findByPublicId(publicId)

@@ -12,7 +12,7 @@ import com.taarifu.moderation.api.dto.TakeActionRequest;
 import com.taarifu.moderation.application.service.ModerationQueueService;
 import com.taarifu.moderation.domain.model.ModerationAction;
 import com.taarifu.moderation.domain.model.ModerationItem;
-import com.taarifu.moderation.domain.model.enums.FlagSubjectType;
+import com.taarifu.moderation.api.FlagSubjectType;
 import com.taarifu.moderation.domain.model.enums.ModerationActionType;
 import com.taarifu.moderation.domain.model.enums.ModerationItemStatus;
 import com.taarifu.moderation.domain.model.enums.ModerationSeverity;

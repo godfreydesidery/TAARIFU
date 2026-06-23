@@ -7,7 +7,7 @@ import com.taarifu.moderation.domain.model.ModerationAction;
 import com.taarifu.moderation.domain.model.ModerationItem;
 import com.taarifu.moderation.domain.model.enums.AppealStatus;
 import com.taarifu.moderation.domain.model.enums.FlagReason;
-import com.taarifu.moderation.domain.model.enums.FlagSubjectType;
+import com.taarifu.moderation.api.FlagSubjectType;
 import com.taarifu.moderation.domain.model.enums.ModerationActionType;
 import com.taarifu.moderation.domain.model.enums.ModerationSeverity;
 import com.taarifu.moderation.domain.repository.AppealRepository;

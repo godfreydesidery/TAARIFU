@@ -1,7 +1,7 @@
 package com.taarifu.moderation.domain.model;
 
 import com.taarifu.common.domain.model.BaseEntity;
-import com.taarifu.moderation.domain.model.enums.FlagSubjectType;
+import com.taarifu.moderation.api.FlagSubjectType;
 import com.taarifu.moderation.domain.model.enums.ModerationItemStatus;
 import com.taarifu.moderation.domain.model.enums.ModerationSeverity;
 import jakarta.persistence.Column;

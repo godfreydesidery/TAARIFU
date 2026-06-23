@@ -3,11 +3,9 @@ package com.taarifu.institutions.application.service;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.geography.application.service.GeographyQueryService;
 import com.taarifu.geography.domain.model.Constituency;
 import com.taarifu.geography.domain.model.Location;
-import com.taarifu.geography.domain.model.enums.LocationType;
-import com.taarifu.geography.domain.repository.ConstituencyRepository;
-import com.taarifu.geography.domain.repository.LocationRepository;
 import com.taarifu.institutions.api.dto.ParliamentDto;
 import com.taarifu.institutions.api.dto.ParliamentRoleDto;
 import com.taarifu.institutions.api.dto.ParliamentRoleWriteDto;
@@ -58,12 +56,13 @@ import java.util.UUID;
  *       idempotent seed/import key); attempts raise {@link ErrorCode#CONFLICT}.</li>
  * </ul>
  *
- * <p>WHY this depends on geography's {@link ConstituencyRepository}/{@link LocationRepository}: geography
- * is an upstream foundation module whose entities {@link Representative} legitimately FK-references
- * (ARCHITECTURE.md §3.2). Resolving a constituency/ward by public id to a real FK is done here because
- * geography's public service does not (yet) expose an entity-returning constituency finder — flagged as a
- * later geography-API tightening, not a boundary breach (the references stay one-directional, geography
- * never depends on institutions).</p>
+ * <p>WHY this depends on geography's <b>public application service</b>
+ * ({@link GeographyQueryService#resolveConstituency}/{@link GeographyQueryService#resolveWard}) rather than
+ * geography's repositories: geography is an upstream foundation module whose entities {@link Representative}
+ * legitimately FK-references (ARCHITECTURE.md §3.2, §4.3), but the FK <i>resolution</i> must pass through
+ * geography's own service so the closed module boundary holds at the application layer (CLAUDE.md §8;
+ * ADR-0013 — a module never reaches into a sibling's {@code domain.repository}). The references stay
+ * one-directional (geography never depends on institutions).</p>
  */
 @Service
 @Transactional
@@ -86,8 +85,7 @@ public class InstitutionsAdminService {
     private final ParliamentRepository parliamentRepository;
     private final ParliamentRoleRepository parliamentRoleRepository;
     private final RepresentativeRepository representativeRepository;
-    private final ConstituencyRepository constituencyRepository;
-    private final LocationRepository locationRepository;
+    private final GeographyQueryService geographyQueryService;
     private final InstitutionsMapper mapper;
 
     /**
@@ -95,23 +93,21 @@ public class InstitutionsAdminService {
      * @param parliamentRepository      parliament persistence port.
      * @param parliamentRoleRepository  parliament-role persistence port.
      * @param representativeRepository  representative persistence port.
-     * @param constituencyRepository    geography constituency port (FK resolution).
-     * @param locationRepository        geography location port (ward FK resolution).
+     * @param geographyQueryService     geography's public service for constituency/ward FK resolution
+     *                                  (ADR-0013 — never geography's repositories).
      * @param mapper                    entity→DTO mapper.
      */
     public InstitutionsAdminService(PoliticalPartyRepository partyRepository,
                                     ParliamentRepository parliamentRepository,
                                     ParliamentRoleRepository parliamentRoleRepository,
                                     RepresentativeRepository representativeRepository,
-                                    ConstituencyRepository constituencyRepository,
-                                    LocationRepository locationRepository,
+                                    GeographyQueryService geographyQueryService,
                                     InstitutionsMapper mapper) {
         this.partyRepository = partyRepository;
         this.parliamentRepository = parliamentRepository;
         this.parliamentRoleRepository = parliamentRoleRepository;
         this.representativeRepository = representativeRepository;
-        this.constituencyRepository = constituencyRepository;
-        this.locationRepository = locationRepository;
+        this.geographyQueryService = geographyQueryService;
         this.mapper = mapper;
     }
 
@@ -415,19 +411,17 @@ public class InstitutionsAdminService {
         });
     }
 
+    /** Resolves a constituency FK through geography's public service (never its repository — ADR-0013). */
     private Constituency resolveConstituency(UUID publicId) {
-        return constituencyRepository.findByPublicId(publicId)
-                .orElseThrow(() -> new ResourceNotFoundException("geography.constituency.notFound", publicId));
+        return geographyQueryService.resolveConstituency(publicId);
     }
 
+    /**
+     * Resolves a ward FK through geography's public service, which also enforces the minimum-pin-granularity
+     * (WARD) rule (PRD §9.0) — so this service no longer touches geography's {@code LocationType}/repository.
+     */
     private Location resolveWard(UUID publicId) {
-        Location location = locationRepository.findByPublicId(publicId)
-                .orElseThrow(() -> new ResourceNotFoundException("geography.ward.notFound", publicId));
-        // Minimum granularity for a councillor/ward-exec seat is a Ward (PRD §9.0).
-        if (location.getType() != LocationType.WARD) {
-            throw new ResourceNotFoundException("geography.ward.notFound", publicId);
-        }
-        return location;
+        return geographyQueryService.resolveWard(publicId);
     }
 
     private PoliticalParty resolveParty(UUID publicId) {

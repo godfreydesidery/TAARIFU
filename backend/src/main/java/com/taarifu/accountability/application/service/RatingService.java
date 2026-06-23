@@ -10,10 +10,13 @@ import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.security.CurrentUser;
 import com.taarifu.common.security.ScopeGuard;
+import com.taarifu.identity.api.ElectoralScopeApi;
+import com.taarifu.institutions.api.RepresentativeQueryApi;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -27,18 +30,23 @@ import java.util.UUID;
  *       by the aspect, not the token claim) — so a sub-T3 caller never reaches this service.</li>
  *   <li><b>No self-action (D16):</b> {@link ScopeGuard#isNotSelf} blocks a representative rating their own
  *       subject id → {@link ErrorCode#CONFLICT_OF_INTEREST}.</li>
- *   <li><b>Electoral scope (D13):</b> // TODO(wiring) — a citizen may only rate a representative they are
- *       an elector of; enforce once the institutions/geography electoral mapping is wired
- *       ({@code ScopeGuard.canActInConstituency} on the representative's constituency).</li>
+ *   <li><b>Electoral scope (D13):</b> a citizen may only rate a representative they are an elector of. The
+ *       subject's constituency is resolved via {@link RepresentativeQueryApi#constituencyOf} (institutions);
+ *       the rater's single voter-ID-authoritative {@code isElectoral} constituency is checked against it via
+ *       {@link ElectoralScopeApi#isElectorOf} (identity). A mismatch is {@link ErrorCode#OUT_OF_SCOPE}. Both
+ *       are published api-package query ports — accountability never imports identity/institutions internals
+ *       (ADR-0013). A representative with <b>no</b> constituency (councillor/special-seats/nominated) carries
+ *       no constituency electoral gate, so this check is skipped for them.</li>
  *   <li><b>One per person (D16):</b> a pre-check plus the DB unique
  *       {@code (subject_type, subject_id, rater, period)} make a duplicate a hard {@link ErrorCode#CONFLICT}
  *       — one person, one rating per period, <b>regardless of token balance</b>.</li>
  * </ol>
  *
  * <p><b>Fence invariant (D18, §23):</b> there is deliberately no token dependency injected or referenced
- * anywhere in this class — tokens can never appear in a binding action's authorization path. The
- * keystone test asserts the rater key in the uniqueness check is the caller's own identity (never a
- * body-supplied id), so a caller can never rate as someone else nor stuff the ballot.</p>
+ * anywhere in this class — tokens can never appear in a binding action's authorization path. The electoral
+ * collaborators ({@link RepresentativeQueryApi}, {@link ElectoralScopeApi}) are scope/identity ports, not
+ * wallet ports. The keystone test asserts the rater key in the uniqueness check is the caller's own identity
+ * (never a body-supplied id), so a caller can never rate as someone else nor stuff the ballot.</p>
  *
  * <p>Rater identity: the rater key is the caller's immutable identity public id from the security context
  * ({@link CurrentUser#requirePublicId()}) — the same axis {@link ScopeGuard#isNotSelf} compares against,
@@ -52,17 +60,25 @@ public class RatingService {
 
     private final RatingRepository ratingRepository;
     private final ScopeGuard scopeGuard;
+    private final RepresentativeQueryApi representativeQueryApi;
+    private final ElectoralScopeApi electoralScopeApi;
     private final AccountabilityMapper mapper;
 
     /**
-     * @param ratingRepository append-only rating store (no token-balance access on this path — fence).
-     * @param scopeGuard        the common security seam for the no-self-action / electoral-scope checks.
-     * @param mapper            entity → DTO mapper.
+     * @param ratingRepository       append-only rating store (no token-balance access on this path — fence).
+     * @param scopeGuard             the common security seam for the no-self-action check (D16).
+     * @param representativeQueryApi institutions' published port resolving the subject rep's constituency (D13).
+     * @param electoralScopeApi      identity's published port checking the rater's electoral scope (D13).
+     * @param mapper                 entity → DTO mapper.
      */
     public RatingService(RatingRepository ratingRepository, ScopeGuard scopeGuard,
+                         RepresentativeQueryApi representativeQueryApi,
+                         ElectoralScopeApi electoralScopeApi,
                          AccountabilityMapper mapper) {
         this.ratingRepository = ratingRepository;
         this.scopeGuard = scopeGuard;
+        this.representativeQueryApi = representativeQueryApi;
+        this.electoralScopeApi = electoralScopeApi;
         this.mapper = mapper;
     }
 
@@ -82,13 +98,22 @@ public class RatingService {
             throw new ApiException(ErrorCode.CONFLICT_OF_INTEREST);
         }
 
-        // --- FENCE: electoral scope (D13). Only an elector of the representative may rate them. ---
-        // TODO(wiring): resolve the representative's constituency via the institutions module and call
-        //   scopeGuard.canActInConstituency(constituencyPublicId); deny with OUT_OF_SCOPE otherwise.
-
         RatingSubjectType subjectType = request.subjectType();
         UUID subjectId = request.subjectId();
         String period = request.period();
+
+        // --- FENCE: electoral scope (D13). Only an elector of the representative may rate them. ---
+        // Resolve the subject rep's constituency (institutions' published port; throws NOT_FOUND if the rep
+        // does not exist), then check the rater's single isElectoral constituency against it (identity's
+        // published port). A rep with NO constituency (councillor/special-seats/nominated) carries no
+        // constituency gate, so the check is skipped. NOTE: no token balance is consulted here (fence, §23.5).
+        if (subjectType == RatingSubjectType.REPRESENTATIVE) {
+            Optional<UUID> repConstituency = representativeQueryApi.constituencyOf(subjectId);
+            if (repConstituency.isPresent()
+                    && !electoralScopeApi.isElectorOf(rater, repConstituency.get())) {
+                throw new ApiException(ErrorCode.OUT_OF_SCOPE);
+            }
+        }
 
         // --- FENCE: one per (rater, subject, period) (D16). Revise the rater's OWN existing row only. ---
         var existing = ratingRepository

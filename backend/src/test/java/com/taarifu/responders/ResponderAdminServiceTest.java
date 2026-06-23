@@ -4,6 +4,9 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.reporting.api.IssueCategoryQueryApi;
+import com.taarifu.reporting.api.ReportLifecycleApi;
+import com.taarifu.reporting.api.ReportQueryApi;
 import com.taarifu.responders.api.dto.CreateAssignmentRequest;
 import com.taarifu.responders.api.dto.ResponderAssignmentDto;
 import com.taarifu.responders.application.mapper.ResponderMapper;
@@ -50,6 +53,9 @@ class ResponderAdminServiceTest {
     private ResponderRepository responderRepository;
     private RoutingRuleRepository routingRuleRepository;
     private ResponderAssignmentRepository assignmentRepository;
+    private ReportQueryApi reportQueryApi;
+    private IssueCategoryQueryApi issueCategoryQueryApi;
+    private ReportLifecycleApi reportLifecycleApi;
     private ResponderAdminService service;
 
     private final UUID reportId = UUID.randomUUID();
@@ -63,15 +69,19 @@ class ResponderAdminServiceTest {
         responderRepository = mock(ResponderRepository.class);
         routingRuleRepository = mock(RoutingRuleRepository.class);
         assignmentRepository = mock(ResponderAssignmentRepository.class);
+        reportQueryApi = mock(ReportQueryApi.class);
+        issueCategoryQueryApi = mock(IssueCategoryQueryApi.class);
+        reportLifecycleApi = mock(ReportLifecycleApi.class);
         ClockPort clock = () -> Instant.parse("2026-06-23T09:00:00Z");
         service = new ResponderAdminService(organisationRepository, responderRepository,
-                routingRuleRepository, assignmentRepository, new ResponderMapper(), clock);
+                routingRuleRepository, assignmentRepository, reportQueryApi, issueCategoryQueryApi,
+                reportLifecycleApi, new ResponderMapper(), clock);
 
         Organisation org = Organisation.create("TANESCO", OrganisationType.PARASTATAL);
         responder = Responder.create(org, "TANESCO — Kilimanjaro", ResponderType.UTILITY,
                 CoverageType.NATIONWIDE);
         when(responderRepository.findByPublicId(responderPublicId)).thenReturn(Optional.of(responder));
-        // No existing assignments by default.
+        // No existing assignments by default; the report exists by default (reporting's port is a no-op).
         when(assignmentRepository.findByReportAndResponder(any(), any())).thenReturn(Optional.empty());
         when(assignmentRepository.findOwner(any(), any())).thenReturn(Optional.empty());
         when(assignmentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -163,5 +173,38 @@ class ResponderAdminServiceTest {
         assertThatThrownBy(() -> service.assignResponder(reportId, req, actor))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(assignmentRepository, never()).save(any());
+    }
+
+    @Test
+    void assign_unknownReport_isNotFound_viaReportingPort() {
+        // Reporting's published port reports the report does not exist → assignment is refused BEFORE any
+        // responder/assignment work (sync responders → reporting validation, ADR-0013 §4a / D21).
+        org.mockito.Mockito.doThrow(new ResourceNotFoundException("reporting.report.notFound", reportId))
+                .when(reportQueryApi).requireExists(reportId);
+        CreateAssignmentRequest req =
+                new CreateAssignmentRequest(responderPublicId, AssignmentRole.OWNER, null);
+
+        assertThatThrownBy(() -> service.assignResponder(reportId, req, actor))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verify(assignmentRepository, never()).save(any());
+        // The report check runs first — the responder is never even looked up.
+        verify(responderRepository, never()).findByPublicId(any());
+    }
+
+    @Test
+    void lifecycleActions_delegateToReportingPort_drivingTheStateMachine() {
+        // The responder-side lifecycle actions are thin pass-throughs to reporting's published command port
+        // (sync responders → reporting); reporting owns the §12.1 transitions (D21, ADR-0013 §4a).
+        service.startCase(reportId, responderPublicId, actor);
+        verify(reportLifecycleApi).assign(reportId, responderPublicId, actor);
+
+        service.beginWork(reportId, actor);
+        verify(reportLifecycleApi).start(reportId, actor);
+
+        service.resolveCase(reportId, actor, "fixed");
+        verify(reportLifecycleApi).resolve(reportId, actor, "fixed");
+
+        service.escalateCase(reportId, actor, "urgent");
+        verify(reportLifecycleApi).escalate(reportId, actor, "urgent");
     }
 }

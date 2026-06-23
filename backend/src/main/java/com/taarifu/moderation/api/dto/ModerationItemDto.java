@@ -1,7 +1,7 @@
 package com.taarifu.moderation.api.dto;
 
 import com.taarifu.moderation.domain.model.ModerationItem;
-import com.taarifu.moderation.domain.model.enums.FlagSubjectType;
+import com.taarifu.moderation.api.FlagSubjectType;
 import com.taarifu.moderation.domain.model.enums.ModerationItemStatus;
 import com.taarifu.moderation.domain.model.enums.ModerationSeverity;
 

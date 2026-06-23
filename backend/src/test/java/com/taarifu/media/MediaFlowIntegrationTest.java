@@ -1,6 +1,6 @@
 package com.taarifu.media;
 
-import com.taarifu.AbstractPostgisIntegrationTest;
+import com.taarifu.AbstractHttpIntegrationTest;
 import com.taarifu.common.security.JwtService;
 import com.taarifu.media.domain.model.MediaObject;
 import com.taarifu.media.domain.model.enums.ScanStatus;
@@ -8,10 +8,7 @@ import com.taarifu.media.domain.repository.MediaObjectRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
@@ -40,10 +37,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>Runs under the {@code test} profile (create-drop on PostGIS) so it does not require Docker locally
  * to be wired into anyone else's build; CI runs it with Docker available (ADR-0009).</p>
  */
-@SpringBootTest
-@AutoConfigureMockMvc
-@ActiveProfiles("test")
-class MediaFlowIntegrationTest extends AbstractPostgisIntegrationTest {
+class MediaFlowIntegrationTest extends AbstractHttpIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private JwtService jwtService;
@@ -62,7 +56,7 @@ class MediaFlowIntegrationTest extends AbstractPostgisIntegrationTest {
 
     @Test
     void unauthenticatedUpload_isRejected() throws Exception {
-        mockMvc.perform(post("/media/uploads")
+        mockMvc.perform(post("/api/v1/media/uploads")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(uploadBody(UUID.randomUUID())))
                 .andExpect(status().isUnauthorized());
@@ -73,7 +67,7 @@ class MediaFlowIntegrationTest extends AbstractPostgisIntegrationTest {
         UUID ownerId = UUID.randomUUID();
 
         // 1) Request an upload URL → a PENDING record is created and a pre-signed PUT returned.
-        String uploadJson = mockMvc.perform(post("/media/uploads")
+        String uploadJson = mockMvc.perform(post("/api/v1/media/uploads")
                         .header("Authorization", bearer)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(uploadBody(ownerId)))
@@ -90,14 +84,14 @@ class MediaFlowIntegrationTest extends AbstractPostgisIntegrationTest {
         assertThat(persisted.getObjectKey()).startsWith("quarantine/");
 
         // 2) A download before scanning is refused with 409 CONFLICT (EI-8 serving rule).
-        mockMvc.perform(get("/media/" + mediaId + "/download-url")
+        mockMvc.perform(get("/api/v1/media/" + mediaId + "/download-url")
                         .header("Authorization", bearer))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.data.code").value("CONFLICT"));
 
         // 3) The scan callback returns CLEAN → object is promoted and EXIF-strip seam flagged.
-        mockMvc.perform(post("/media/" + mediaId + "/scan-callback")
+        mockMvc.perform(post("/api/v1/media/" + mediaId + "/scan-callback")
                         .header("Authorization", bearer)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"verdict\":\"CLEAN\"}"))
@@ -107,7 +101,7 @@ class MediaFlowIntegrationTest extends AbstractPostgisIntegrationTest {
                 .andExpect(jsonPath("$.data.exifStripped").value(true));
 
         // 4) Now a download URL is issued.
-        mockMvc.perform(get("/media/" + mediaId + "/download-url")
+        mockMvc.perform(get("/api/v1/media/" + mediaId + "/download-url")
                         .header("Authorization", bearer))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.downloadUrl").isNotEmpty())
@@ -117,7 +111,7 @@ class MediaFlowIntegrationTest extends AbstractPostgisIntegrationTest {
     @Test
     void infectedObject_isNeverServed() throws Exception {
         UUID ownerId = UUID.randomUUID();
-        String uploadJson = mockMvc.perform(post("/media/uploads")
+        String uploadJson = mockMvc.perform(post("/api/v1/media/uploads")
                         .header("Authorization", bearer)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(uploadBody(ownerId)))
@@ -126,7 +120,7 @@ class MediaFlowIntegrationTest extends AbstractPostgisIntegrationTest {
         String mediaId = jsonField(uploadJson, "mediaId");
 
         // Scanner finds malware.
-        mockMvc.perform(post("/media/" + mediaId + "/scan-callback")
+        mockMvc.perform(post("/api/v1/media/" + mediaId + "/scan-callback")
                         .header("Authorization", bearer)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"verdict\":\"INFECTED\"}"))
@@ -135,7 +129,7 @@ class MediaFlowIntegrationTest extends AbstractPostgisIntegrationTest {
                 .andExpect(jsonPath("$.data.servable").value(false));
 
         // An infected object must NEVER be served — download stays a 409 (EI-8).
-        mockMvc.perform(get("/media/" + mediaId + "/download-url")
+        mockMvc.perform(get("/api/v1/media/" + mediaId + "/download-url")
                         .header("Authorization", bearer))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.data.code").value("CONFLICT"));

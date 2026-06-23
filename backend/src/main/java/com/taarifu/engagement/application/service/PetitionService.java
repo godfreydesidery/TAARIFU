@@ -16,6 +16,8 @@ import com.taarifu.engagement.domain.model.enums.PetitionStatus;
 import com.taarifu.engagement.domain.model.enums.PetitionTargetType;
 import com.taarifu.engagement.domain.repository.PetitionRepository;
 import com.taarifu.engagement.domain.repository.PetitionSignatureRepository;
+import com.taarifu.identity.api.ElectoralScopeApi;
+import com.taarifu.institutions.api.RepresentativeQueryApi;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -24,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -33,9 +36,11 @@ import java.util.UUID;
  * <p>Responsibility: owns the transaction boundary and the integrity rules for petitions. The
  * load-bearing method is {@link #sign}: it enforces the <b>civic-integrity fence</b> — the authorisation
  * path checks <b>tier (T3, via the endpoint's {@code @RequiresTier}) + no-self-petition (D16) +
- * one-per-person (DB unique)</b> and <b>never reads a token balance</b> (PRD §23.5). Electoral-scope
- * enforcement (the signer's single {@code isElectoral} location must match a constituency-scoped
- * petition, D13) is wired in integration via the identity scope seam — see the {@code // TODO(wiring)}.</p>
+ * electoral scope (D13) + one-per-person (DB unique)</b> and <b>never reads a token balance</b> (PRD §23.5).
+ * Electoral-scope enforcement (the signer's single {@code isElectoral} location must match a
+ * representative-targeted petition's constituency) resolves the target rep's constituency via institutions'
+ * {@link RepresentativeQueryApi} and checks the signer via identity's {@link ElectoralScopeApi} — both
+ * published api-package query ports, so engagement imports neither module's internals (ADR-0013).</p>
  *
  * <p>WHY actor references are the authenticated principal's {@code publicId} (the JWT subject): the signer
  * is taken from {@code CurrentUser}, never from the request body, so a caller can only sign <i>as
@@ -56,26 +61,33 @@ public class PetitionService {
     private final PetitionSignatureRepository signatures;
     private final EngagementMapper mapper;
     private final ScopeGuard scopeGuard;
+    private final RepresentativeQueryApi representativeQueryApi;
+    private final ElectoralScopeApi electoralScopeApi;
     private final AuditEventService audit;
 
     /**
-     * @param petitions  petition persistence port.
-     * @param signatures signature persistence port (one-per-person pre-check).
-     * @param mapper     entity→DTO mapper.
-     * @param scopeGuard the shared conflict-of-interest + scope seam ({@code @taarifuAuthz}); supplies the
-     *                   no-self-action check (D13/D16). Electoral-scope methods are used in the integration
-     *                   wiring step.
-     * @param audit      append-only audit writer (binding-action + denial evidence, L-1).
+     * @param petitions              petition persistence port.
+     * @param signatures             signature persistence port (one-per-person pre-check).
+     * @param mapper                 entity→DTO mapper.
+     * @param scopeGuard             the shared conflict-of-interest seam ({@code @taarifuAuthz}); supplies the
+     *                               no-self-action check (D16).
+     * @param representativeQueryApi institutions' published port resolving a target rep's constituency (D13).
+     * @param electoralScopeApi      identity's published port checking the signer's electoral scope (D13).
+     * @param audit                  append-only audit writer (binding-action + denial evidence, L-1).
      */
     public PetitionService(PetitionRepository petitions,
                            PetitionSignatureRepository signatures,
                            EngagementMapper mapper,
                            ScopeGuard scopeGuard,
+                           RepresentativeQueryApi representativeQueryApi,
+                           ElectoralScopeApi electoralScopeApi,
                            AuditEventService audit) {
         this.petitions = petitions;
         this.signatures = signatures;
         this.mapper = mapper;
         this.scopeGuard = scopeGuard;
+        this.representativeQueryApi = representativeQueryApi;
+        this.electoralScopeApi = electoralScopeApi;
         this.audit = audit;
     }
 
@@ -149,9 +161,10 @@ public class PetitionService {
      *   <li><b>tier</b> — gated by {@code @RequiresTier("T3")} on the controller (live-resolved, MF-2);</li>
      *   <li><b>no-self-petition</b> — the signer may not be the petition's target (D13/D16);</li>
      *   <li><b>one-per-person</b> — pre-checked here and <b>guaranteed</b> by the DB unique constraint;</li>
-     *   <li><b>electoral scope</b> — // TODO(wiring): when the survey/identity scope seam is wired, a
-     *       constituency-scoped petition must match the signer's single {@code isElectoral} location
-     *       ({@code scopeGuard.canActInConstituency(...)}, D13).</li>
+     *   <li><b>electoral scope</b> — for a {@code REPRESENTATIVE}-targeted petition, the signer must be an
+     *       elector of the target rep's constituency: resolved via {@link RepresentativeQueryApi} ×
+     *       {@link ElectoralScopeApi} (D13); a mismatch is {@link ErrorCode#OUT_OF_SCOPE}, audited. An
+     *       {@code OFFICE} target (or a constituency-less rep) carries no constituency gate.</li>
      * </ol>
      * <p>It <b>never</b> reads a token balance — that is the fence (PRD §23.5). The signature count bump is
      * a derived counter, not a weight.</p>
@@ -192,9 +205,25 @@ public class PetitionService {
             throw new ApiException(ErrorCode.CONFLICT);
         }
 
-        // TODO(wiring): electoral-scope check — when the identity scope seam is wired, a constituency-scoped
-        // petition must match the signer's single isElectoral location via scopeGuard.canActInConstituency(...)
-        // (D13). NOTE: token balance is deliberately NOT consulted anywhere in this path (PRD §23.5 fence).
+        // FENCE: electoral scope (D13). A petition addressed to a REPRESENTATIVE is constituency-scoped:
+        // the signer must be an elector of that representative's constituency. The rep's constituency is
+        // resolved via institutions' published port; the signer's single isElectoral constituency is
+        // checked via identity's published port (ADR-0013 — engagement imports neither module's internals).
+        // A rep with no constituency (councillor/special-seats/nominated), and an OFFICE-targeted petition,
+        // carry no constituency gate. NOTE: token balance is NEVER consulted in this path (§23.5 fence).
+        if (petition.getTargetType() == PetitionTargetType.REPRESENTATIVE) {
+            Optional<UUID> targetConstituency = representativeQueryApi.constituencyOf(petition.getTargetId());
+            if (targetConstituency.isPresent()
+                    && !electoralScopeApi.isElectorOf(signerPublicId, targetConstituency.get())) {
+                audit.record(AuditEvent.Builder
+                        .of(AuditEventType.AUTHZ_SCOPE_DENIED, AuditOutcome.DENIED)
+                        .actor(signerPublicId)
+                        .subject(petition.getTargetId())
+                        .reason("SIGN_PETITION_OUT_OF_ELECTORAL_SCOPE")
+                        .build());
+                throw new ApiException(ErrorCode.OUT_OF_SCOPE);
+            }
+        }
 
         PetitionSignature signature = PetitionSignature.of(petition, signerPublicId, comment, publicSignature);
         try {

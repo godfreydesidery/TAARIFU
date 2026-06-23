@@ -5,6 +5,7 @@ import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
 import com.taarifu.common.persistence.CodeGenerator;
+import com.taarifu.reporting.api.ReportLifecycleApi;
 import com.taarifu.reporting.api.dto.CaseEventDto;
 import com.taarifu.reporting.api.dto.FileReportDto;
 import com.taarifu.reporting.api.dto.PublicReportDto;
@@ -62,7 +63,7 @@ import java.util.UUID;
  */
 @Service
 @Transactional(readOnly = true)
-public class ReportService {
+public class ReportService implements ReportLifecycleApi {
 
     /** Sequence created by V23; drives the {@code TAR-YYYY-NNNNNN} ticket code. */
     private static final String REPORT_CODE_SEQUENCE = "report_code_seq";
@@ -333,6 +334,72 @@ public class ReportService {
                 .orElseThrow(() -> new ResourceNotFoundException("reporting.report.notFound", reportPublicId));
         return caseEventRepository.findByReport_PublicIdAndPublicEventTrue(reportPublicId, pageable)
                 .map(mapper::toCaseEventDto);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Responder-side lifecycle (D21) — the ReportLifecycleApi published command port (ADR-0013 §4a).
+    // The responders module calls these (sync responders → reporting); reporting stays the single owner of
+    // the §12.1 state machine, so every transition is guarded and appends a CaseEvent. NOTE: the reverse
+    // routing-on-creation (reporting → responders OWNER assignment) is async via the outbox — see the
+    // // TODO(wiring) in fileReport — so there is no synchronous cycle between the two modules.
+    // ---------------------------------------------------------------------------------------------
+
+    /** {@inheritDoc} */
+    @Override
+    @Transactional
+    public ReportDto assign(UUID reportPublicId, UUID responderPublicId, UUID actorPublicId) {
+        Report report = requireReport(reportPublicId);
+        report.assignResponder(responderPublicId);
+        transition(report, ReportStatus.ASSIGNED, actorPublicId,
+                "Imepangiwa mtekelezaji (%s → %s)".formatted(report.getStatus(), ReportStatus.ASSIGNED));
+        return mapper.toReportDto(report);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    @Transactional
+    public ReportDto start(UUID reportPublicId, UUID actorPublicId) {
+        Report report = requireReport(reportPublicId);
+        transition(report, ReportStatus.IN_PROGRESS, actorPublicId,
+                "Kazi imeanza (%s → %s)".formatted(report.getStatus(), ReportStatus.IN_PROGRESS));
+        return mapper.toReportDto(report);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    @Transactional
+    public ReportDto resolve(UUID reportPublicId, UUID actorPublicId, String resolutionNote) {
+        if (resolutionNote == null || resolutionNote.isBlank()) {
+            // US-3.4 requires a resolution note; reject blanks with a clean, localised 400.
+            throw new ApiException(ErrorCode.BAD_REQUEST, "reporting.report.resolutionRequired");
+        }
+        Report report = requireReport(reportPublicId);
+        // Guard the transition first, then apply the resolution + note (single state-machine gate).
+        guardTransition(report.getStatus(), ReportStatus.RESOLVED, report.getCode());
+        ReportStatus from = report.getStatus();
+        report.resolve(resolutionNote);
+        appendEvent(report, CaseEventType.STATUS_CHANGE, true, actorPublicId,
+                "%s → %s".formatted(from, ReportStatus.RESOLVED));
+        return mapper.toReportDto(report);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    @Transactional
+    public ReportDto escalate(UUID reportPublicId, UUID actorPublicId, String reason) {
+        Report report = requireReport(reportPublicId);
+        if (reason != null && !reason.isBlank()) {
+            appendEvent(report, CaseEventType.COMMENT, false, actorPublicId, reason);
+        }
+        transition(report, ReportStatus.ESCALATED, actorPublicId,
+                "Imepandishwa ngazi (%s → %s)".formatted(report.getStatus(), ReportStatus.ESCALATED));
+        return mapper.toReportDto(report);
+    }
+
+    /** Loads a report by public id (with category, for DTO mapping) or throws a localised not-found. */
+    private Report requireReport(UUID reportPublicId) {
+        return reportRepository.findByPublicIdWithCategory(reportPublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("reporting.report.notFound", reportPublicId));
     }
 
     // ---------------------------------------------------------------------------------------------

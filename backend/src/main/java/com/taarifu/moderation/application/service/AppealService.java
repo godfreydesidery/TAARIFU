@@ -140,9 +140,18 @@ public class AppealService {
         appeal.decide(request.outcome(), moderatorPublicId, request.decisionNote(), clock.now());
         Appeal saved = appealRepository.save(appeal);
 
-        // TODO(wiring): emit `moderation_appeal_resolved` {host_ref, outcome} via the transactional outbox;
-        // an OVERTURNED outcome triggers a new reversing ModerationAction by ops/wiring (history is never
-        // mutated — append-only, §25.8).
+        // Mirror the resolved appeal into the unified audit store (beside the independence-denial event
+        // above). actor=deciding moderator, subject=appellant; reason_code = the appeal outcome. An
+        // OVERTURNED outcome is the signal for a new reversing action — history is never mutated (§25.8).
+        audit.record(AuditEvent.Builder
+                .of(AuditEventType.MODERATION_APPEAL_RESOLVED, AuditOutcome.SUCCESS)
+                .actor(moderatorPublicId)
+                .subject(saved.getAppellantProfileId())
+                .reason(request.outcome().name())
+                .detailRef(saved.getPublicId().toString())
+                .build());
+        // TODO(wiring): also emit `moderation_appeal_resolved` {host_ref, outcome} via the transactional
+        // outbox; an OVERTURNED outcome triggers a new reversing ModerationAction by ops/wiring.
         return AppealDto.from(saved);
     }
 }

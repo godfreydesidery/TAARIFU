@@ -1,7 +1,7 @@
 package com.taarifu.moderation.api.dto;
 
 import com.taarifu.moderation.domain.model.enums.FlagReason;
-import com.taarifu.moderation.domain.model.enums.FlagSubjectType;
+import com.taarifu.moderation.api.FlagSubjectType;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 

@@ -191,4 +191,86 @@ class ReportServiceTest {
         assertThatThrownBy(() -> service.fileReport(reporter, request))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
+
+    // --------------------- Responder-side lifecycle (ReportLifecycleApi, D21) --------------------
+
+    @Test
+    void assign_setsResponder_andTransitionsNewToAssigned() {
+        // The responder-side assign action (via ReportLifecycleApi) records the responder on the report and
+        // drives NEW → ASSIGNED through the §12.1 state machine, appending a timeline event (D21).
+        IssueCategory category = ReportingTestFixtures.publicCategory("WATER");
+        Report report = ReportingTestFixtures.report(reporter, category, ReportVisibility.PUBLIC);
+        when(reportRepository.findByPublicIdWithCategory(report.getPublicId()))
+                .thenReturn(Optional.of(report));
+        UUID responderId = UUID.randomUUID();
+        UUID actor = UUID.randomUUID();
+
+        ReportDto dto = service.assign(report.getPublicId(), responderId, actor);
+
+        assertThat(dto.status()).isEqualTo(ReportStatus.ASSIGNED.name());
+        assertThat(report.getAssignedResponderId()).isEqualTo(responderId);
+        verify(caseEventRepository).save(any());
+    }
+
+    @Test
+    void start_transitionsAssignedToInProgress() {
+        IssueCategory category = ReportingTestFixtures.publicCategory("WATER");
+        Report report = ReportingTestFixtures.report(reporter, category, ReportVisibility.PUBLIC);
+        report.setStatus(ReportStatus.ASSIGNED);
+        when(reportRepository.findByPublicIdWithCategory(report.getPublicId()))
+                .thenReturn(Optional.of(report));
+
+        ReportDto dto = service.start(report.getPublicId(), UUID.randomUUID());
+
+        assertThat(dto.status()).isEqualTo(ReportStatus.IN_PROGRESS.name());
+    }
+
+    @Test
+    void resolve_requiresNote_andTransitionsToResolved() {
+        IssueCategory category = ReportingTestFixtures.publicCategory("WATER");
+        Report report = ReportingTestFixtures.report(reporter, category, ReportVisibility.PUBLIC);
+        report.setStatus(ReportStatus.IN_PROGRESS);
+        when(reportRepository.findByPublicIdWithCategory(report.getPublicId()))
+                .thenReturn(Optional.of(report));
+
+        ReportDto dto = service.resolve(report.getPublicId(), UUID.randomUUID(), "Imeshughulikiwa");
+
+        assertThat(dto.status()).isEqualTo(ReportStatus.RESOLVED.name());
+        assertThat(dto.resolution()).isEqualTo("Imeshughulikiwa");
+    }
+
+    @Test
+    void resolve_blankNote_isBadRequest() {
+        // US-3.4 requires a resolution note; a blank note is rejected before any state change.
+        assertThatThrownBy(() -> service.resolve(UUID.randomUUID(), UUID.randomUUID(), "  "))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(reportRepository, never()).findByPublicIdWithCategory(any());
+    }
+
+    @Test
+    void start_fromNew_isIllegalTransition_conflict() {
+        // The §12.1 state machine forbids NEW → IN_PROGRESS (must be ASSIGNED first) — a typed CONFLICT,
+        // proving reporting still owns the transition legality even when called via the responder port.
+        IssueCategory category = ReportingTestFixtures.publicCategory("WATER");
+        Report report = ReportingTestFixtures.report(reporter, category, ReportVisibility.PUBLIC);
+        assertThat(report.getStatus()).isEqualTo(ReportStatus.NEW);
+        when(reportRepository.findByPublicIdWithCategory(report.getPublicId()))
+                .thenReturn(Optional.of(report));
+
+        assertThatThrownBy(() -> service.start(report.getPublicId(), UUID.randomUUID()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.CONFLICT);
+    }
+
+    @Test
+    void escalate_unknownReport_isNotFound() {
+        UUID missing = UUID.randomUUID();
+        when(reportRepository.findByPublicIdWithCategory(missing)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.escalate(missing, UUID.randomUUID(), "urgent"))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
 }

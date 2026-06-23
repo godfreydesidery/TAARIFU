@@ -1,6 +1,6 @@
 package com.taarifu.identity;
 
-import com.taarifu.AbstractPostgisIntegrationTest;
+import com.taarifu.AbstractHttpIntegrationTest;
 import com.taarifu.common.security.JwtService;
 import com.taarifu.communications.infrastructure.adapter.LoggingSmsGatewayStub;
 import com.taarifu.identity.application.service.SignupService;
@@ -9,9 +9,6 @@ import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,10 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * {@code RequiresTierAspect} resolves the caller's <b>live</b> tier (T1) from the DB and returns
  * {@code 403 TIER_TOO_LOW} — proving the token claim never escalates (AUTH-DESIGN §7.2, ADR-0011 §3).</p>
  */
-@SpringBootTest
-@AutoConfigureMockMvc
-@ActiveProfiles("test")
-class TierGateForgedClaimIntegrationTest extends AbstractPostgisIntegrationTest {
+class TierGateForgedClaimIntegrationTest extends AbstractHttpIntegrationTest {
 
     private static final Pattern CODE = Pattern.compile("(\\d{6})");
 

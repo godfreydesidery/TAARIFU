@@ -140,12 +140,19 @@ public class ModerationQueueService {
                 ? FlagStatus.RESOLVED : FlagStatus.DISMISSED);
 
         // The append-only ModerationAction row IS the immutable decision trail (multi-hat context: the
-        // acting moderator is on the row). A dedicated AuditEventType.MODERATION_ACTION_TAKEN does not yet
-        // exist in the common catalogue (out of this module's edit scope — see CENTRAL INTEGRATION NEEDS),
-        // so a success audit event is intentionally NOT written with a wrong type. The integrity-critical
-        // DENIAL path above already uses the precise AUTHZ_SELF_ACTION_BLOCKED type.
-        // TODO(wiring): emit `moderation_action_taken` {host_type, host_ref, action, action_latency_s} via
-        // the transactional outbox; and, for SUSPEND/VERIFY_REQUEST, an identity-module sanction event —
+        // acting moderator is on the row). Mirror the state-changing decision into the unified audit store
+        // so every moderation action sits beside the DENIAL events (the conflict-of-interest path above
+        // already records AUTHZ_SELF_ACTION_BLOCKED). actor=moderator, subject=content author (may be null
+        // when the author is not surfaced); reason_code = the action taken. No content body/PII is attached.
+        audit.record(AuditEvent.Builder
+                .of(AuditEventType.MODERATION_ACTION_TAKEN, AuditOutcome.SUCCESS)
+                .actor(moderatorPublicId)
+                .subject(authorProfileId)
+                .reason(request.type().name())
+                .detailRef(item.getPublicId().toString())
+                .build());
+        // TODO(wiring): also emit `moderation_action_taken` {host_type, host_ref, action, action_latency_s}
+        // via the transactional outbox; and, for SUSPEND/VERIFY_REQUEST, an identity-module sanction event —
         // never by reaching into identity from here (ARCHITECTURE.md §3.2, §8).
         return ModerationActionDto.from(saved);
     }

@@ -1,12 +1,9 @@
 package com.taarifu.tokens;
 
-import com.taarifu.AbstractPostgisIntegrationTest;
+import com.taarifu.AbstractHttpIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.test.context.support.WithMockUser;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -26,10 +23,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * that real chain, matching the repo's existing security-test approach (TierGateForgedClaimIntegrationTest).
  * {@code @WithMockUser} drives the method-security expressions without minting real tokens.</p>
  */
-@SpringBootTest
-@AutoConfigureMockMvc
-@ActiveProfiles("test")
-class TokenSecurityIntegrationTest extends AbstractPostgisIntegrationTest {
+class TokenSecurityIntegrationTest extends AbstractHttpIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;

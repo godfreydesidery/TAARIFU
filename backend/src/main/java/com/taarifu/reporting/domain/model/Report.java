@@ -232,6 +232,18 @@ public class Report extends BaseCodedEntity {
     }
 
     /**
+     * Records the responder this report is assigned to (D21). WHY only the id (not a FK): the responder is
+     * owned by the responders module, referenced by {@code publicId} across the boundary (ARCHITECTURE
+     * §4.3). The status transition to {@code ASSIGNED} is applied separately via {@link #setStatus} through
+     * the service's guarded {@code transition}, so this method only carries the assignment reference.
+     *
+     * @param responderPublicId the assigned responder's public id.
+     */
+    public void assignResponder(UUID responderPublicId) {
+        this.assignedResponderId = responderPublicId;
+    }
+
+    /**
      * Records the citizen's confirm/dispute decision on a RESOLVED case and moves to the resulting state
      * (US-3.5): confirm → {@code CLOSED}, dispute → {@code REOPENED}.
      *

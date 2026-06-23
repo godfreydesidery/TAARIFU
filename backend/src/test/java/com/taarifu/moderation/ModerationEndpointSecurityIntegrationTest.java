@@ -4,7 +4,6 @@ import com.taarifu.AbstractPostgisIntegrationTest;
 import com.taarifu.common.security.JwtService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -45,15 +44,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
-@Disabled("""
-        Blocked by a PRE-EXISTING, central test-harness defect in this worktree, NOT by this module: \
-        every HTTP integration test (this one, GeographyReadIntegrationTest, TierGateForgedClaimIntegrationTest) \
-        500s with NoResourceFoundException because the `server.servlet.context-path=/api/v1` is not stripped \
-        from the handler-lookup path under @SpringBootTest. The handler mappings register correctly \
-        (verified: {GET [/moderation/items]} etc.). The same authorization paths ARE proven offline by \
-        ModerationQueueServiceTest / AppealServiceTest (D16 + appeal independence) and the migration/constraints \
-        by ModerationPersistenceIntegrationTest. Re-enable once the central harness/context-path issue is fixed \
-        (see CENTRAL INTEGRATION NEEDS).""")
 class ModerationEndpointSecurityIntegrationTest extends AbstractPostgisIntegrationTest {
 
     private static final String ROLE_MODERATOR = "MODERATOR";

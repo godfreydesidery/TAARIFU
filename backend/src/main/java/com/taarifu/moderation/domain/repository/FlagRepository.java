@@ -1,7 +1,7 @@
 package com.taarifu.moderation.domain.repository;
 
 import com.taarifu.moderation.domain.model.Flag;
-import com.taarifu.moderation.domain.model.enums.FlagSubjectType;
+import com.taarifu.moderation.api.FlagSubjectType;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;

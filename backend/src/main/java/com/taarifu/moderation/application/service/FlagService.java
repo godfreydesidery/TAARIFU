@@ -29,12 +29,13 @@ import java.util.UUID;
  * feature-phone users and is forbidden. Tier (T1+) is enforced declaratively on the controller, not by a
  * balance check.</p>
  *
- * <p>WHY the queue item's {@code subjectAuthorProfileId} is left {@code null} here: resolving a subject's
- * author requires the owning module's lookup API (reporting/engagement/communications), which this module
- * must not import (ARCHITECTURE.md §3.2). It is a {@code // TODO(wiring)} to populate it from a published
- * subject-author lookup so the D16 self-action guard on the action endpoint has the author to compare
- * against; until then that guard is vacuously satisfied for author-less subjects (deny-by-default still
- * applies to the moderator role itself).</p>
+ * <p>WHY the queue item's {@code subjectAuthorProfileId} is backfilled here from the owning module's
+ * published lookup ({@link SubjectAuthorResolver} → {@code SubjectAuthorQueryApi}, ADR-0013 §4c): the D16
+ * self-action guard on the action endpoint compares the moderator against the subject's author, so the
+ * author must be on the item when it is opened. Moderation never imports the content owner — it dispatches
+ * by {@code subjectType} to the owner's published port (ARCHITECTURE.md §3.2). A subject with no surfaced
+ * author (e.g. an anonymous sensitive report — D-Q1) resolves to {@code null}, leaving the guard vacuously
+ * satisfied (deny-by-default still applies to the moderator role itself).</p>
  */
 @Service
 public class FlagService {
@@ -42,21 +43,26 @@ public class FlagService {
     private final FlagRepository flagRepository;
     private final ModerationItemRepository itemRepository;
     private final SeverityPolicy severityPolicy;
+    private final SubjectAuthorResolver subjectAuthorResolver;
     private final ClockPort clock;
 
     /**
-     * @param flagRepository flag store (dedup + persistence).
-     * @param itemRepository queue store (one-live-item-per-subject collapse).
-     * @param severityPolicy reason→severity classification (§25.8).
-     * @param clock          time source for SLA stamping (testable).
+     * @param flagRepository        flag store (dedup + persistence).
+     * @param itemRepository        queue store (one-live-item-per-subject collapse).
+     * @param severityPolicy        reason→severity classification (§25.8).
+     * @param subjectAuthorResolver resolves the subject's author via the owning module's published port
+     *                              (ADR-0013 §4c) so the D16 self-action guard has the author to compare.
+     * @param clock                 time source for SLA stamping (testable).
      */
     public FlagService(FlagRepository flagRepository,
                        ModerationItemRepository itemRepository,
                        SeverityPolicy severityPolicy,
+                       SubjectAuthorResolver subjectAuthorResolver,
                        ClockPort clock) {
         this.flagRepository = flagRepository;
         this.itemRepository = itemRepository;
         this.severityPolicy = severityPolicy;
+        this.subjectAuthorResolver = subjectAuthorResolver;
         this.clock = clock;
     }
 
@@ -79,13 +85,16 @@ public class FlagService {
 
         ModerationSeverity severity = severityPolicy.initialSeverity(request.reason());
 
-        // Collapse: attach to the live queue item for this subject, or open a new one.
+        // Collapse: attach to the live queue item for this subject, or open a new one. On open, backfill the
+        // subject's author (account public id) via the owning module's published port (ADR-0013 §4c) so the
+        // D16 self-action guard on the action endpoint has the author to compare against. A subject with no
+        // surfaced author (e.g. anonymous report) resolves to null — the guard is then vacuously satisfied.
         ModerationItem item = itemRepository
                 .findBySubjectTypeAndSubjectId(request.subjectType(), request.subjectId())
                 .orElseGet(() -> ModerationItem.open(request.subjectType(), request.subjectId(),
-                        // TODO(wiring): resolve the subject's author profile id via the owning module's
-                        // published lookup API so the D16 self-action guard can compare against it.
-                        null, severity, clock.now()));
+                        subjectAuthorResolver.authorOf(request.subjectType(), request.subjectId())
+                                .orElse(null),
+                        severity, clock.now()));
         item.recordFlag(severity, clock.now());
         ModerationItem savedItem = itemRepository.save(item);
 

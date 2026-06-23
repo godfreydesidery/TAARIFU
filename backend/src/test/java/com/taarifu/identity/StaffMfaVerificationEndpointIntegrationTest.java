@@ -1,6 +1,6 @@
 package com.taarifu.identity;
 
-import com.taarifu.AbstractPostgisIntegrationTest;
+import com.taarifu.AbstractHttpIntegrationTest;
 import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.security.JwtService;
 import com.taarifu.communications.infrastructure.adapter.LoggingSmsGatewayStub;
@@ -19,10 +19,7 @@ import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -52,10 +49,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *   <li>a Moderator approving their <b>own</b> pending request is blocked (D16, 403).</li>
  * </ul>
  */
-@SpringBootTest
-@AutoConfigureMockMvc
-@ActiveProfiles("test")
-class StaffMfaVerificationEndpointIntegrationTest extends AbstractPostgisIntegrationTest {
+class StaffMfaVerificationEndpointIntegrationTest extends AbstractHttpIntegrationTest {
 
     private static final Pattern CODE = Pattern.compile("(\\d{6})");
 
@@ -171,7 +165,7 @@ class StaffMfaVerificationEndpointIntegrationTest extends AbstractPostgisIntegra
         UUID citizen = signup("+255700000403");
         // An honestly-issued CITIZEN access token (no staff role, no MFA) is denied the staff surface.
         String token = jwtService.issueAccessToken(citizen, List.of("CITIZEN"), "T1");
-        mockMvc.perform(get("/api/v1/moderation/verifications").contextPath("/api/v1")
+        mockMvc.perform(get("/api/v1/moderation/verifications")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isForbidden());
     }
@@ -183,7 +177,7 @@ class StaffMfaVerificationEndpointIntegrationTest extends AbstractPostgisIntegra
         // Even with a MODERATOR role claim, the endpoint gate @mfa.isStaffMfaSatisfied() denies (N-4):
         // the account has mfaEnabled=false, so the staff surface stays closed.
         String token = jwtService.issueAccessToken(account, List.of("MODERATOR"), "T1");
-        mockMvc.perform(get("/api/v1/moderation/verifications").contextPath("/api/v1")
+        mockMvc.perform(get("/api/v1/moderation/verifications")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isForbidden());
     }
@@ -202,7 +196,6 @@ class StaffMfaVerificationEndpointIntegrationTest extends AbstractPostgisIntegra
         // left to stop the action is the conflict-of-interest guard (D16).
         String staffToken = jwtService.issueAccessToken(moderator, List.of("MODERATOR"), "T2");
         mockMvc.perform(post("/api/v1/moderation/verifications/{id}/approve", own.verificationPublicId())
-                        .contextPath("/api/v1")
                         .header("Authorization", "Bearer " + staffToken)
                         .contentType("application/json")
                         .content("{}"))

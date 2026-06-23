@@ -12,8 +12,8 @@ import java.util.UUID;
  * <p>Responsibility: validated input for {@code POST /reports/{reportId}/responder-assignments}. The
  * report id comes from the path; this body carries the responder and the role. The single-OWNER
  * invariant (§24.3) is enforced by the service + a DB partial-unique index — attempting to add a second
- * OWNER yields a typed {@code CONFLICT}. The report is referenced by id (reporting built in parallel).
- * // TODO(wiring): validate {@code reportId} against the reporting module.</p>
+ * OWNER yields a typed {@code CONFLICT}. The report is referenced by id, and its existence is validated
+ * via reporting's published {@code ReportQueryApi} in the service (ADR-0013 §4a).</p>
  *
  * @param responderId the responder to assign (required, public id).
  * @param role        OWNER or COLLABORATOR (required).

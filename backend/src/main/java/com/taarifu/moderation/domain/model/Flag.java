@@ -3,7 +3,7 @@ package com.taarifu.moderation.domain.model;
 import com.taarifu.common.domain.model.BaseEntity;
 import com.taarifu.moderation.domain.model.enums.FlagReason;
 import com.taarifu.moderation.domain.model.enums.FlagStatus;
-import com.taarifu.moderation.domain.model.enums.FlagSubjectType;
+import com.taarifu.moderation.api.FlagSubjectType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;

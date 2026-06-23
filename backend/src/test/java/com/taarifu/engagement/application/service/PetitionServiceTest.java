@@ -11,6 +11,8 @@ import com.taarifu.engagement.domain.model.enums.PetitionStatus;
 import com.taarifu.engagement.domain.model.enums.PetitionTargetType;
 import com.taarifu.engagement.domain.repository.PetitionRepository;
 import com.taarifu.engagement.domain.repository.PetitionSignatureRepository;
+import com.taarifu.identity.api.ElectoralScopeApi;
+import com.taarifu.institutions.api.RepresentativeQueryApi;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -51,6 +53,10 @@ class PetitionServiceTest {
     @Mock
     private ScopeGuard scopeGuard;
     @Mock
+    private RepresentativeQueryApi representativeQueryApi;
+    @Mock
+    private ElectoralScopeApi electoralScopeApi;
+    @Mock
     private AuditEventService audit;
 
     private final EngagementMapper mapper = new EngagementMapper();
@@ -61,7 +67,8 @@ class PetitionServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PetitionService(petitions, signatures, mapper, scopeGuard, audit);
+        service = new PetitionService(petitions, signatures, mapper, scopeGuard,
+                representativeQueryApi, electoralScopeApi, audit);
     }
 
     private Petition activeOfficePetition() {
@@ -115,6 +122,51 @@ class PetitionServiceTest {
                 .isEqualTo(ErrorCode.CONFLICT);
 
         verify(signatures, never()).save(any());
+    }
+
+    @Test
+    void signBlocksOutOfElectoralScope_onRepresentativePetition_andAudits() {
+        // A REPRESENTATIVE-targeted petition is constituency-scoped: the signer must be an elector of the
+        // target rep's constituency. Here they are NOT → OUT_OF_SCOPE (D13), audited, no signature saved.
+        // The resolution uses only the published scope/electoral ports — no token balance is read (fence).
+        UUID target = UUID.randomUUID();
+        UUID constituency = UUID.randomUUID();
+        Petition repPetition = Petition.create("Scoped", "body", PetitionTargetType.REPRESENTATIVE,
+                target, 100, null, UUID.randomUUID(), null);
+        repPetition.activate();
+        when(petitions.findByPublicId(petitionId)).thenReturn(Optional.of(repPetition));
+        when(scopeGuard.isNotSelf(target)).thenReturn(true);
+        when(signatures.existsByPetition_PublicIdAndSignerProfileId(petitionId, signer)).thenReturn(false);
+        when(representativeQueryApi.constituencyOf(target)).thenReturn(Optional.of(constituency));
+        when(electoralScopeApi.isElectorOf(signer, constituency)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.sign(petitionId, signer, null, false))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.OUT_OF_SCOPE);
+
+        verify(signatures, never()).save(any());
+        verify(audit).record(any());
+    }
+
+    @Test
+    void signAllowsInElectoralScope_onRepresentativePetition() {
+        // The signer IS an elector of the target rep's constituency → the sign proceeds and counts.
+        UUID target = UUID.randomUUID();
+        UUID constituency = UUID.randomUUID();
+        Petition repPetition = Petition.create("Scoped", "body", PetitionTargetType.REPRESENTATIVE,
+                target, 100, null, UUID.randomUUID(), null);
+        repPetition.activate();
+        when(petitions.findByPublicId(petitionId)).thenReturn(Optional.of(repPetition));
+        when(scopeGuard.isNotSelf(target)).thenReturn(true);
+        when(signatures.existsByPetition_PublicIdAndSignerProfileId(petitionId, signer)).thenReturn(false);
+        when(representativeQueryApi.constituencyOf(target)).thenReturn(Optional.of(constituency));
+        when(electoralScopeApi.isElectorOf(signer, constituency)).thenReturn(true);
+
+        var dto = service.sign(petitionId, signer, "ndio", false);
+
+        assertThat(dto.signatureCount()).isEqualTo(1);
+        verify(signatures).save(any(PetitionSignature.class));
     }
 
     @Test

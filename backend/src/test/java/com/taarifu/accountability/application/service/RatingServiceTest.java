@@ -9,6 +9,8 @@ import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.security.CurrentUser;
 import com.taarifu.common.security.ScopeGuard;
+import com.taarifu.identity.api.ElectoralScopeApi;
+import com.taarifu.institutions.api.RepresentativeQueryApi;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,6 +49,10 @@ class RatingServiceTest {
     private RatingRepository ratingRepository;
     @Mock
     private ScopeGuard scopeGuard;
+    @Mock
+    private RepresentativeQueryApi representativeQueryApi;
+    @Mock
+    private ElectoralScopeApi electoralScopeApi;
 
     private final AccountabilityMapper mapper = new AccountabilityMapper();
 
@@ -71,7 +77,8 @@ class RatingServiceTest {
     }
 
     private RatingService service() {
-        return new RatingService(ratingRepository, scopeGuard, mapper);
+        return new RatingService(ratingRepository, scopeGuard, representativeQueryApi, electoralScopeApi,
+                mapper);
     }
 
     @Test
@@ -148,12 +155,14 @@ class RatingServiceTest {
     }
 
     @Test
-    void electoralScopeIsAStableTodoSeam_notTokenGated() {
-        // Guards against regression of the fence: even with isNotSelf true and no existing row, the
-        // service path consults the ScopeGuard (the security seam) and NEVER a token balance. There is
-        // no token collaborator on RatingService at all (asserted by its constructor signature).
+    void electoralScope_notTokenGated_consultsScopeAndElectoralPortsOnly() {
+        // Guards against regression of the fence: the service path consults the security/electoral seams
+        // (ScopeGuard, RepresentativeQueryApi, ElectoralScopeApi) and NEVER a token balance. There is no
+        // token collaborator on RatingService at all (asserted by its constructor signature).
         authenticateCaller();
         lenient().when(scopeGuard.isNotSelf(any())).thenReturn(true);
+        // A constituency-less rep (empty) carries no electoral gate → the rating proceeds.
+        when(representativeQueryApi.constituencyOf(subject)).thenReturn(Optional.empty());
         when(ratingRepository.findBySubjectTypeAndSubjectIdAndRaterProfileIdAndPeriod(any(), any(), any(), any()))
                 .thenReturn(Optional.empty());
         when(ratingRepository.saveAndFlush(any(Rating.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -161,5 +170,45 @@ class RatingServiceTest {
         service().submit(request());
 
         verify(scopeGuard).isNotSelf(subject);
+        verify(representativeQueryApi).constituencyOf(subject);
+    }
+
+    @Test
+    void blocksRatingOutsideElectoralScope_outOfScope() {
+        // The subject rep holds a constituency the rater is NOT an elector of → OUT_OF_SCOPE (D13),
+        // resolved purely via the published scope/electoral ports — no token balance is ever read (fence).
+        authenticateCaller();
+        UUID repConstituency = UUID.randomUUID();
+        when(scopeGuard.isNotSelf(subject)).thenReturn(true);
+        when(representativeQueryApi.constituencyOf(subject)).thenReturn(Optional.of(repConstituency));
+        when(electoralScopeApi.isElectorOf(caller, repConstituency)).thenReturn(false);
+
+        assertThatThrownBy(() -> service().submit(request()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.OUT_OF_SCOPE);
+
+        // The out-of-scope rater never reaches the persistence path.
+        verify(ratingRepository, never()).saveAndFlush(any());
+        verify(ratingRepository, never()).save(any());
+    }
+
+    @Test
+    void allowsRatingWithinElectoralScope_persists() {
+        // The rater IS an elector of the rep's constituency → the rating proceeds, keyed to the caller.
+        authenticateCaller();
+        UUID repConstituency = UUID.randomUUID();
+        when(scopeGuard.isNotSelf(subject)).thenReturn(true);
+        when(representativeQueryApi.constituencyOf(subject)).thenReturn(Optional.of(repConstituency));
+        when(electoralScopeApi.isElectorOf(caller, repConstituency)).thenReturn(true);
+        when(ratingRepository.findBySubjectTypeAndSubjectIdAndRaterProfileIdAndPeriod(
+                RatingSubjectType.REPRESENTATIVE, subject, caller, "2026-Q2"))
+                .thenReturn(Optional.empty());
+        when(ratingRepository.saveAndFlush(any(Rating.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service().submit(request());
+
+        verify(electoralScopeApi).isElectorOf(caller, repConstituency);
+        verify(ratingRepository).saveAndFlush(any(Rating.class));
     }
 }

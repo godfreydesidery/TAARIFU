@@ -4,6 +4,10 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.reporting.api.IssueCategoryQueryApi;
+import com.taarifu.reporting.api.ReportLifecycleApi;
+import com.taarifu.reporting.api.ReportQueryApi;
+import com.taarifu.reporting.api.dto.ReportDto;
 import com.taarifu.responders.api.dto.CreateAssignmentRequest;
 import com.taarifu.responders.api.dto.CreateOrganisationRequest;
 import com.taarifu.responders.api.dto.CreateResponderRequest;
@@ -59,6 +63,9 @@ public class ResponderAdminService {
     private final ResponderRepository responderRepository;
     private final RoutingRuleRepository routingRuleRepository;
     private final ResponderAssignmentRepository assignmentRepository;
+    private final ReportQueryApi reportQueryApi;
+    private final IssueCategoryQueryApi issueCategoryQueryApi;
+    private final ReportLifecycleApi reportLifecycleApi;
     private final ResponderMapper mapper;
     private final ClockPort clock;
 
@@ -67,6 +74,9 @@ public class ResponderAdminService {
      * @param responderRepository    responder persistence.
      * @param routingRuleRepository  routing-rule persistence.
      * @param assignmentRepository   assignment persistence.
+     * @param reportQueryApi         reporting's published port validating a {@code reportId} exists (D21).
+     * @param issueCategoryQueryApi  reporting's published port validating a {@code categoryId} (ADR-0013).
+     * @param reportLifecycleApi     reporting's published command port driving the case state machine (D21).
      * @param mapper                 entity→DTO mapper.
      * @param clock                  injectable time (assignment timestamps; testability).
      */
@@ -74,12 +84,18 @@ public class ResponderAdminService {
                                  ResponderRepository responderRepository,
                                  RoutingRuleRepository routingRuleRepository,
                                  ResponderAssignmentRepository assignmentRepository,
+                                 ReportQueryApi reportQueryApi,
+                                 IssueCategoryQueryApi issueCategoryQueryApi,
+                                 ReportLifecycleApi reportLifecycleApi,
                                  ResponderMapper mapper,
                                  ClockPort clock) {
         this.organisationRepository = organisationRepository;
         this.responderRepository = responderRepository;
         this.routingRuleRepository = routingRuleRepository;
         this.assignmentRepository = assignmentRepository;
+        this.reportQueryApi = reportQueryApi;
+        this.issueCategoryQueryApi = issueCategoryQueryApi;
+        this.reportLifecycleApi = reportLifecycleApi;
         this.mapper = mapper;
         this.clock = clock;
     }
@@ -157,6 +173,9 @@ public class ResponderAdminService {
      */
     public ResponderDto createResponder(UUID organisationPublicId, CreateResponderRequest request) {
         Organisation org = requireOrganisation(organisationPublicId);
+        // Validate each handled category exists via reporting's published port (sync responders → reporting,
+        // ADR-0013 §4a) so a responder can never be configured to handle a non-existent category.
+        validateCategories(request.handledCategoryIds());
         Responder responder = Responder.create(org, request.name(), request.responderType(),
                 request.coverageType());
         responder.setHandledCategoryIds(request.handledCategoryIds() == null
@@ -177,6 +196,8 @@ public class ResponderAdminService {
      */
     public ResponderDto updateResponder(UUID publicId, UpdateResponderRequest request) {
         Responder responder = requireResponder(publicId);
+        // Validate the (replacement) handled categories exist via reporting's published port (ADR-0013 §4a).
+        validateCategories(request.handledCategoryIds());
         responder.rename(request.name());
         responder.changeResponderType(request.responderType());
         responder.changeStatus(request.status());
@@ -209,13 +230,21 @@ public class ResponderAdminService {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * Creates a routing rule (§24.2).
+     * Creates a routing rule (§24.2). The {@code categoryPublicId} (and {@code subCategoryPublicId} if
+     * given) are validated against reporting's published {@link IssueCategoryQueryApi} (sync
+     * {@code responders → reporting}, ADR-0013 §4a) so a rule can never route a non-existent category.
      *
      * @param request validated creation input.
      * @return the created {@link RoutingRuleDto}.
-     * @throws ResourceNotFoundException if {@code preferredResponderId} is given but unknown.
+     * @throws ResourceNotFoundException if {@code preferredResponderId} is given but unknown, or the
+     *                                   category/sub-category does not exist.
      */
     public RoutingRuleDto createRoutingRule(CreateRoutingRuleRequest request) {
+        // Validate the routed category exists via reporting's published port (sync responders → reporting).
+        issueCategoryQueryApi.requireCategory(request.categoryPublicId());
+        if (request.subCategoryPublicId() != null) {
+            issueCategoryQueryApi.requireCategory(request.subCategoryPublicId());
+        }
         RoutingRule rule = RoutingRule.create(request.categoryPublicId(), request.responderType(),
                 request.selectionMode());
         rule.setSubCategoryPublicId(request.subCategoryPublicId());
@@ -250,19 +279,23 @@ public class ResponderAdminService {
      * <p>WHY the guards here (in addition to the DB partial-unique indexes): the DB is the ultimate
      * authority, but checking first lets the caller receive a typed, localised {@link ErrorCode#CONFLICT}
      * instead of a raw constraint-violation, and documents the invariant at the application layer
-     * (defense in depth). The report is referenced by id only — reporting is built in parallel.
-     * // TODO(wiring): validate {@code reportId} exists via the reporting module's API.</p>
+     * (defense in depth). The report is referenced by id only — its existence is validated synchronously
+     * via reporting's published {@link ReportQueryApi} (the {@code responders → reporting} read direction,
+     * ADR-0013 §4a), so an assignment can never be bound to a non-existent report (D21).</p>
      *
      * @param reportId               the report id (from the path).
      * @param request                validated assignment input (responder + role).
      * @param assignedByUserPublicId the authenticated assigning user's id (for audit/attribution).
      * @return the created {@link ResponderAssignmentDto}.
-     * @throws ResourceNotFoundException if the responder does not exist.
+     * @throws ResourceNotFoundException if the responder or the report does not exist.
      * @throws ApiException {@link ErrorCode#CONFLICT} if a second OWNER is attempted, or the responder is
      *                      already assigned to this report.
      */
     public ResponderAssignmentDto assignResponder(UUID reportId, CreateAssignmentRequest request,
                                                   UUID assignedByUserPublicId) {
+        // Validate the report exists via reporting's published port (sync responders → reporting, D21).
+        reportQueryApi.requireExists(reportId);
+
         Responder responder = requireResponder(request.responderId());
 
         // Duplicate guard: the same responder may hold at most one live assignment per report.
@@ -300,6 +333,61 @@ public class ResponderAdminService {
     }
 
     // ---------------------------------------------------------------------------------------------
+    // Responder-side case lifecycle (D21) — drives reporting's state machine via its published command
+    // port (sync responders → reporting, ADR-0013 §4a). These are thin pass-throughs: reporting owns the
+    // §12.1 transition rules, so an illegal transition surfaces as its typed CONFLICT unchanged here.
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Assigns a responder to a report and drives it {@code → ASSIGNED} (D21). The OWNER
+     * {@link ResponderAssignment} is created via {@link #assignResponder} (single-OWNER guard); this then
+     * records the assignment on the report and transitions its lifecycle through reporting's state machine.
+     *
+     * @param reportId          the report to assign (validated to exist by reporting's port).
+     * @param responderPublicId the responder taking the case.
+     * @param actorPublicId     the acting agent's account public id (timeline attribution).
+     * @return reporting's updated {@link ReportDto}.
+     */
+    public ReportDto startCase(UUID reportId, UUID responderPublicId, UUID actorPublicId) {
+        return reportLifecycleApi.assign(reportId, responderPublicId, actorPublicId);
+    }
+
+    /**
+     * Drives an assigned report {@code → IN_PROGRESS} (§12.1).
+     *
+     * @param reportId      the report to start.
+     * @param actorPublicId the acting agent's account public id.
+     * @return reporting's updated {@link ReportDto}.
+     */
+    public ReportDto beginWork(UUID reportId, UUID actorPublicId) {
+        return reportLifecycleApi.start(reportId, actorPublicId);
+    }
+
+    /**
+     * Resolves a report with the required note ({@code → RESOLVED}, US-3.4).
+     *
+     * @param reportId       the report to resolve.
+     * @param actorPublicId  the acting agent's account public id.
+     * @param resolutionNote the required resolution note.
+     * @return reporting's updated {@link ReportDto}.
+     */
+    public ReportDto resolveCase(UUID reportId, UUID actorPublicId, String resolutionNote) {
+        return reportLifecycleApi.resolve(reportId, actorPublicId, resolutionNote);
+    }
+
+    /**
+     * Escalates a report to a supervisor ({@code → ESCALATED}; stays active, §12.1).
+     *
+     * @param reportId      the report to escalate.
+     * @param actorPublicId the acting agent's account public id.
+     * @param reason        optional escalation reason for the timeline.
+     * @return reporting's updated {@link ReportDto}.
+     */
+    public ReportDto escalateCase(UUID reportId, UUID actorPublicId, String reason) {
+        return reportLifecycleApi.escalate(reportId, actorPublicId, reason);
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------------------------
 
@@ -313,5 +401,22 @@ public class ResponderAdminService {
     private Responder requireResponder(UUID publicId) {
         return responderRepository.findByPublicId(publicId)
                 .orElseThrow(() -> new ResourceNotFoundException("responders.responder.notFound", publicId));
+    }
+
+    /**
+     * Validates every supplied reporting-category id exists via reporting's published
+     * {@link IssueCategoryQueryApi} (sync {@code responders → reporting}, ADR-0013 §4a). A {@code null}/empty
+     * list is a no-op (a responder/rule may start with no categories). An unknown id throws
+     * {@link ResourceNotFoundException} (NOT_FOUND) — so responders never reference a non-existent category.
+     *
+     * @param categoryIds the reporting-category ids to validate, or {@code null}.
+     */
+    private void validateCategories(java.util.List<UUID> categoryIds) {
+        if (categoryIds == null) {
+            return;
+        }
+        for (UUID categoryId : categoryIds) {
+            issueCategoryQueryApi.requireCategory(categoryId);
+        }
     }
 }

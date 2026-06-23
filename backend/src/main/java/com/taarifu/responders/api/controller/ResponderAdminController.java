@@ -5,7 +5,11 @@ import com.taarifu.common.api.dto.ApiResponse;
 import com.taarifu.common.pagination.PageMapper;
 import com.taarifu.common.pagination.PageRequestFactory;
 import com.taarifu.common.security.CurrentUser;
+import com.taarifu.reporting.api.dto.ReportDto;
+import com.taarifu.responders.api.dto.AssignCaseRequest;
 import com.taarifu.responders.api.dto.CreateAssignmentRequest;
+import com.taarifu.responders.api.dto.EscalateCaseRequest;
+import com.taarifu.responders.api.dto.ResolveCaseRequest;
 import com.taarifu.responders.api.dto.CreateOrganisationRequest;
 import com.taarifu.responders.api.dto.CreateResponderRequest;
 import com.taarifu.responders.api.dto.CreateRoutingRuleRequest;
@@ -280,5 +284,69 @@ public class ResponderAdminController {
     @Operation(summary = "List a report's responder assignments")
     public ApiResponse<List<ResponderAssignmentDto>> listAssignments(@PathVariable UUID reportId) {
         return responses.ok(admin.listAssignments(reportId));
+    }
+
+    // --------------------------- Responder-side case lifecycle (D21) ----------------------------
+    // These drive reporting's §12.1 state machine via its published ReportLifecycleApi command port
+    // (sync responders → reporting, ADR-0013 §4a). Reporting owns the transition legality; an illegal
+    // transition surfaces as its typed CONFLICT. The acting agent is taken from the security context.
+
+    /**
+     * Assigns a report to a responder and transitions it to {@code ASSIGNED} (D21).
+     *
+     * @param reportId the report to assign (existence validated by reporting's port).
+     * @param request  the responder taking the case.
+     * @return {@code 200} + reporting's updated {@link ReportDto}.
+     */
+    @PostMapping("/reports/{reportId}/assign")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('MODERATOR') or hasRole('RESPONDER_ADMIN') or hasRole('RESPONDER_AGENT')")
+    @Operation(summary = "Assign a report to a responder (→ ASSIGNED)")
+    public ApiResponse<ReportDto> assignCase(@PathVariable UUID reportId,
+                                             @Valid @RequestBody AssignCaseRequest request) {
+        return responses.ok(admin.startCase(reportId, request.responderId(), CurrentUser.requirePublicId()));
+    }
+
+    /**
+     * Starts work on an assigned report ({@code → IN_PROGRESS}).
+     *
+     * @param reportId the report to start.
+     * @return {@code 200} + reporting's updated {@link ReportDto}.
+     */
+    @PostMapping("/reports/{reportId}/start")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('MODERATOR') or hasRole('RESPONDER_ADMIN') or hasRole('RESPONDER_AGENT')")
+    @Operation(summary = "Start work on a report (→ IN_PROGRESS)")
+    public ApiResponse<ReportDto> startCase(@PathVariable UUID reportId) {
+        return responses.ok(admin.beginWork(reportId, CurrentUser.requirePublicId()));
+    }
+
+    /**
+     * Resolves a report with the required resolution note ({@code → RESOLVED}, US-3.4).
+     *
+     * @param reportId the report to resolve.
+     * @param request  the required resolution note.
+     * @return {@code 200} + reporting's updated {@link ReportDto}.
+     */
+    @PostMapping("/reports/{reportId}/resolve")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('MODERATOR') or hasRole('RESPONDER_ADMIN') or hasRole('RESPONDER_AGENT')")
+    @Operation(summary = "Resolve a report (→ RESOLVED)")
+    public ApiResponse<ReportDto> resolveCase(@PathVariable UUID reportId,
+                                              @Valid @RequestBody ResolveCaseRequest request) {
+        return responses.ok(
+                admin.resolveCase(reportId, CurrentUser.requirePublicId(), request.resolutionNote()));
+    }
+
+    /**
+     * Escalates a report to a supervisor ({@code → ESCALATED}; stays active).
+     *
+     * @param reportId the report to escalate.
+     * @param request  optional escalation reason.
+     * @return {@code 200} + reporting's updated {@link ReportDto}.
+     */
+    @PostMapping("/reports/{reportId}/escalate")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('MODERATOR') or hasRole('RESPONDER_ADMIN') or hasRole('RESPONDER_AGENT')")
+    @Operation(summary = "Escalate a report (→ ESCALATED)")
+    public ApiResponse<ReportDto> escalateCase(@PathVariable UUID reportId,
+                                               @Valid @RequestBody EscalateCaseRequest request) {
+        return responses.ok(admin.escalateCase(reportId, CurrentUser.requirePublicId(), request.reason()));
     }
 }

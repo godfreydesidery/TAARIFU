@@ -95,6 +95,23 @@ public enum AuditEventType {
     /** A conflict-of-interest self-action was blocked (D13/D16). */
     AUTHZ_SELF_ACTION_BLOCKED,
 
+    /**
+     * A moderator took an append-only moderation action on a queue item (actor=moderator,
+     * subject=content author; {@code reason_code} = the moderation action taken,
+     * e.g. {@code REMOVE}/{@code HIDE}/{@code APPROVE}). The immutable {@code moderation_action} row is the
+     * primary decision trail; this event mirrors it into the unified audit store so SOC tooling sees every
+     * state-changing moderation decision in one stream (PRD §18, §25.8). No content body or PII is attached.
+     */
+    MODERATION_ACTION_TAKEN,
+
+    /**
+     * A moderation appeal was resolved (actor=deciding moderator, subject=appellant; {@code reason_code} =
+     * the appeal outcome, e.g. {@code UPHELD}/{@code OVERTURNED}). Decided by a <b>different</b> moderator
+     * than the one who took the original action (appeal independence, D16/§25.8). An {@code OVERTURNED}
+     * outcome is the signal for a new reversing action — history is never mutated (append-only).
+     */
+    MODERATION_APPEAL_RESOLVED,
+
     /** An identity was anonymised on erasure — a tombstone event; history is never mutated (§25.1). */
     IDENTITY_ERASED
 }

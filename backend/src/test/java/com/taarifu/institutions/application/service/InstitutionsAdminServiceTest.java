@@ -2,11 +2,11 @@ package com.taarifu.institutions.application.service;
 
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.geography.application.service.GeographyQueryService;
 import com.taarifu.geography.domain.model.Constituency;
 import com.taarifu.geography.domain.model.Location;
 import com.taarifu.geography.domain.model.enums.LocationType;
-import com.taarifu.geography.domain.repository.ConstituencyRepository;
-import com.taarifu.geography.domain.repository.LocationRepository;
 import com.taarifu.institutions.api.dto.RepresentativeWriteDto;
 import com.taarifu.institutions.application.mapper.InstitutionsMapper;
 import com.taarifu.institutions.domain.model.Representative;
@@ -18,10 +18,8 @@ import com.taarifu.institutions.test.EntityTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.Optional;
 import java.util.UUID;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -40,8 +38,7 @@ import static org.mockito.Mockito.when;
 class InstitutionsAdminServiceTest {
 
     private RepresentativeRepository representativeRepository;
-    private ConstituencyRepository constituencyRepository;
-    private LocationRepository locationRepository;
+    private GeographyQueryService geographyQueryService;
     private InstitutionsMapper mapper;
     private InstitutionsAdminService service;
 
@@ -54,13 +51,12 @@ class InstitutionsAdminServiceTest {
         ParliamentRepository parliamentRepository = mock(ParliamentRepository.class);
         ParliamentRoleRepository parliamentRoleRepository = mock(ParliamentRoleRepository.class);
         representativeRepository = mock(RepresentativeRepository.class);
-        constituencyRepository = mock(ConstituencyRepository.class);
-        locationRepository = mock(LocationRepository.class);
+        // Geography FK resolution now goes through geography's PUBLIC service (ADR-0013), not its repos.
+        geographyQueryService = mock(GeographyQueryService.class);
         mapper = mock(InstitutionsMapper.class);
 
         service = new InstitutionsAdminService(partyRepository, parliamentRepository,
-                parliamentRoleRepository, representativeRepository, constituencyRepository,
-                locationRepository, mapper);
+                parliamentRoleRepository, representativeRepository, geographyQueryService, mapper);
 
         rombo = EntityTestSupport.newWithIds(Constituency.class, 100L, UUID.randomUUID());
         EntityTestSupport.set(rombo, "name", "Rombo");
@@ -75,7 +71,7 @@ class InstitutionsAdminServiceTest {
 
     @Test
     void constituencyMandate_requiresConstituency_andRejectsWard() {
-        when(constituencyRepository.findByPublicId(rombo.getPublicId())).thenReturn(Optional.of(rombo));
+        when(geographyQueryService.resolveConstituency(rombo.getPublicId())).thenReturn(rombo);
         // CONSTITUENCY mandate but NO constituency id → VALIDATION_FAILED.
         RepresentativeWriteDto missing = base("MP", "CONSTITUENCY", null, null);
         assertThatThrownBy(() -> service.createRepresentative(missing))
@@ -104,7 +100,8 @@ class InstitutionsAdminServiceTest {
 
     @Test
     void specialSeatsMandate_carryingConstituency_isRejected() {
-        when(constituencyRepository.findByPublicId(rombo.getPublicId())).thenReturn(Optional.of(rombo));
+        // NOMINATED carrying a constituency id is rejected by the mandate⇄geography pre-check, BEFORE any
+        // resolution call — so no geography stub is needed (requireAbsent fires first).
         RepresentativeWriteDto dto = base("MP", "NOMINATED", rombo.getPublicId(), null);
         assertThatThrownBy(() -> service.createRepresentative(dto))
                 .isInstanceOf(ApiException.class)
@@ -114,7 +111,7 @@ class InstitutionsAdminServiceTest {
 
     @Test
     void secondSittingMp_onSameConstituency_isRejectedWithConflict() {
-        when(constituencyRepository.findByPublicId(rombo.getPublicId())).thenReturn(Optional.of(rombo));
+        when(geographyQueryService.resolveConstituency(rombo.getPublicId())).thenReturn(rombo);
         // The pre-check reports an existing SITTING MP on this constituency.
         when(representativeRepository.existsSittingByConstituency(eq(100L), any())).thenReturn(true);
 
@@ -127,7 +124,7 @@ class InstitutionsAdminServiceTest {
 
     @Test
     void firstSittingMp_onConstituency_isAccepted() {
-        when(constituencyRepository.findByPublicId(rombo.getPublicId())).thenReturn(Optional.of(rombo));
+        when(geographyQueryService.resolveConstituency(rombo.getPublicId())).thenReturn(rombo);
         when(representativeRepository.existsSittingByConstituency(eq(100L), any())).thenReturn(false);
 
         RepresentativeWriteDto dto = withStatus(base("MP", "CONSTITUENCY", rombo.getPublicId(), null), "SITTING");
@@ -137,7 +134,7 @@ class InstitutionsAdminServiceTest {
 
     @Test
     void councillorWardMandate_requiresWard_resolvedAndTypeChecked() {
-        when(locationRepository.findByPublicId(mengweWard.getPublicId())).thenReturn(Optional.of(mengweWard));
+        when(geographyQueryService.resolveWard(mengweWard.getPublicId())).thenReturn(mengweWard);
         when(representativeRepository.existsSittingByConstituency(any(), any())).thenReturn(false);
 
         RepresentativeWriteDto dto = base("COUNCILLOR", "COUNCILLOR_WARD", null, mengweWard.getPublicId());
@@ -147,11 +144,13 @@ class InstitutionsAdminServiceTest {
 
     @Test
     void councillorWardMandate_withNonWardLocation_isNotFound() {
-        Location district = EntityTestSupport.newWithIds(Location.class, 300L, UUID.randomUUID());
-        EntityTestSupport.set(district, "type", LocationType.DISTRICT);
-        when(locationRepository.findByPublicId(district.getPublicId())).thenReturn(Optional.of(district));
+        // The minimum-pin-granularity (WARD) check now lives in geography's resolveWard, which throws
+        // not-found for a non-ward location — institutions surfaces that same NOT_FOUND.
+        UUID districtId = UUID.randomUUID();
+        when(geographyQueryService.resolveWard(districtId))
+                .thenThrow(new ResourceNotFoundException("geography.ward.notFound", districtId));
 
-        RepresentativeWriteDto dto = base("COUNCILLOR", "COUNCILLOR_WARD", null, district.getPublicId());
+        RepresentativeWriteDto dto = base("COUNCILLOR", "COUNCILLOR_WARD", null, districtId);
         assertThatThrownBy(() -> service.createRepresentative(dto))
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getErrorCode())

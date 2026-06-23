@@ -3,7 +3,7 @@ package com.taarifu.moderation.api.dto;
 import com.taarifu.moderation.domain.model.Flag;
 import com.taarifu.moderation.domain.model.enums.FlagReason;
 import com.taarifu.moderation.domain.model.enums.FlagStatus;
-import com.taarifu.moderation.domain.model.enums.FlagSubjectType;
+import com.taarifu.moderation.api.FlagSubjectType;
 
 import java.time.Instant;
 import java.util.UUID;

@@ -7,8 +7,10 @@ import com.taarifu.geography.api.dto.LocationDto;
 import com.taarifu.geography.api.dto.RegionDto;
 import com.taarifu.geography.api.dto.VillageDto;
 import com.taarifu.geography.api.dto.WardDto;
+import com.taarifu.geography.api.dto.WardSummaryDto;
 import com.taarifu.geography.domain.model.Constituency;
 import com.taarifu.geography.domain.model.Location;
+import com.taarifu.geography.domain.repository.projection.WardSummaryProjection;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -64,6 +66,27 @@ public class GeographyMapper {
     public WardDto toWardDto(Location location) {
         return new WardDto(location.getPublicId(), location.getCode(), location.getName(),
                 location.getParent() != null ? location.getParent().getPublicId() : null);
+    }
+
+    /**
+     * Maps a closure-resolved ward projection to the lean {@link WardSummaryDto} used by the manual
+     * ward-picker list/search.
+     *
+     * <p>WHY a projection (not a {@link Location}): the council and district <i>names</i> come from joined
+     * closure rows, not the ward entity, so the repository returns a {@link WardSummaryProjection} carrying
+     * exactly those fields in one query (no N+1). This mapper is the single place that translation happens
+     * so the projection — like entities — never leaves the module (CLAUDE.md §8).</p>
+     *
+     * @param projection the ward + council/district names projection.
+     * @return the lean ward summary DTO for the boundary.
+     */
+    public WardSummaryDto toWardSummaryDto(WardSummaryProjection projection) {
+        return new WardSummaryDto(
+                projection.getWardPublicId(),
+                projection.getCode(),
+                projection.getName(),
+                projection.getCouncilName(),
+                projection.getDistrictName());
     }
 
     /** @param location a {@code VILLAGE}/{@code MTAA} location. @return the village/mtaa DTO. */

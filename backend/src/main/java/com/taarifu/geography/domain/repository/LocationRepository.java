@@ -1,10 +1,13 @@
 package com.taarifu.geography.domain.repository;
 
 import com.taarifu.geography.domain.model.Location;
+import com.taarifu.geography.domain.model.LocationClosure;
 import com.taarifu.geography.domain.model.enums.LocationType;
+import com.taarifu.geography.domain.repository.projection.WardSummaryProjection;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
@@ -62,4 +65,79 @@ public interface LocationRepository extends JpaRepository<Location, Long> {
     Page<Location> findChildrenByParentPublicIdAndType(@Param("parentPublicId") UUID parentPublicId,
                                                        @Param("childType") LocationType childType,
                                                        Pageable pageable);
+
+    /**
+     * Lists every {@code WARD} under a district — its <b>transitive</b> ward descendants via the closure
+     * table — projecting each with its Council/LGA and District ancestor names, paged.
+     *
+     * <p>WHY the closure table (not {@code parent}): a ward's direct parent is a {@code COUNCIL} (and an
+     * optional {@code DIVISION} may sit between), so a district→wards listing is a transitive
+     * ancestor/descendant query, not a one-hop children read. Joining {@link LocationClosure} answers
+     * "all wards under this district" in one indexed query (ARCHITECTURE.md §4.3) and the same join carries
+     * the council/district names, avoiding an N+1 per ward.</p>
+     *
+     * <p>The scope filter is the {@code dc} closure row pinning the ward's {@code DISTRICT} ancestor to the
+     * requested {@code districtPublicId}; the {@code cc} {@code LEFT JOIN} resolves the {@code COUNCIL}
+     * ancestor name (nullable to tolerate an incomplete seed chain, EI-14). Soft-deleted locations are
+     * excluded by the entity's {@code @SQLRestriction} on every {@code Location} alias.</p>
+     *
+     * @param districtPublicId the district's public id.
+     * @param pageable         paging/sorting (the service applies a stable default sort by ward name).
+     * @return a page of {@link WardSummaryProjection} for the district's wards.
+     */
+    @Query("""
+            SELECT w.publicId        AS wardPublicId,
+                   w.code            AS code,
+                   w.name            AS name,
+                   cc.ancestor.name  AS councilName,
+                   dc.ancestor.name  AS districtName
+            FROM Location w
+            JOIN LocationClosure dc
+                ON dc.descendant = w AND dc.ancestor.type = com.taarifu.geography.domain.model.enums.LocationType.DISTRICT
+            LEFT JOIN LocationClosure cc
+                ON cc.descendant = w AND cc.ancestor.type = com.taarifu.geography.domain.model.enums.LocationType.COUNCIL
+            WHERE w.type = com.taarifu.geography.domain.model.enums.LocationType.WARD
+              AND dc.ancestor.publicId = :districtPublicId
+            """)
+    Page<WardSummaryProjection> findWardSummariesUnderDistrict(@Param("districtPublicId") UUID districtPublicId,
+                                                              Pageable pageable);
+
+    /**
+     * Case-insensitive <b>name-prefix</b> search over wards, optionally scoped to a district, projecting
+     * each match with its Council/LGA and District ancestor names, paged.
+     *
+     * <p>Powers the {@code GET /wards?q=&districtId=} ward picker when GPS is unavailable. The
+     * {@code districtPublicId} is optional: when {@code null} the search spans every ward nationally; when
+     * supplied it is constrained, via the closure table, to wards under that district. As in
+     * {@link #findWardSummariesUnderDistrict}, the council/district names are resolved by joining
+     * {@link LocationClosure} so the result is a single round-trip with no N+1.</p>
+     *
+     * <p>WHY prefix (not substring/contains): a {@code name LIKE :prefix%} predicate is index-friendly and
+     * matches how a user types a ward name into a picker, while a leading-wildcard {@code %term%} would force
+     * a full scan at national scale (PRD §15). The caller passes an already-lowercased {@code namePrefix}
+     * with the trailing {@code %} appended, matched against {@code lower(w.name)}.</p>
+     *
+     * @param namePrefix       the lowercased ward-name prefix with a trailing {@code %} (e.g. {@code "meng%"}).
+     * @param districtPublicId optional district scope; {@code null} searches all wards.
+     * @param pageable         paging/sorting (the service applies a stable default sort by ward name).
+     * @return a page of {@link WardSummaryProjection} for the matching wards.
+     */
+    @Query("""
+            SELECT w.publicId        AS wardPublicId,
+                   w.code            AS code,
+                   w.name            AS name,
+                   cc.ancestor.name  AS councilName,
+                   dc.ancestor.name  AS districtName
+            FROM Location w
+            LEFT JOIN LocationClosure dc
+                ON dc.descendant = w AND dc.ancestor.type = com.taarifu.geography.domain.model.enums.LocationType.DISTRICT
+            LEFT JOIN LocationClosure cc
+                ON cc.descendant = w AND cc.ancestor.type = com.taarifu.geography.domain.model.enums.LocationType.COUNCIL
+            WHERE w.type = com.taarifu.geography.domain.model.enums.LocationType.WARD
+              AND lower(w.name) LIKE :namePrefix ESCAPE '\\'
+              AND (:districtPublicId IS NULL OR dc.ancestor.publicId = :districtPublicId)
+            """)
+    Page<WardSummaryProjection> searchWardSummaries(@Param("namePrefix") String namePrefix,
+                                                    @Param("districtPublicId") UUID districtPublicId,
+                                                    Pageable pageable);
 }

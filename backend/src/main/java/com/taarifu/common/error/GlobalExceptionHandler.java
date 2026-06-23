@@ -1,6 +1,7 @@
 package com.taarifu.common.error;
 
 import com.taarifu.common.api.ResponseFactory;
+import com.taarifu.common.api.dto.ApiError;
 import com.taarifu.common.api.dto.ApiResponse;
 import com.taarifu.common.api.dto.ErrorDetail;
 import com.taarifu.common.i18n.MessageResolver;
@@ -62,12 +63,15 @@ public class GlobalExceptionHandler {
      * @return the envelope at the error's mapped HTTP status.
      */
     @ExceptionHandler(ApiException.class)
-    public ResponseEntity<ApiResponse<Object>> handleApiException(ApiException ex) {
+    public ResponseEntity<ApiResponse<ApiError>> handleApiException(ApiException ex) {
         ErrorCode code = ex.getErrorCode();
         // 4xx are expected client errors → log at WARN without a stack trace; never leak args verbatim.
         log.warn("Domain error {}: {}", code.name(), ex.getMessage());
+        // No field-level errors for a domain exception → pass null so data.errors is omitted; the
+        // machine code is preserved at data.code by ResponseFactory.error (ADR-0008). The cast binds
+        // to error(ErrorCode, List<ErrorDetail>, Object...) so the i18n messageArgs reach the message.
         return ResponseEntity.status(code.httpStatus())
-                .body(responses.error(code, null, ex.getMessageArgs()));
+                .body(responses.error(code, (List<ErrorDetail>) null, ex.getMessageArgs()));
     }
 
     /**
@@ -75,16 +79,18 @@ public class GlobalExceptionHandler {
      * into a localised {@link ErrorDetail} (PRD §17 field-level errors).
      *
      * @param ex the validation exception raised by Spring MVC.
-     * @return a {@link ErrorCode#VALIDATION_FAILED} envelope with {@code data.errors[]}.
+     * @return a {@link ErrorCode#VALIDATION_FAILED} envelope whose {@code data} is an
+     *         {@link ApiError} carrying the machine code and the field-level {@code errors[]}.
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiResponse<ErrorDetail.ValidationErrors>> handleValidation(
+    public ResponseEntity<ApiResponse<ApiError>> handleValidation(
             MethodArgumentNotValidException ex) {
         List<ErrorDetail> details = ex.getBindingResult().getFieldErrors().stream()
                 .map(this::toDetail)
                 .toList();
-        ApiResponse<ErrorDetail.ValidationErrors> body = responses.error(
-                ErrorCode.VALIDATION_FAILED, new ErrorDetail.ValidationErrors(details));
+        // The collected field errors land in ApiError.errors (data.errors[]); the machine code
+        // VALIDATION_FAILED lands in ApiError.code (data.code) — ADR-0008.
+        ApiResponse<ApiError> body = responses.error(ErrorCode.VALIDATION_FAILED, details);
         return ResponseEntity.status(ErrorCode.VALIDATION_FAILED.httpStatus()).body(body);
     }
 
@@ -94,20 +100,20 @@ public class GlobalExceptionHandler {
      * being protected (PRD §18).
      */
     @ExceptionHandler(AccessDeniedException.class)
-    public ResponseEntity<ApiResponse<Object>> handleAccessDenied(AccessDeniedException ex) {
+    public ResponseEntity<ApiResponse<ApiError>> handleAccessDenied(AccessDeniedException ex) {
         log.warn("Access denied: {}", ex.getMessage());
         return ResponseEntity.status(ErrorCode.FORBIDDEN.httpStatus())
-                .body(responses.error(ErrorCode.FORBIDDEN, null));
+                .body(responses.error(ErrorCode.FORBIDDEN, (List<ErrorDetail>) null));
     }
 
     /**
      * Handles missing/invalid authentication. Normalised to {@link ErrorCode#UNAUTHENTICATED}.
      */
     @ExceptionHandler(AuthenticationException.class)
-    public ResponseEntity<ApiResponse<Object>> handleAuthentication(AuthenticationException ex) {
+    public ResponseEntity<ApiResponse<ApiError>> handleAuthentication(AuthenticationException ex) {
         log.warn("Authentication failure: {}", ex.getMessage());
         return ResponseEntity.status(ErrorCode.UNAUTHENTICATED.httpStatus())
-                .body(responses.error(ErrorCode.UNAUTHENTICATED, null));
+                .body(responses.error(ErrorCode.UNAUTHENTICATED, (List<ErrorDetail>) null));
     }
 
     /**
@@ -115,10 +121,10 @@ public class GlobalExceptionHandler {
      * (PRD §17 concurrency).
      */
     @ExceptionHandler(OptimisticLockingFailureException.class)
-    public ResponseEntity<ApiResponse<Object>> handleOptimisticLock(OptimisticLockingFailureException ex) {
+    public ResponseEntity<ApiResponse<ApiError>> handleOptimisticLock(OptimisticLockingFailureException ex) {
         log.warn("Optimistic lock conflict: {}", ex.getMessage());
         return ResponseEntity.status(ErrorCode.CONFLICT.httpStatus())
-                .body(responses.error(ErrorCode.CONFLICT, null));
+                .body(responses.error(ErrorCode.CONFLICT, (List<ErrorDetail>) null));
     }
 
     /**
@@ -130,10 +136,10 @@ public class GlobalExceptionHandler {
      * @return a generic 500 envelope.
      */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Object>> handleUnexpected(Exception ex) {
+    public ResponseEntity<ApiResponse<ApiError>> handleUnexpected(Exception ex) {
         log.error("Unhandled exception", ex);
         return ResponseEntity.status(ErrorCode.INTERNAL_ERROR.httpStatus())
-                .body(responses.error(ErrorCode.INTERNAL_ERROR, null));
+                .body(responses.error(ErrorCode.INTERNAL_ERROR, (List<ErrorDetail>) null));
     }
 
     /** Maps a Spring {@link FieldError} to a localised {@link ErrorDetail}. */

@@ -1,6 +1,7 @@
 package com.taarifu.common.security;
 
 import com.taarifu.common.api.ResponseFactory;
+import com.taarifu.common.api.dto.ErrorDetail;
 import com.taarifu.common.error.ErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -165,6 +166,8 @@ public class SecurityConfig {
                                ErrorCode errorCode) throws java.io.IOException {
         response.setStatus(errorCode.httpStatus().value());
         response.setContentType("application/json;charset=UTF-8");
-        objectMapper.writeValue(response.getWriter(), responseFactory.error(errorCode, null));
+        // No field-level errors at the security filter layer; the cast binds to the field-errors
+        // overload so data carries just the machine code (data.code) — same shape as the advice (ADR-0008).
+        objectMapper.writeValue(response.getWriter(), responseFactory.error(errorCode, (List<ErrorDetail>) null));
     }
 }

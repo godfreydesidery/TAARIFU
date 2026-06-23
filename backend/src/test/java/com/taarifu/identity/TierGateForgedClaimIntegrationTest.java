@@ -76,7 +76,10 @@ class TierGateForgedClaimIntegrationTest extends AbstractPostgisIntegrationTest 
         mockMvc.perform(get("/api/v1/demo/t3-action")
                         .header("Authorization", "Bearer " + forged))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("TIER_TOO_LOW"));
+                // Top-level statusCode is the integer HTTP status; the stable machine code that
+                // distinguishes TIER_TOO_LOW from other 403s now lives at data.code (ADR-0008).
+                .andExpect(jsonPath("$.statusCode").value(403))
+                .andExpect(jsonPath("$.data.code").value("TIER_TOO_LOW"));
     }
 
     @Test

@@ -15,11 +15,18 @@ import java.time.Instant;
  * <p>Field contract:</p>
  * <ul>
  *   <li>{@code success} — boolean outcome flag.</li>
- *   <li>{@code code} — <b>stable machine code</b> ({@code OK}, {@code NOT_FOUND}, {@code TIER_TOO_LOW}
- *       …). Clients branch on this, never on {@code message} (ADR-0008, ADR-0010).</li>
+ *   <li>{@code statusCode} — the <b>integer HTTP status</b> of the response ({@code 200}, {@code 201},
+ *       {@code 400}, {@code 403}, {@code 404}, {@code 409}, {@code 429}, {@code 500} …). Lets a client
+ *       read the outcome class without parsing the transport status line. WHY this replaced the former
+ *       {@code String code} (machine code): the stable, language-independent machine code is preserved
+ *       on error responses inside {@code data} (see {@link ApiError#code()}) — it is NOT lost. The
+ *       int status alone cannot discriminate distinct domain errors that share a status (e.g.
+ *       {@code TIER_TOO_LOW}/{@code OUT_OF_SCOPE}/{@code CONFLICT_OF_INTEREST} are all {@code 403}),
+ *       which is exactly why the machine code remains at {@code data.code} (ADR-0008, ADR-0010).</li>
  *   <li>{@code message} — <b>localised</b> human text (Swahili default, English secondary —
  *       ADR-0010). Resolved server-side from an i18n key.</li>
- *   <li>{@code data} — the payload; {@code null} on error.</li>
+ *   <li>{@code data} — on success, the payload; on error, an {@link ApiError} carrying the machine
+ *       {@code code} (and field {@code errors[]} for validation failures).</li>
  *   <li>{@code meta} — pagination/extra metadata; {@code null} when not paginated.</li>
  *   <li>{@code timestamp} — server {@link Instant}, ISO-8601 UTC.</li>
  * </ul>
@@ -31,16 +38,18 @@ import java.time.Instant;
  *
  * @param <T> the type of the {@code data} payload.
  * @param success whether the request succeeded.
- * @param code    stable machine code clients branch on.
+ * @param statusCode integer HTTP status of the response (e.g. {@code 200}, {@code 403}); the stable
+ *                   machine code lives at {@code data.code} on error responses.
  * @param message localised human-readable message (SW default).
- * @param data    the response payload, or {@code null} on error.
+ * @param data    on success the response payload; on error an {@link ApiError} (machine code + optional
+ *                field errors).
  * @param meta    pagination/extra metadata, or {@code null} when not applicable.
  * @param timestamp server response instant (UTC).
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record ApiResponse<T>(
         boolean success,
-        String code,
+        int statusCode,
         String message,
         T data,
         PageMeta meta,

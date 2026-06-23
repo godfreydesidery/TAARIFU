@@ -1,6 +1,7 @@
 package com.taarifu.geography;
 
 import com.taarifu.AbstractPostgisIntegrationTest;
+import com.taarifu.common.api.dto.ApiError;
 import com.taarifu.common.api.dto.ApiResponse;
 import com.taarifu.geography.api.dto.ConstituencyDto;
 import com.taarifu.geography.api.dto.LocationResolutionDto;
@@ -62,7 +63,8 @@ class GeographyReadIntegrationTest extends AbstractPostgisIntegrationTest {
         ApiResponse<List<RegionDto>> body = response.getBody();
         assertThat(body).isNotNull();
         assertThat(body.success()).isTrue();
-        assertThat(body.code()).isEqualTo("OK");
+        // Success envelopes carry the integer HTTP status 200 at the top level (ADR-0008).
+        assertThat(body.statusCode()).isEqualTo(200);
         // Envelope carries pagination meta for a paged endpoint.
         assertThat(body.meta()).isNotNull();
         assertThat(body.meta().total()).isGreaterThanOrEqualTo(1);
@@ -85,7 +87,9 @@ class GeographyReadIntegrationTest extends AbstractPostgisIntegrationTest {
 
     @Test
     void getLocation_unknownId_returnsLocalisedNotFoundEnvelope() {
-        ResponseEntity<ApiResponse<Object>> response = restTemplate.exchange(
+        // Error bodies carry an ApiError in data → deserialize as ApiResponse<ApiError> so we can read
+        // the top-level int statusCode and the preserved machine code at data.code (ADR-0008).
+        ResponseEntity<ApiResponse<ApiError>> response = restTemplate.exchange(
                 "/api/v1/locations/" + java.util.UUID.randomUUID(),
                 org.springframework.http.HttpMethod.GET, null,
                 new ParameterizedTypeReference<>() {
@@ -94,7 +98,10 @@ class GeographyReadIntegrationTest extends AbstractPostgisIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().success()).isFalse();
-        assertThat(response.getBody().code()).isEqualTo("NOT_FOUND");
+        // Top level is the integer HTTP status; the stable machine code lives at data.code.
+        assertThat(response.getBody().statusCode()).isEqualTo(404);
+        assertThat(response.getBody().data()).isNotNull();
+        assertThat(response.getBody().data().code()).isEqualTo("NOT_FOUND");
         // Swahili-first message (default locale).
         assertThat(response.getBody().message()).isNotBlank();
     }

@@ -183,7 +183,7 @@ All responses (success **and** error) use one shape (PRD §17 — fixes the prio
 ```json
 {
   "success": true,
-  "code": "OK",
+  "statusCode": 200,
   "message": "Imefaulu",
   "data": { },
   "meta": { "page": 0, "size": 20, "total": 137, "totalPages": 7 },
@@ -192,18 +192,21 @@ All responses (success **and** error) use one shape (PRD §17 — fixes the prio
 ```
 
 - `success` — boolean.
-- `code` — **stable machine code** (`OK`, `VALIDATION_FAILED`, `TIER_TOO_LOW`, `NOT_FOUND`, `CONFLICT`, `RATE_LIMITED`, …) — clients branch on this, not on the message.
+- `statusCode` — **integer HTTP status** (`200`, `201`, `400`, `403`, `404`, `409`, `429`, `500`, …); `200` on success, `ErrorCode.httpStatus().value()` on error. Lets a client read the outcome class without parsing the transport status line.
 - `message` — **localised** (SW default, EN) human text (PRD §17, D-Q10).
-- `data` — the payload (object, or a list page's content); `null` on error.
+- `data` — on **success**, the payload (object, or a list page's content); on **error**, an `ApiError` `{code, errors?}` (see §5.2).
 - `meta` — pagination/extra; `null` when not paginated.
 - `timestamp` — server `Instant`, ISO-8601 UTC.
+
+> **Where did the machine `code` go?** The top-level field is now the **int `statusCode`**; the **stable machine code** (`TIER_TOO_LOW`, `NOT_FOUND`, …) lives at **`data.code`** on error responses (ADR-0008). This is deliberate: the int status alone can't tell apart errors that share a status (`TIER_TOO_LOW`/`OUT_OF_SCOPE`/`CONFLICT_OF_INTEREST` are all `403`), so clients keep their language-independent discriminator at `data.code`.
 
 A `ResponseFactory` in `common` builds success/error/paged responses; controllers never hand-build the envelope.
 
 ### 5.2 Error model
 
-- Domain throws typed exceptions extending `common.error.ApiException(ErrorCode code, Object... messageArgs)`; `ErrorCode` is an enum mapping → HTTP status + machine `code` + i18n message key.
-- A single `@RestControllerAdvice` **`GlobalExceptionHandler`** in `common` translates every exception (including Bean Validation `MethodArgumentNotValidException`, auth/authz failures, optimistic-lock, not-found) into the envelope with **correct HTTP status** and **field-level validation details** in `data.errors[]` (PRD §17).
+- Domain throws typed exceptions extending `common.error.ApiException(ErrorCode code, Object... messageArgs)`; `ErrorCode` is an enum mapping → HTTP status + machine code + i18n message key.
+- On error, `data` is an **`ApiError` `{code, errors?}`**: `data.code` = the **stable machine code** (`ErrorCode.name()`), and `data.errors[]` = field-level Bean Validation failures (`ErrorDetail{field, code, message}`), omitted for non-validation errors.
+- A single `@RestControllerAdvice` **`GlobalExceptionHandler`** in `common` translates every exception (including Bean Validation `MethodArgumentNotValidException`, auth/authz failures, optimistic-lock, not-found) into the envelope with the **correct integer `statusCode`** and **field-level validation details** in `data.errors[]` (PRD §17).
 - **No stack traces or PII** ever reach the client or the logs unredacted (PRD §18).
 
 ### 5.3 Pagination, sorting, filtering

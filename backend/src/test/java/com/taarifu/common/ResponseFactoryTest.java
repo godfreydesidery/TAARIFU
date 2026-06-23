@@ -1,7 +1,9 @@
 package com.taarifu.common;
 
 import com.taarifu.common.api.ResponseFactory;
+import com.taarifu.common.api.dto.ApiError;
 import com.taarifu.common.api.dto.ApiResponse;
+import com.taarifu.common.api.dto.ErrorDetail;
 import com.taarifu.common.api.dto.PageMeta;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.i18n.MessageResolver;
@@ -11,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.context.support.ResourceBundleMessageSource;
 
+import java.util.List;
 import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -47,7 +50,8 @@ class ResponseFactoryTest {
         ApiResponse<String> response = factory.ok("payload");
 
         assertThat(response.success()).isTrue();
-        assertThat(response.code()).isEqualTo("OK");
+        // Success envelopes carry the integer HTTP status 200 (was the String machine code "OK").
+        assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.data()).isEqualTo("payload");
         assertThat(response.meta()).isNull();
         assertThat(response.timestamp()).isNotNull();
@@ -66,13 +70,31 @@ class ResponseFactoryTest {
     }
 
     @Test
-    void error_buildsFailureEnvelopeWithStableCode() {
-        ApiResponse<Object> response = factory.error(ErrorCode.NOT_FOUND, null);
+    void error_buildsFailureEnvelopeWithHttpStatusAndMachineCodeInData() {
+        ApiResponse<ApiError> response = factory.error(ErrorCode.NOT_FOUND, (List<ErrorDetail>) null);
 
         assertThat(response.success()).isFalse();
-        assertThat(response.code()).isEqualTo("NOT_FOUND");
-        assertThat(response.data()).isNull();
+        // Top level now carries the integer HTTP status derived from ErrorCode.httpStatus().value().
+        assertThat(response.statusCode()).isEqualTo(404);
+        // The stable machine code is preserved inside data (data.code), not at the top level (ADR-0008).
+        assertThat(response.data()).isNotNull();
+        assertThat(response.data().code()).isEqualTo("NOT_FOUND");
+        // Non-validation error → no field-level errors (data.errors omitted from JSON).
+        assertThat(response.data().errors()).isNull();
         // Clients branch on the code; the message is the localised Swahili default.
         assertThat(response.message()).isEqualTo("Haikupatikana");
+    }
+
+    @Test
+    void error_withFieldErrors_surfacesThemInData() {
+        ErrorDetail field = new ErrorDetail("phone", "NotBlank", "Lazima ujaze");
+        ApiResponse<ApiError> response = factory.error(ErrorCode.VALIDATION_FAILED, List.of(field));
+
+        assertThat(response.success()).isFalse();
+        // VALIDATION_FAILED maps to HTTP 400.
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(response.data().code()).isEqualTo("VALIDATION_FAILED");
+        // Field-level validation errors live at data.errors[] (folded in from the old ValidationErrors).
+        assertThat(response.data().errors()).containsExactly(field);
     }
 }

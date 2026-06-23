@@ -2,12 +2,14 @@ package com.taarifu.responders.domain.repository;
 
 import com.taarifu.responders.domain.model.Responder;
 import com.taarifu.responders.domain.model.enums.ResponderStatus;
+import com.taarifu.responders.domain.model.enums.ResponderType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -74,4 +76,32 @@ public interface ResponderRepository extends JpaRepository<Responder, Long> {
             """)
     Page<Responder> findPubliclyListableByCategory(@Param("categoryPublicId") UUID categoryPublicId,
                                                    Pageable pageable);
+
+    /**
+     * Routing candidates for the automatic OWNER-assignment flow (ADR-0014 §5b, D21): ACTIVE responders of
+     * the rule's {@code responderType} whose organisation is active + verified and that <b>handle the routed
+     * category</b>. The area narrowing is applied in Java by the routing handler ({@code Responder.coversArea}
+     * widens for {@link com.taarifu.responders.domain.model.enums.CoverageType#NATIONWIDE}, which a SQL
+     * {@code IN} on the area set cannot express).
+     *
+     * <p>WHY only {@code (type, category)} in the query: it returns a small, already-eligible set the handler
+     * then filters by coverage and orders deterministically — keeping the area/nationwide rule (and the §25.2
+     * fallback) in one readable place rather than split between SQL and Java.</p>
+     *
+     * @param responderType    the rule's responder kind/sector to route to (PRD §24.2).
+     * @param categoryPublicId the reporting-module category id the report is filed under (stored by reference).
+     * @return active, eligible responders of that type handling that category (possibly empty → no auto-OWNER).
+     */
+    @Query("""
+            SELECT r FROM Responder r
+            JOIN r.handledCategoryIds c
+            WHERE c = :categoryPublicId
+              AND r.responderType = :responderType
+              AND r.status = com.taarifu.responders.domain.model.enums.ResponderStatus.ACTIVE
+              AND r.organisation.status = com.taarifu.responders.domain.model.enums.OrganisationStatus.ACTIVE
+              AND r.organisation.verified = true
+            ORDER BY r.id ASC
+            """)
+    List<Responder> findRoutingCandidates(@Param("responderType") ResponderType responderType,
+                                          @Param("categoryPublicId") UUID categoryPublicId);
 }

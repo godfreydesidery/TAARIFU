@@ -42,9 +42,12 @@ import java.util.UUID;
  *       ward/constituency references — they are {@code geography.Location}/{@code Constituency}
  *       {@code publicId}s resolved through geography's service at file time, then stored as ids
  *       (ARCHITECTURE.md §4.3 cross-module reference-by-id).</li>
- *   <li><b>Routing is DEFERRED:</b> {@link #assignedResponderId} is a STUB — reports are created at
- *       {@code NEW} and never auto-assigned in this increment; the routing-to-responders engine is a
- *       later module. See the {@code // TODO(wiring)} marks.</li>
+ *   <li><b>Routing is wired (one-way):</b> filing emits a {@code REPORT_ROUTED} outbox event and the
+ *       responders module creates the OWNER assignment asynchronously (D21, ADR-0014 §5b). The reverse
+ *       leg — setting {@link #assignedResponderId} from the responders' {@code RESPONDER_ASSIGNED}
+ *       back-event — is the remaining {@code // TODO(wiring)}: until a reporting handler consumes that
+ *       event this field stays {@code null} and the report stays {@code NEW} (the OWNER assignment still
+ *       exists on the responders side).</li>
  *   <li><b>Counters are denormalised, integrity-fenced:</b> {@link #upvotes}/{@link #followers} are
  *       discovery-reach counters only. Per the civic-integrity fence (D18, §23.5) they must <b>never</b>
  *       influence official routing, SLA, priority, or resolution — boosting reach is not buying weight.</li>

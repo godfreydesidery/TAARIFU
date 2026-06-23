@@ -15,16 +15,22 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/di/app_dependencies.dart';
 import '../../../core/network/failure_messages.dart';
 import '../../../core/widgets/status_views.dart';
+import '../../../features/geography/data/geography_models.dart';
+import '../../../features/geography/view/ward_picker_field.dart';
 import '../../../l10n/app_localizations.dart';
 import '../bloc/profile_cubit.dart';
 import '../data/profile_models.dart';
 
 /// The profile/verification view.
 class ProfileScreen extends StatefulWidget {
-  /// Creates the screen.
-  const ProfileScreen({super.key});
+  /// Creates the screen over the app [dependencies] (for the ward picker).
+  const ProfileScreen({required this.dependencies, super.key});
+
+  /// The composition root, supplied to the location ward picker.
+  final AppDependencies dependencies;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -35,8 +41,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _lastController = TextEditingController();
   final _idNoController = TextEditingController();
   final _fullNameController = TextEditingController();
-  final _wardController = TextEditingController();
 
+  WardSummary? _ward;
   String _idType = 'NATIONAL';
   String _association = 'RESIDENCE';
   bool _primary = false;
@@ -48,7 +54,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _lastController.dispose();
     _idNoController.dispose();
     _fullNameController.dispose();
-    _wardController.dispose();
     super.dispose();
   }
 
@@ -287,9 +292,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 8),
-        TextField(
-          controller: _wardController,
-          decoration: InputDecoration(labelText: l10n.reportWardLabel),
+        // Ward picker (replaces the old hand-typed UUID) for pinning a location.
+        WardPickerField(
+          dependencies: widget.dependencies,
+          selected: _ward,
+          enabled: !busy,
+          onSelected: (w) => setState(() => _ward = w),
         ),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
@@ -321,10 +329,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           onPressed: busy
               ? null
               : () {
-                  final ward = _wardController.text.trim();
-                  if (ward.isEmpty) return;
+                  final ward = _ward;
+                  if (ward == null) return;
                   context.read<ProfileCubit>().addLocation(
-                    wardPublicId: ward,
+                    wardPublicId: ward.id,
                     associationType: _association,
                     primary: _primary,
                   );

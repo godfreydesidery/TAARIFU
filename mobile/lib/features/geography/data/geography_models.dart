@@ -77,6 +77,57 @@ class LocationResolution {
   }
 }
 
+/// A ward picker row — Kata (backend `WardSummaryDto`):
+/// `{ id, code, name, councilName, districtName }`.
+///
+/// The lean projection the **manual ward picker** renders (the district→wards
+/// listing and ward search). It denormalises the parent council (Halmashauri) and
+/// district (Wilaya) *names* so the picker can disambiguate same-named wards (two
+/// "Mji Mpya" wards in different councils) without a second round-trip (PRD §15).
+/// [id] is the value report forms, profile locations and find-my-rep take by hand —
+/// the picker exists so the citizen never types this UUID.
+class WardSummary {
+  /// Creates a ward summary.
+  const WardSummary({
+    required this.id,
+    required this.code,
+    required this.name,
+    this.councilName,
+    this.districtName,
+  });
+
+  /// Ward public id (UUID string) — the value clients pass when pinning a location.
+  final String id;
+
+  /// Official ward code.
+  final String code;
+
+  /// Ward display name (e.g. "Mengwe").
+  final String name;
+
+  /// Parent council/LGA (Halmashauri) name, or `null` if unresolved.
+  final String? councilName;
+
+  /// District (Wilaya) ancestor name, or `null` if unresolved.
+  final String? districtName;
+
+  /// A human breadcrumb-style subtitle for the picker row (council · district),
+  /// skipping any unresolved part so it degrades gracefully.
+  String get locationLabel => [
+    if (councilName != null && councilName!.isNotEmpty) councilName!,
+    if (districtName != null && districtName!.isNotEmpty) districtName!,
+  ].join(' · ');
+
+  /// Parses a ward-summary node.
+  factory WardSummary.fromJson(Map<String, dynamic> json) => WardSummary(
+    id: json['id'] as String,
+    code: json['code'] as String? ?? '',
+    name: json['name'] as String? ?? '',
+    councilName: json['councilName'] as String?,
+    districtName: json['districtName'] as String?,
+  );
+}
+
 /// A district — Wilaya (backend `DistrictDto`): `{ id, code, name, regionId }`.
 class District {
   /// Creates a district.

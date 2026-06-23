@@ -61,7 +61,7 @@
   "reportTitleLabel": "Title",
   "reportDescriptionLabel": "Description",
   "reportVoiceHint": "Tap the microphone to speak instead of typing",
-  "reportWardLabel": "Ward (ID)",
+  "reportWardLabel": "Incident ward",
   "reportUseGpsButton": "Use my location (GPS)",
   "reportPhotoLabel": "Photos (optional)",
   "reportAddPhotoButton": "Add photo",
@@ -163,5 +163,16 @@
   "prefsEmpty": "You haven't set preferences yet; defaults apply.",
   "prefChannelLabel": "Channel: {channel}",
 
-  "feedDetailTitle": "Update"
+  "feedDetailTitle": "Update",
+
+  "wardPickerTitle": "Choose a ward",
+  "wardPickerSearchLabel": "Search wards",
+  "wardPickerSearchHint": "Type a ward name",
+  "wardPickerDistrictLabel": "District",
+  "wardPickerPrompt": "Search a ward by name, or pick a region and district.",
+  "wardPickerNoResults": "No ward found. Try another name.",
+
+  "wardFieldLabel": "Ward",
+  "wardFieldEmpty": "Tap to choose a ward",
+  "wardFieldRequired": "Please choose a ward"
 }

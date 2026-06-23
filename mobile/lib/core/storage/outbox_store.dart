@@ -8,12 +8,12 @@
 /// replayed submit — a report filed offline is **never** duplicated on sync
 /// (ARCHITECTURE §5.4, PRD §17 idempotency).
 ///
-/// This is the write-side analogue of [JsonCache]'s read-through cache. Like that
-/// seam, the default implementation here is deliberately **in-memory** behind an
-/// interface: it proves the queue/replay pattern end-to-end while the production
-/// swap to a durable store (Drift/Isar, surviving cold start) is a drop-in that
-/// does not touch the repositories or BLoCs depending on this interface. The need
-/// for cold-start durability is flagged under CENTRAL INTEGRATION NEEDS.
+/// This is the write-side analogue of [JsonCache]'s read-through cache. Two
+/// implementations sit behind this interface: [InMemoryOutboxStore] (used only by
+/// tests/fakes) and the production, disk-backed `FileOutboxStore` that **survives a
+/// cold start** so an offline draft is still there after the app is killed. Because
+/// both honour this same contract, swapping one for the other is a drop-in that does
+/// not touch the repositories or BLoCs depending on it (clean boundaries).
 ///
 /// It is NOT a secure store — a draft may contain free text the citizen typed but
 /// never PII like tokens (those live in [TokenStore]); attachments are referenced
@@ -40,11 +40,11 @@ abstract interface class OutboxStore {
   Future<void> remove(String localId);
 }
 
-/// In-memory [OutboxStore] used by the foundation slice and tests.
+/// In-memory [OutboxStore] used by tests and fakes.
 ///
-/// Lives only for the app session. The production implementation persists to disk
-/// so a draft survives the app being killed before it could sync — the whole
-/// point of an offline draft (see the library doc).
+/// Lives only for the app session. Production uses the disk-backed
+/// `FileOutboxStore` so a draft survives the app being killed before it could
+/// sync — the whole point of an offline draft (see the library doc).
 class InMemoryOutboxStore implements OutboxStore {
   final List<OutboxEntry> _entries = <OutboxEntry>[];
 

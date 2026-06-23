@@ -7,38 +7,37 @@
 ///     ward id is supplied, returning the MP (Mbunge), Councillor (Diwani), and
 ///     ward executive bundle.
 ///
-/// NOTE (flagged as a central integration need): the backend has no public
-/// `district → wards` listing, so for this foundation slice the ward is supplied
-/// by id (in production it comes from GPS `/locations/resolve` or a ward search).
-/// The screen still proves the by-ward contract and all UI states.
+/// The citizen reaches a ward through the shared [WardPickerField] (search/browse,
+/// no hand-typed UUID); the screen then proves the by-ward contract and all UI
+/// states, degrading gracefully when a slot has no representative (PRD §22.6).
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/di/app_dependencies.dart';
 import '../../../core/network/failure_messages.dart';
 import '../../../core/widgets/status_views.dart';
+import '../../../features/geography/data/geography_models.dart';
+import '../../../features/geography/view/ward_picker_field.dart';
 import '../../../l10n/app_localizations.dart';
 import '../bloc/my_reps_cubit.dart';
 import '../data/representative_models.dart';
 
 /// The find-my-representatives tab.
 class MyRepsScreen extends StatefulWidget {
-  /// Creates the screen.
-  const MyRepsScreen({super.key});
+  /// Creates the screen over the app [dependencies] (for the ward picker).
+  const MyRepsScreen({required this.dependencies, super.key});
+
+  /// The composition root, supplied to the ward picker.
+  final AppDependencies dependencies;
 
   @override
   State<MyRepsScreen> createState() => _MyRepsScreenState();
 }
 
 class _MyRepsScreenState extends State<MyRepsScreen> {
-  final TextEditingController _wardIdController = TextEditingController();
-
-  @override
-  void dispose() {
-    _wardIdController.dispose();
-    super.dispose();
-  }
+  WardSummary? _ward;
 
   @override
   Widget build(BuildContext context) {
@@ -53,20 +52,15 @@ class _MyRepsScreenState extends State<MyRepsScreen> {
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 12),
-            // Ward-id entry (foundation): submit → by-ward lookup.
-            TextField(
-              controller: _wardIdController,
-              decoration: const InputDecoration(labelText: 'Ward ID (UUID)'),
-            ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: () {
-                final id = _wardIdController.text.trim();
-                if (id.isNotEmpty) {
-                  context.read<MyRepsCubit>().loadForWard(id);
-                }
+            // Ward picker (replaces the old hand-typed UUID): choose a Kata, then
+            // load its representatives.
+            WardPickerField(
+              dependencies: widget.dependencies,
+              selected: _ward,
+              onSelected: (w) {
+                setState(() => _ward = w);
+                context.read<MyRepsCubit>().loadForWard(w.id);
               },
-              child: Text(l10n.myRepsTitle),
             ),
             const SizedBox(height: 24),
             _buildResult(context, l10n, state),
@@ -91,9 +85,9 @@ class _MyRepsScreenState extends State<MyRepsScreen> {
           message: FailureMessages.of(l10n, state.error!),
           retryLabel: l10n.retryButton,
           onRetry: () {
-            final id = _wardIdController.text.trim();
-            if (id.isNotEmpty) {
-              context.read<MyRepsCubit>().loadForWard(id);
+            final ward = _ward;
+            if (ward != null) {
+              context.read<MyRepsCubit>().loadForWard(ward.id);
             }
           },
         );

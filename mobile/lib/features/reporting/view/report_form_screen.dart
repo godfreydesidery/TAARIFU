@@ -11,21 +11,30 @@
 /// needs an image picker + the (EI-8) pre-signed upload that yields the
 /// `attachmentRefs`. Each is wired behind a disabled affordance here so the
 /// contract and UX are visible without pulling the packages in yet.
+///
+/// The ward is chosen with the shared [WardPickerField] (no hand-typed UUID): the
+/// citizen searches/browses a ward and the form binds its [WardSummary.id].
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/di/app_dependencies.dart';
 import '../../../core/network/failure_messages.dart';
 import '../../../core/widgets/status_views.dart';
+import '../../../features/geography/data/geography_models.dart';
+import '../../../features/geography/view/ward_picker_field.dart';
 import '../../../l10n/app_localizations.dart';
 import '../bloc/report_form_cubit.dart';
 import '../data/reporting_models.dart';
 
 /// The file-a-report form.
 class ReportFormScreen extends StatefulWidget {
-  /// Creates the screen.
-  const ReportFormScreen({super.key});
+  /// Creates the screen over the app [dependencies] (for the ward picker).
+  const ReportFormScreen({required this.dependencies, super.key});
+
+  /// The composition root, supplied to the ward picker.
+  final AppDependencies dependencies;
 
   @override
   State<ReportFormScreen> createState() => _ReportFormScreenState();
@@ -35,9 +44,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _descController = TextEditingController();
-  final _wardController = TextEditingController();
 
   IssueCategory? _category;
+  WardSummary? _ward;
   String _visibility = 'PUBLIC';
   bool _anonymous = false;
 
@@ -45,7 +54,6 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   void dispose() {
     _titleController.dispose();
     _descController.dispose();
-    _wardController.dispose();
     super.dispose();
   }
 
@@ -54,14 +62,20 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   bool get _forcedPrivate => _category?.forcePrivate ?? false;
 
   void _submit(AppLocalizations l10n) {
-    if (!(_formKey.currentState?.validate() ?? false) || _category == null) {
+    final ward = _ward;
+    if (!(_formKey.currentState?.validate() ?? false) ||
+        _category == null ||
+        ward == null) {
+      // A missing ward is shown inline (see the WardPickerField error text below);
+      // bail so we never file with an empty ward id.
+      setState(() {});
       return;
     }
     final draft = ReportDraft(
       categoryId: _category!.id,
       title: _titleController.text.trim(),
       description: _descController.text.trim(),
-      wardId: _wardController.text.trim(),
+      wardId: ward.id,
       visibility: _forcedPrivate ? 'PRIVATE' : _visibility,
       anonymous: _anonymous && (_category?.sensitive ?? false),
     );
@@ -189,12 +203,26 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
             label: Text(l10n.reportAddPhotoButton),
           ),
           const SizedBox(height: 16),
-          TextFormField(
-            controller: _wardController,
-            decoration: InputDecoration(labelText: l10n.reportWardLabel),
-            validator: (v) =>
-                (v == null || v.trim().isEmpty) ? l10n.requiredField : null,
+          // Ward picker (replaces the old hand-typed UUID): search/browse a Kata,
+          // bind its id. The minimum pin granularity that routes the report.
+          WardPickerField(
+            dependencies: widget.dependencies,
+            selected: _ward,
+            enabled: !submitting,
+            labelText: l10n.reportWardLabel,
+            onSelected: (w) => setState(() => _ward = w),
           ),
+          if (_ward == null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6, left: 12),
+              child: Text(
+                l10n.wardFieldRequired,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                  fontSize: 12,
+                ),
+              ),
+            ),
           const SizedBox(height: 8),
           // GPS resolve seam (EI-7) — disabled until geolocator + resolve wired.
           OutlinedButton.icon(

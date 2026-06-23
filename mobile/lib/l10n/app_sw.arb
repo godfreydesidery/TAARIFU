@@ -112,8 +112,8 @@
   "@reportDescriptionLabel": { "description": "Label for the report description field." },
   "reportVoiceHint": "Bonyeza maikrofoni kuongea badala ya kuandika",
   "@reportVoiceHint": { "description": "Hint pointing to the voice-to-text mic (low-literacy support)." },
-  "reportWardLabel": "Kata (namba ya utambulisho)",
-  "@reportWardLabel": { "description": "Label for the ward id field used to locate the incident." },
+  "reportWardLabel": "Kata ya tukio",
+  "@reportWardLabel": { "description": "Label for the ward picker locating the incident." },
   "reportUseGpsButton": "Tumia eneo langu (GPS)",
   "@reportUseGpsButton": { "description": "Button to resolve the incident ward from GPS." },
   "reportPhotoLabel": "Picha (si lazima)",
@@ -319,5 +319,25 @@
   },
 
   "feedDetailTitle": "Taarifa",
-  "@feedDetailTitle": { "description": "Title of the feed-item detail screen." }
+  "@feedDetailTitle": { "description": "Title of the feed-item detail screen." },
+
+  "wardPickerTitle": "Chagua kata",
+  "@wardPickerTitle": { "description": "Title of the manual ward-picker screen." },
+  "wardPickerSearchLabel": "Tafuta kata",
+  "@wardPickerSearchLabel": { "description": "Label for the ward search box." },
+  "wardPickerSearchHint": "Andika jina la kata",
+  "@wardPickerSearchHint": { "description": "Hint inside the ward search box." },
+  "wardPickerDistrictLabel": "Wilaya",
+  "@wardPickerDistrictLabel": { "description": "Label for the district (Wilaya) selector in the ward picker." },
+  "wardPickerPrompt": "Tafuta kata kwa jina au chagua mkoa na wilaya.",
+  "@wardPickerPrompt": { "description": "Idle-state prompt before any ward search/browse." },
+  "wardPickerNoResults": "Hakuna kata iliyopatikana. Jaribu jina jingine.",
+  "@wardPickerNoResults": { "description": "Empty state when a ward search/listing returns nothing." },
+
+  "wardFieldLabel": "Kata",
+  "@wardFieldLabel": { "description": "Default label for the tappable ward-picker field." },
+  "wardFieldEmpty": "Gusa kuchagua kata",
+  "@wardFieldEmpty": { "description": "Placeholder shown in the ward field before a ward is chosen." },
+  "wardFieldRequired": "Tafadhali chagua kata",
+  "@wardFieldRequired": { "description": "Inline validation when no ward is chosen on the report form." }
 }

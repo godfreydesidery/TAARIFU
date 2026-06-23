@@ -63,7 +63,7 @@ class _HomeShellState extends State<HomeShell> {
             categoryRepository: _deps.categoryRepository,
             reportRepository: _deps.reportRepository,
           )..loadCategories(),
-          child: const ReportFormScreen(),
+          child: ReportFormScreen(dependencies: _deps),
         ),
       ),
     );
@@ -123,7 +123,7 @@ class _HomeShellState extends State<HomeShell> {
         builder: (_) => BlocProvider(
           create: (_) =>
               ProfileCubit(repository: _deps.profileRepository)..load(),
-          child: const ProfileScreen(),
+          child: ProfileScreen(dependencies: _deps),
         ),
       ),
     );
@@ -191,7 +191,7 @@ class _HomeShellState extends State<HomeShell> {
         drawer: _buildDrawer(context, l10n),
         body: IndexedStack(
           index: _index,
-          children: const [FeedScreen(), MyRepsScreen()],
+          children: [const FeedScreen(), MyRepsScreen(dependencies: _deps)],
         ),
         floatingActionButton: FloatingActionButton.extended(
           onPressed: _openReportForm,

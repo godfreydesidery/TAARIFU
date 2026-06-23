@@ -31,6 +31,11 @@ dependencies:
   # Reachability hint only — we still confirm with a real lightweight call before trusting it.
   connectivity_plus: ^6.1.0
 
+  # App documents directory for the durable offline outbox (a draft queued offline
+  # must survive a cold start — PRD §15, UC-D03). First-party plugin, no codegen,
+  # so the APK stays small (data is scarce); the queue itself is a single JSON file.
+  path_provider: ^2.1.4
+
   # i18n message lookups (gen-l10n uses this); Swahili default + English secondary.
   intl: any
 

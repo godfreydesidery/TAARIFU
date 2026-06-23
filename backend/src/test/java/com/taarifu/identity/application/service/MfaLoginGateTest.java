@@ -42,7 +42,9 @@ class MfaLoginGateTest {
         roleAssignmentRepository = Mockito.mock(RoleAssignmentRepository.class);
         userRepository = Mockito.mock(UserRepository.class);
         ClockPort clock = () -> Instant.parse("2026-06-23T00:00:00Z");
-        gate = new MfaLoginGate(roleAssignmentRepository, userRepository, clock);
+        // mfaEnforced=true matches the production default (taarifu.security.mfa.enforced:true) so these
+        // tests assert the real staff-MFA behaviour; the flag only disables enforcement for local testing.
+        gate = new MfaLoginGate(roleAssignmentRepository, userRepository, clock, true);
     }
 
     @Test

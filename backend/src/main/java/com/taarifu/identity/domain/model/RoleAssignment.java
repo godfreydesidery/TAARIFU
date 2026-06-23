@@ -123,6 +123,66 @@ public class RoleAssignment extends BaseEntity {
         return ra;
     }
 
+    /**
+     * Sets (replaces) this grant's area scope — the {@code Location} public ids it is limited to (any
+     * level). An empty/{@code null} set means "unrestricted by area" (the {@code ScopeGuard} convention).
+     *
+     * <p>WHY a replacing setter (not add/remove): an admin grant supplies the full intended scope at
+     * creation; the {@code RoleAssignment} is the source of truth, so the simplest correct operation is to
+     * set the whole set (KISS). Defensive-copies the input so the caller cannot mutate internal state.</p>
+     *
+     * @param areaIds the area-scope public ids, or {@code null}/empty for unrestricted.
+     */
+    public void setAreaIds(Set<UUID> areaIds) {
+        this.areaIds = areaIds == null ? new HashSet<>() : new HashSet<>(areaIds);
+    }
+
+    /**
+     * Sets (replaces) this grant's issue-category scope — the category public ids it is limited to. An
+     * empty/{@code null} set means "unrestricted by category".
+     *
+     * @param categoryIds the category-scope public ids, or {@code null}/empty for unrestricted.
+     */
+    public void setCategoryIds(Set<UUID> categoryIds) {
+        this.categoryIds = categoryIds == null ? new HashSet<>() : new HashSet<>(categoryIds);
+    }
+
+    /**
+     * Sets the single constituency scope (FK), or clears it.
+     *
+     * @param constituency the constituency the grant is limited to, or {@code null} = not
+     *                     constituency-scoped.
+     */
+    public void setConstituency(Constituency constituency) {
+        this.constituency = constituency;
+    }
+
+    /**
+     * Sets the effective window of this grant (N-2). A {@code null} {@code from} means "effective on
+     * creation"; a {@code null} {@code to} means "open-ended". The {@code ScopeGuard}/token-claim source
+     * ({@code findActiveEffectiveByUser}) only treats a grant as authorising while {@code now} is inside this
+     * window, so a future-dated or time-boxed mandate (e.g. an election-period responder) is honoured.
+     *
+     * @param from when the grant takes effect (UTC), or {@code null}.
+     * @param to   when the grant ends (UTC), or {@code null}.
+     */
+    public void setEffectiveWindow(Instant from, Instant to) {
+        this.effectiveFrom = from;
+        this.effectiveTo = to;
+    }
+
+    /**
+     * Revokes this grant: marks it {@link RoleStatus#FORMER} and end-dates it at {@code when} (so it
+     * immediately stops authorising — {@code findActiveEffectiveByUser} requires {@code effectiveTo > now}).
+     * History is kept (no hard delete, §6.4/§18) — the row remains for audit.
+     *
+     * @param when the end instant (UTC, from the injected clock).
+     */
+    public void revoke(Instant when) {
+        this.status = RoleStatus.FORMER;
+        this.effectiveTo = when;
+    }
+
     /** @return the account holding the grant. */
     public User getUser() {
         return user;

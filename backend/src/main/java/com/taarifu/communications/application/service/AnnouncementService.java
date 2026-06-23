@@ -3,8 +3,10 @@ package com.taarifu.communications.application.service;
 import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.common.error.ResourceNotFoundException;
 import com.taarifu.communications.api.event.AnnouncementPublished;
 import com.taarifu.communications.domain.model.Announcement;
+import com.taarifu.communications.domain.model.enums.AnnouncementStatus;
 import com.taarifu.communications.domain.model.enums.Channel;
 import com.taarifu.communications.domain.repository.AnnouncementRepository;
 import org.springframework.context.ApplicationEventPublisher;
@@ -122,6 +124,63 @@ public class AnnouncementService {
     public org.springframework.data.domain.Page<Announcement> listMine(
             UUID authorProfileId, org.springframework.data.domain.Pageable pageable) {
         return announcementRepository.findByAuthorProfileId(authorProfileId, pageable);
+    }
+
+    /**
+     * Fetches a single announcement for the <b>public, citizen-readable detail view</b> — the feed-detail
+     * screen's full-body read (the mobile agent's gap: only the lean feed item + author-scoped
+     * {@code /mine} existed). Returns the announcement <b>only if it is live and citizen-visible</b>;
+     * anything else is reported as <i>not found</i> so a draft, scheduled, expired, moderation-held, or
+     * soft-deleted announcement is never leaked to the public.
+     *
+     * <p><b>Visibility rule</b> (PRD §22.6 "Public civic graph … announcements", AC-T0 guest read, SR-3
+     * "active announcements"): an announcement is publicly readable iff it is {@code PUBLISHED}, has reached
+     * its {@code publishAt} (or has none), and has not passed its {@code expireAt} (or has none) — the exact
+     * predicate the personalised-feed query enforces ({@link AnnouncementRepository#findFeed}). Keeping the
+     * same predicate in one place means the detail view can never reveal something the feed would hide.</p>
+     *
+     * <p>WHY a {@code 404} (not {@code 403}) for a hidden/expired/held announcement: existence itself is
+     * privileged here. A {@code 403} would confirm the id refers to a real-but-unpublished announcement
+     * (an enumeration/leak vector, PRD §18); {@code NOT_FOUND} reveals nothing about drafts in flight.
+     * Soft-deleted rows are already excluded by the entity's {@code @SQLRestriction}, so they surface as
+     * a clean miss too.</p>
+     *
+     * <p>WHY no authorization is enforced here (the controller uses {@code permitAll()}): published
+     * announcements are public reference data — a guest may read them (PRD §22.6, AC-T0). The audience
+     * scope ({@code audienceAreaIds}/role/category) governs <b>feed targeting and notification fan-out</b>,
+     * not who may read a published announcement by its id; it is therefore intentionally <i>not</i> a read
+     * gate (a citizen linked to an announcement may open it regardless of their own area).</p>
+     *
+     * @param publicId the announcement's public id.
+     * @return the live, citizen-visible announcement.
+     * @throws ResourceNotFoundException if no announcement with that id exists, or it is not currently
+     *                                   {@code PUBLISHED} and within its publish/expiry window (drafts,
+     *                                   scheduled, expired, moderation-held, and soft-deleted all 404).
+     */
+    @Transactional(readOnly = true)
+    public Announcement getPublicDetail(UUID publicId) {
+        Announcement a = announcementRepository.findByPublicId(publicId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "communications.announcement.notFound", publicId));
+        if (!isCitizenVisible(a, clock.now())) {
+            // Hidden (draft/scheduled/expired/held/not-yet-live) → indistinguishable from a non-existent id.
+            throw new ResourceNotFoundException("communications.announcement.notFound", publicId);
+        }
+        return a;
+    }
+
+    /**
+     * The single citizen-visibility predicate for a published announcement, mirroring the feed query's
+     * window (PRD §22.6, UC-G04): {@code PUBLISHED} and within {@code [publishAt, expireAt)}.
+     *
+     * @param a   the announcement.
+     * @param now the current instant (clock port — testable).
+     * @return {@code true} iff the announcement is live and citizen-readable right now.
+     */
+    private boolean isCitizenVisible(Announcement a, Instant now) {
+        return a.getStatus() == AnnouncementStatus.PUBLISHED
+                && (a.getPublishAt() == null || !a.getPublishAt().isAfter(now))
+                && (a.getExpireAt() == null || a.getExpireAt().isAfter(now));
     }
 
     /**

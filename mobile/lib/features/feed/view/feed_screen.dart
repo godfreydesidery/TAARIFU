@@ -15,6 +15,7 @@ import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
 import '../bloc/feed_cubit.dart';
 import '../data/feed_models.dart';
+import 'feed_detail_screen.dart';
 
 /// The feed tab.
 class FeedScreen extends StatelessWidget {
@@ -79,6 +80,14 @@ class _FeedTile extends StatelessWidget {
         item.snippet,
         maxLines: 3,
         overflow: TextOverflow.ellipsis,
+      ),
+      trailing: const Icon(Icons.chevron_right),
+      // Open the full item on tap (US-4.2). The detail uses the snippet already
+      // in hand — no extra fetch, the most data-frugal choice.
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => FeedDetailScreen(item: item),
+        ),
       ),
     ),
   );

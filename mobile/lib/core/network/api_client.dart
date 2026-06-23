@@ -107,6 +107,23 @@ class ApiClient {
     return _send(() => _dio.post(path, data: body, options: options), parser);
   }
 
+  /// Performs a PUT and returns the unwrapped, typed payload.
+  ///
+  /// Used for idempotent upserts (e.g. a notification preference keyed by
+  /// `(type, channel)` — `PUT /notification-preferences`). Like [post] it accepts
+  /// an optional [idempotencyKey], though a PUT is naturally idempotent.
+  Future<ApiResult<T>> put<T>(
+    String path, {
+    Object? body,
+    String? idempotencyKey,
+    required T Function(Object? data) parser,
+  }) {
+    final options = idempotencyKey == null
+        ? null
+        : Options(headers: {'Idempotency-Key': idempotencyKey});
+    return _send(() => _dio.put(path, data: body, options: options), parser);
+  }
+
   /// Shared send pipeline: offline pre-check → retrying call → envelope unwrap.
   Future<ApiResult<T>> _send<T>(
     Future<Response<dynamic>> Function() call,

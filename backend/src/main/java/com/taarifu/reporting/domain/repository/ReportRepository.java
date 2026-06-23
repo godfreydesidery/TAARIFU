@@ -1,6 +1,7 @@
 package com.taarifu.reporting.domain.repository;
 
 import com.taarifu.reporting.domain.model.Report;
+import com.taarifu.reporting.domain.model.enums.ReportStatus;
 import com.taarifu.reporting.domain.model.enums.ReportVisibility;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -8,6 +9,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -78,4 +82,96 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
      */
     @Query("select r from Report r join fetch r.category where r.publicId = :publicId")
     Optional<Report> findByPublicIdWithCategory(@Param("publicId") UUID publicId);
+
+    // ------------------------------ Admin console read surface (M14) ------------------------------
+
+    /**
+     * The owner-grade admin report queue with all filter dimensions optional and SLA-breach computed
+     * in-query (M14; PRD §10 US-3.4, §24.3). A {@code null} parameter disables that dimension; the
+     * {@code slaBreached} tri-state is driven by {@code slaBreachedFilter} ({@code null} = ignore,
+     * {@code true} = only breached, {@code false} = only non-breached), where "breached" means the case is
+     * still active ({@code status not in :terminalStatuses}) and its {@code dueAt} is before {@code now}.
+     *
+     * <p>The category is {@code join fetch}ed to avoid the N+1 on {@code categoryName} when mapping rows.
+     * Newest-filed first. WHY a single nullable-param JPQL (not a {@code Specification}): four optional
+     * filters is the simplest case the static query handles cleanly (KISS); the query is the second gate
+     * and stays greppable.</p>
+     *
+     * @param status            optional status filter (enum), or {@code null} for any.
+     * @param categoryId        optional issue-category {@code publicId}, or {@code null} for any.
+     * @param wardId            optional ward {@code publicId}, or {@code null} for any.
+     * @param slaBreachedFilter {@code null} ignore / {@code true} only breached / {@code false} only not.
+     * @param terminalStatuses  the terminal statuses (excluded from "active" for breach purposes).
+     * @param now               the instant SLA breach is evaluated against.
+     * @param pageable          bounded paging/sorting.
+     * @return a page of matching reports (category initialised).
+     */
+    @Query("""
+            select r from Report r join fetch r.category c
+            where (:status is null or r.status = :status)
+              and (:categoryId is null or c.publicId = :categoryId)
+              and (:wardId is null or r.reporterWardId = :wardId)
+              and (
+                    :slaBreachedFilter is null
+                 or (:slaBreachedFilter = true
+                        and r.dueAt is not null and r.dueAt < :now
+                        and r.status not in :terminalStatuses)
+                 or (:slaBreachedFilter = false
+                        and not (r.dueAt is not null and r.dueAt < :now
+                                 and r.status not in :terminalStatuses))
+              )
+            """)
+    Page<Report> adminSearch(@Param("status") ReportStatus status,
+                             @Param("categoryId") UUID categoryId,
+                             @Param("wardId") UUID wardId,
+                             @Param("slaBreachedFilter") Boolean slaBreachedFilter,
+                             @Param("terminalStatuses") Collection<ReportStatus> terminalStatuses,
+                             @Param("now") Instant now,
+                             Pageable pageable);
+
+    /**
+     * Counts (non-deleted) reports grouped by lifecycle status, for the admin dashboard (M14, UC-H06).
+     * A status with no reports does not appear in the result.
+     *
+     * @return one {@link StatusCount} row per occupied status.
+     */
+    @Query("select r.status as status, count(r) as count from Report r group by r.status")
+    List<StatusCount> countByStatus();
+
+    /**
+     * Counts reports whose status is NOT in the given terminal set — i.e. open cases (M14, UC-H06).
+     *
+     * @param terminalStatuses the terminal statuses to exclude.
+     * @return the open-case count.
+     */
+    long countByStatusNotIn(Collection<ReportStatus> terminalStatuses);
+
+    /**
+     * Counts SLA-breached open cases — still-active reports with a {@code dueAt} before {@code now}
+     * (M14). Mirrors the queue's breach predicate so the dashboard and the queue agree.
+     *
+     * @param now              the instant breach is evaluated against.
+     * @param terminalStatuses the terminal statuses (excluded from "active").
+     * @return the breached open-case count.
+     */
+    @Query("""
+            select count(r) from Report r
+            where r.dueAt is not null and r.dueAt < :now and r.status not in :terminalStatuses
+            """)
+    long countSlaBreached(@Param("now") Instant now,
+                          @Param("terminalStatuses") Collection<ReportStatus> terminalStatuses);
+
+    /**
+     * Spring Data interface projection for the {@link #countByStatus()} grouping — keeps the GROUP BY
+     * result out of the cross-module boundary; the service maps it to the published {@code ReportStatusCount}
+     * DTO.
+     */
+    interface StatusCount {
+
+        /** @return the lifecycle status of this group. */
+        ReportStatus getStatus();
+
+        /** @return the number of reports in this status. */
+        long getCount();
+    }
 }

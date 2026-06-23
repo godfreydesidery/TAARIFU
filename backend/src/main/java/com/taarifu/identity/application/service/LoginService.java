@@ -164,11 +164,18 @@ public class LoginService {
      * Completes the staff second factor (N-4, VERIFICATION-DESIGN §7.1): verifies the {@code MFA_CHALLENGE}
      * token issued by the first factor, checks the TOTP code, and only then issues the real token pair.
      *
+     * <p>The second factor is <b>single-use</b> (review V-2, P2): {@link TotpService#verify} enforces TOTP
+     * step monotonicity, so replaying a captured {@code (mfaToken, totp)} pair within the step window is
+     * rejected ({@link TotpService.Result#REPLAYED}) and audited as
+     * {@code AUTH_MFA_CHALLENGE_FAILED/DENIED/REPLAY} — it can no longer mint extra token families. The
+     * watermark advance persists in this method's transaction, so it commits with the login it authorises.</p>
+     *
      * @param mfaToken the {@code MFA_CHALLENGE} JWT returned by {@code loginWith*} for a staff/MFA account.
      * @param totpCode the current TOTP code from the authenticator.
      * @return the issued token pair.
      * @throws ApiException {@link ErrorCode#UNAUTHENTICATED} if the challenge token is invalid/expired or
-     *                      the account is missing/inactive; {@link ErrorCode#BAD_REQUEST} on a wrong code.
+     *                      the account is missing/inactive; {@link ErrorCode#BAD_REQUEST} on a wrong code
+     *                      <b>or a replayed code</b> (same generic error — no oracle to an attacker).
      */
     @Transactional
     public TokenService.TokenPair completeTotpLogin(String mfaToken, String totpCode) {
@@ -195,11 +202,18 @@ public class LoginService {
                 .filter(u -> u.getStatus() == UserStatus.ACTIVE)
                 .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHENTICATED));
 
-        if (!totpService.verify(user, totpCode)) {
+        TotpService.Result result = totpService.verify(user, totpCode);
+        if (result != TotpService.Result.ACCEPTED) {
             rateLimiter.recordLoginFailure(accountHash);
+            // Distinguish a REPLAY of a captured (mfaToken, totp) pair from a plain wrong code (review V-2):
+            // step monotonicity in TotpService makes the second redemption of the SAME code REPLAYED. Both
+            // return the same generic error to the client (no oracle), but the replay is audited distinctly.
+            String reason = result == TotpService.Result.REPLAYED ? "REPLAY" : "WRONG_TOTP";
+            AuditOutcome outcome = result == TotpService.Result.REPLAYED
+                    ? AuditOutcome.DENIED : AuditOutcome.FAILURE;
             audit.record(AuditEvent.Builder
-                    .of(AuditEventType.AUTH_MFA_CHALLENGE_FAILED, AuditOutcome.FAILURE)
-                    .actor(subject).subject(subject).reason("WRONG_TOTP").build());
+                    .of(AuditEventType.AUTH_MFA_CHALLENGE_FAILED, outcome)
+                    .actor(subject).subject(subject).reason(reason).build());
             throw new ApiException(ErrorCode.BAD_REQUEST);
         }
 

@@ -103,6 +103,21 @@ public class User extends BaseEntity {
     @Column(name = "last_login_at")
     private Instant lastLoginAt;
 
+    /**
+     * The highest accepted TOTP <b>time-step</b> ({@code epochSeconds / stepSeconds}) for this account's
+     * staff second factor; {@code null} until the first code is accepted (treated as {@code -1}).
+     *
+     * <p>WHY (review V-2, P2): the staff TOTP second factor was replayable — a captured
+     * {@code (mfaToken, totp)} pair could be redeemed more than once inside the step window to mint extra
+     * token families. Tracking the last accepted step and refusing any code whose step {@code <=} it makes
+     * the factor <b>single-use</b> (standard TOTP replay defence): the first login redemption advances this
+     * watermark, so the identical code (same step) cannot be accepted again. Advanced <b>only</b> on a
+     * successful login TOTP step — never on {@code activate}, so a citizen completing their first login in
+     * the same step as enrolment is not mis-flagged as a replay. Not PII.</p>
+     */
+    @Column(name = "last_totp_step")
+    private Long lastTotpStep;
+
     /** JPA requires a no-arg constructor; not for application use. */
     protected User() {
     }
@@ -232,5 +247,25 @@ public class User extends BaseEntity {
     /** @return the last login instant, or {@code null}. */
     public Instant getLastLoginAt() {
         return lastLoginAt;
+    }
+
+    /**
+     * @return the highest accepted TOTP time-step, or {@code -1} if no code has been accepted yet. The
+     *         sentinel keeps the "reject step &lt;= last" replay check total without a null branch at the
+     *         call site (review V-2).
+     */
+    public long getLastTotpStep() {
+        return lastTotpStep == null ? -1L : lastTotpStep;
+    }
+
+    /**
+     * Advances the TOTP replay watermark to a newly accepted step (review V-2, N-4). The caller has already
+     * verified the step is strictly greater than {@link #getLastTotpStep()}; persisting it here means the
+     * same code (same step) can never be accepted twice — the staff second factor is single-use.
+     *
+     * @param step the just-accepted TOTP time-step ({@code epochSeconds / stepSeconds}).
+     */
+    public void advanceLastTotpStep(long step) {
+        this.lastTotpStep = step;
     }
 }

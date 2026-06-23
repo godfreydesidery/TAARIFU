@@ -45,6 +45,9 @@ public final class TotpGenerator {
         return hotp(Base32.decode(base32Secret), counter);
     }
 
+    /** Sentinel returned by {@link #matchedStep} when no step in the ±1 window matches the presented code. */
+    public static final long NO_MATCH = Long.MIN_VALUE;
+
     /**
      * Verifies a presented code against a secret at {@code epochSeconds}, accepting the current step and
      * the immediately adjacent steps (±1) to tolerate clock skew and a code entered near a step boundary.
@@ -55,18 +58,36 @@ public final class TotpGenerator {
      * @return {@code true} if the code matches within the ±1-step window.
      */
     public boolean verify(String base32Secret, String presentedCode, long epochSeconds) {
+        return matchedStep(base32Secret, presentedCode, epochSeconds) != NO_MATCH;
+    }
+
+    /**
+     * Returns the <b>time-step</b> a presented code matches within the ±1 window, or {@link #NO_MATCH} if
+     * none does. WHY this exists (review V-2): replay defence needs to know <i>which</i> step a valid code
+     * belongs to so the caller can reject any step it has already accepted (TOTP monotonicity); a plain
+     * boolean cannot express that. The current step is preferred when several match (it cannot in practice
+     * — codes differ per step — but preferring the highest matched step keeps the watermark moving forward
+     * fastest, never backward).
+     *
+     * @param base32Secret the Base32-encoded shared secret (the active TOTP secret).
+     * @param presentedCode the 6-digit code the user entered.
+     * @param epochSeconds  the current Unix time in seconds (from the injected clock — testable).
+     * @return the matched step ({@code epochSeconds / stepSeconds} ± 1), or {@link #NO_MATCH}.
+     */
+    public long matchedStep(String base32Secret, String presentedCode, long epochSeconds) {
         if (presentedCode == null || base32Secret == null) {
-            return false;
+            return NO_MATCH;
         }
         String trimmed = presentedCode.trim();
         byte[] key = Base32.decode(base32Secret);
         long counter = epochSeconds / stepSeconds;
-        for (long c = counter - 1; c <= counter + 1; c++) {
+        // Walk the window high→low so the highest matching step wins (watermark only advances).
+        for (long c = counter + 1; c >= counter - 1; c--) {
             if (constantTimeEquals(hotp(key, c), trimmed)) {
-                return true;
+                return c;
             }
         }
-        return false;
+        return NO_MATCH;
     }
 
     /** Computes the HOTP code (RFC 4226) for a key and counter — the per-step value TOTP selects. */

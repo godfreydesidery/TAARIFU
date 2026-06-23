@@ -214,6 +214,45 @@ class VerificationFlowIntegrationTest extends AbstractPostgisIntegrationTest {
                 .isEqualTo(ErrorCode.RATE_LIMITED);
     }
 
+    @Test
+    void manualElectoralChange_cooldownSurvivesRemoveThenReAdd_v1() {
+        // Review V-1 (P2): the manual-electoral cooldown must be anchored to the PROFILE, not to a
+        // deletable electoral row. The bypass under test: set electoral -> REMOVE that pin -> set a
+        // DIFFERENT pin electoral inside the cooldown window. If the cooldown were row-anchored the new
+        // (timestamp-null) pin would skip it; the profile anchor must still deny (D13 double-influence).
+        GeographyTestData.Fixture geo = geographyTestData.seedKilimanjaroRomboMengwe();
+        UUID me = t2Citizen("+255700000310", geo);
+        UUID primaryLoc = primaryLocationPublicId(me);
+        // A second pin to (try to) hop the electoral onto after deleting the first.
+        UUID secondLoc = locationService.addLocation(
+                me, geo.wardPublicId(), AssociationType.HOME_ANCESTRAL, false);
+
+        // 1) Set the primary pin electoral (stamps profile.electoral_changed_at = now).
+        locationService.setElectoralManual(me, primaryLoc);
+
+        // 2) Remove that (non-authoritative) electoral pin — allowed (two pins remain), and per V-1 this
+        //    must NOT reset the cooldown clock, because the clock lives on the profile, not the row.
+        locationService.removeLocation(me, primaryLoc);
+
+        // 3) Attempt to set the OTHER pin electoral immediately — inside the window → RATE_LIMITED (D13).
+        assertThatThrownBy(() -> locationService.setElectoralManual(me, secondLoc))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.RATE_LIMITED);
+
+        // And the denial is audited as an ELECTORAL_CHANGED/DENIED/COOLDOWN row (audit-of-intent, D13/L-1).
+        assertThat(deniedCount(AuditEventType.ELECTORAL_CHANGED, "COOLDOWN")).isGreaterThanOrEqualTo(1);
+    }
+
+    /** @return count of audit rows of a type that were DENIED with a given reason code. */
+    private long deniedCount(AuditEventType type, String reason) {
+        Number n = (Number) em.createNativeQuery("""
+                SELECT count(*) FROM audit_event
+                WHERE event_type = :t AND outcome = 'DENIED' AND reason_code = :r
+                """).setParameter("t", type.name()).setParameter("r", reason).getSingleResult();
+        return n.longValue();
+    }
+
     /** @return the public id of the caller's primary ProfileLocation. */
     private UUID primaryLocationPublicId(UUID userPublicId) {
         return (UUID) em.createNativeQuery("""

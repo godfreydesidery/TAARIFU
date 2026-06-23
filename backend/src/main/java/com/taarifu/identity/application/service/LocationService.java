@@ -41,6 +41,12 @@ import java.util.UUID;
  *
  * <p>WHY the cooldown reads the durable {@code electoral_changed_at} column (not Redis): it must survive
  * a restart/cache flush by design (§1.2). The clock is injected for testability.</p>
+ *
+ * <p>WHY the cooldown is anchored to the <b>profile</b>, not the electoral row (review V-1, P2): a
+ * per-row anchor was bypassable by remove-then-re-add (delete the current electoral pin, then set a
+ * different pin whose row timestamp is {@code null} — cooldown skipped). The profile-level
+ * {@code Profile.electoralChangedAt}, stamped on every electoral set/change (manual and authoritative),
+ * is independent of any deletable row, so the window cannot be reset by deleting a pin.</p>
  */
 @Service
 public class LocationService {
@@ -121,6 +127,9 @@ public class LocationService {
             // The voter-ID-authoritative electoral cannot be silently dropped — re-verify to move it (§6).
             throw new ApiException(ErrorCode.CONFLICT);
         }
+        // (review V-1) Removing a non-authoritative electoral pin is allowed and is NOT a cooldown bypass:
+        // the cooldown anchor lives on the PROFILE (profile.electoralChangedAt), not on this row, so the
+        // window survives the delete — a subsequent setElectoralManual to a different pin still observes it.
         if (profileLocationRepository.countByProfile(profile) <= 1) {
             // Removing the last pin would drop a T2+ citizen below the ≥1-pin predicate (§6).
             throw new ApiException(ErrorCode.CONFLICT);
@@ -149,7 +158,15 @@ public class LocationService {
      * <b>Manual</b> set of the single electoral location (D13, §25.4). Allowed only when the profile's
      * electoral was <b>not</b> set authoritatively by a voter ID, and only after the cooldown has elapsed
      * since the last electoral change. Demotes any prior electoral, promotes this one, stamps the change
-     * instant, and audits {@code ELECTORAL_CHANGED(reason=MANUAL)}.
+     * instant on <b>both</b> the row and the profile, and audits {@code ELECTORAL_CHANGED(reason=MANUAL)}.
+     *
+     * <p>WHY the cooldown is read from the <b>profile</b>, not the current electoral row (review V-1, P2):
+     * the per-row anchor was bypassable by remove-then-re-add — a citizen could soft-delete the current
+     * (non-authoritative) electoral pin, then set a <i>different</i> pin electoral whose row-level
+     * {@code electoralChangedAt} was {@code null}, skipping the cooldown and reopening cross-location
+     * double-influence (D13). The profile-anchored timestamp is independent of any deletable row, so the
+     * window holds across a delete. The cooldown is checked even when the profile currently has <b>no</b>
+     * live electoral row (the just-removed case).</p>
      *
      * @param userPublicId     the authenticated account.
      * @param locationPublicId the location to make electoral.
@@ -169,20 +186,21 @@ public class LocationService {
         }
 
         var currentOpt = profileLocationRepository.findByProfileAndElectoralTrue(profile);
-        if (currentOpt.isPresent()) {
-            ProfileLocation current = currentOpt.get();
-            if (current.getPublicId().equals(target.getPublicId())) {
-                return; // Already the electoral — idempotent no-op (no cooldown consumed).
-            }
-            Instant changedAt = current.getElectoralChangedAt();
-            if (changedAt != null && clock.now().isBefore(changedAt.plus(electoralCooldown))) {
-                // Inside the cooldown window: refuse the manual change (D13).
-                auditElectoralDenied(userPublicId, "COOLDOWN");
-                throw new ApiException(ErrorCode.RATE_LIMITED);
-            }
-            current.clearElectoral();
+        if (currentOpt.filter(c -> c.getPublicId().equals(target.getPublicId())).isPresent()) {
+            return; // Already the electoral — idempotent no-op (no cooldown consumed, no audit).
         }
+
+        // (review V-1) Cooldown anchored to the PROFILE, so deleting the electoral pin cannot reset it.
+        Instant changedAt = profile.getElectoralChangedAt();
+        if (changedAt != null && clock.now().isBefore(changedAt.plus(electoralCooldown))) {
+            // Inside the cooldown window: refuse the manual change (D13).
+            auditElectoralDenied(userPublicId, "COOLDOWN");
+            throw new ApiException(ErrorCode.RATE_LIMITED);
+        }
+
+        currentOpt.ifPresent(ProfileLocation::clearElectoral);
         target.markElectoral(clock.now());
+        profile.stampElectoralChange(clock.now());
         auditElectoral(userPublicId, "MANUAL");
     }
 
@@ -211,6 +229,12 @@ public class LocationService {
                 .filter(existing -> !existing.getPublicId().equals(target.getPublicId()))
                 .ifPresent(ProfileLocation::clearElectoral);
         target.markElectoral(clock.now());
+        // (review V-1) Move the profile-anchored cooldown clock on the authoritative set too, so a later
+        // manual change is correctly cooldown-guarded from this instant (the review's "manual AND
+        // voter-ID-authoritative" stamp). The manual path additionally refuses to move an authoritative
+        // electoral at all (isElectoralAuthoritative); this keeps the anchor consistent for §25.5 downgrade,
+        // when idVerified is revoked and manual moves become possible again.
+        profile.stampElectoralChange(clock.now());
 
         UUID citizenPublicId = profile.getUser().getPublicId();
         audit.record(AuditEvent.Builder

@@ -128,6 +128,45 @@ class StaffMfaVerificationEndpointIntegrationTest extends AbstractPostgisIntegra
     }
 
     @Test
+    void totpSecondFactor_isSingleUse_replayIsRejectedAndAudited_v2() {
+        // Review V-2 (P2): a captured (mfaToken, totp) pair must not be replayable to mint extra token
+        // families. TOTP step monotonicity makes the second redemption of the SAME code a REPLAY.
+        UUID moderator = signup("+255700000406");
+        setPassword(moderator, "Str0ngPass!");
+        grantModerator(moderator);
+        String secret = enrolTotp(moderator);
+
+        LoginService.LoginOutcome outcome = loginService.loginWithPassword("+255700000406", "Str0ngPass!");
+        assertThat(outcome.mfaRequired()).isTrue();
+        String mfaToken = outcome.mfaToken();
+        String totp = new TotpGenerator(30).codeAt(secret, clock.now().getEpochSecond());
+
+        // First redemption succeeds and mints the real pair.
+        var pair = loginService.completeTotpLogin(mfaToken, totp);
+        assertThat(pair.accessToken()).isNotBlank();
+
+        // Replay of the IDENTICAL (mfaToken, totp) pair must fail (single-use second factor, V-2).
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> loginService.completeTotpLogin(mfaToken, totp))
+                .isInstanceOf(com.taarifu.common.error.ApiException.class)
+                .extracting(e -> ((com.taarifu.common.error.ApiException) e).getErrorCode())
+                .isEqualTo(com.taarifu.common.error.ErrorCode.BAD_REQUEST);
+
+        // The replay attempt is audited distinctly as AUTH_MFA_CHALLENGE_FAILED / DENIED / REPLAY.
+        assertThat(mfaChallengeReplayAuditCount(moderator)).isGreaterThanOrEqualTo(1);
+    }
+
+    /** @return count of REPLAY-reason MFA-challenge-failed audit rows for an account (review V-2). */
+    private long mfaChallengeReplayAuditCount(UUID subjectPublicId) {
+        Number n = (Number) em.createNativeQuery("""
+                SELECT count(*) FROM audit_event
+                WHERE event_type = 'AUTH_MFA_CHALLENGE_FAILED' AND outcome = 'DENIED'
+                  AND reason_code = 'REPLAY' AND subject_public_id = :uid
+                """).setParameter("uid", subjectPublicId).getSingleResult();
+        return n.longValue();
+    }
+
+    @Test
     void citizenSession_cannotReachModerationQueue() throws Exception {
         UUID citizen = signup("+255700000403");
         // An honestly-issued CITIZEN access token (no staff role, no MFA) is denied the staff surface.

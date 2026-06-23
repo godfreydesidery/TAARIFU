@@ -110,6 +110,21 @@ public class Profile extends BaseEntity {
     @Column(name = "verified_at")
     private Instant verifiedAt;
 
+    /**
+     * <b>Profile-anchored</b> last electoral-change instant (UTC), backing the manual {@code isElectoral}
+     * change cooldown (D13). {@code null} until the first electoral is set.
+     *
+     * <p>WHY on the profile and not on {@link ProfileLocation} (review V-1, P2): the cooldown used to read
+     * {@code electoral_changed_at} off the <b>current electoral row</b>, which a citizen could soft-delete
+     * (remove the electoral pin) then set a different pin electoral — the new row's timestamp was
+     * {@code null}, the cooldown was skipped, and the move went through immediately, reopening the
+     * cross-location double-influence D13 exists to prevent. The profile cannot be deleted by the citizen,
+     * so anchoring the cooldown here makes it unbypassable. Stamped on <b>every</b> electoral set/change —
+     * manual <b>and</b> voter-ID-authoritative — via {@link #stampElectoralChange(Instant)}.</p>
+     */
+    @Column(name = "electoral_changed_at")
+    private Instant electoralChangedAt;
+
     /** Date of birth (person demographics); {@code null} for organisations/unset. */
     @Column(name = "date_of_birth")
     private LocalDate dateOfBirth;
@@ -273,6 +288,23 @@ public class Profile extends BaseEntity {
     /** @return last successful verification instant, or {@code null}. */
     public Instant getVerifiedAt() {
         return verifiedAt;
+    }
+
+    /**
+     * Stamps the profile-anchored electoral-change instant (review V-1, D13). Called on <b>every</b>
+     * electoral set/change — manual and voter-ID-authoritative — so the manual-change cooldown is measured
+     * from this profile-level instant, which survives a citizen deleting/re-adding the electoral pin
+     * (closing the remove-then-re-add bypass).
+     *
+     * @param now the change instant (UTC, from the injected clock).
+     */
+    public void stampElectoralChange(Instant now) {
+        this.electoralChangedAt = now;
+    }
+
+    /** @return the profile-anchored last electoral-change instant (cooldown anchor, D13), or {@code null}. */
+    public Instant getElectoralChangedAt() {
+        return electoralChangedAt;
     }
 
     /** @return date of birth, or {@code null}. */

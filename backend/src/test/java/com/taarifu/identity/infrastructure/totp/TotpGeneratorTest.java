@@ -54,6 +54,20 @@ class TotpGeneratorTest {
     }
 
     @Test
+    void matchedStepReturnsTheStepWithinWindowAndSentinelOutside() {
+        // Underpins the V-2 replay defence: the caller needs the matched time-step (not just true/false)
+        // to enforce monotonicity. A code matches its own step; a wrong/out-of-window code is NO_MATCH.
+        String secret = Base32.randomSecret(20);
+        long now = 1_700_000_000L;
+        String code = totp.codeAt(secret, now);
+        long expectedStep = now / STEP;
+        assertThat(totp.matchedStep(secret, code, now)).isEqualTo(expectedStep);
+        // A code from the previous step still matches inside the ±1 window, reported as that lower step.
+        assertThat(totp.matchedStep(secret, code, now + STEP)).isEqualTo(expectedStep);
+        assertThat(totp.matchedStep(secret, "000000", now)).isEqualTo(TotpGenerator.NO_MATCH);
+    }
+
+    @Test
     void codeIsSixDigits() {
         String secret = Base32.randomSecret(20);
         assertThat(totp.codeAt(secret, 1_700_000_000L)).hasSize(6).matches("\\d{6}");

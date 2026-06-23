@@ -79,7 +79,12 @@ public class SecurityConfig {
             // Engagement public reads (M8/M9/M10) — drafts/moderation-held excluded service-side
             "/api/v1/petitions/**",
             "/api/v1/surveys/**",
-            "/api/v1/questions/**"
+            "/api/v1/questions/**",
+            // Announcements public civic graph (M11) — single-segment so it matches the public
+            // detail read `/announcements/{publicId}`; `/announcements/mine` is one segment too but
+            // its own @PreAuthorize denies anonymous, so least-privilege still holds. Published +
+            // in-window visibility is enforced service-side (404-not-403 to avoid enumeration, §18).
+            "/api/v1/announcements/*"
     };
 
     /** Patterns served without authentication regardless of method (docs + health). */

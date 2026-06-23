@@ -1,0 +1,8 @@
+# gen-l10n configuration (CLAUDE.md §8: all user-facing strings externalised).
+# WHY Swahili is the template/default: Taarifu is Swahili-first (PRD §14, ADR-0010);
+# the template ARB is the source of truth for message keys, so it must be sw.
+arb-dir: lib/l10n
+template-arb-file: app_sw.arb
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+nullable-getter: false

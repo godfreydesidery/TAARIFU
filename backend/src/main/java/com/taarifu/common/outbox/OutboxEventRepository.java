@@ -3,6 +3,7 @@ package com.taarifu.common.outbox;
 import com.taarifu.common.outbox.domain.model.OutboxEvent;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -45,4 +46,48 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
             FOR UPDATE SKIP LOCKED
             """, nativeQuery = true)
     List<OutboxEvent> claimDue(@Param("now") Instant now, Pageable pageable);
+
+    /**
+     * Hard-deletes one bounded batch of terminally {@link OutboxStatus#PROCESSED} rows whose
+     * {@code processed_at} is older than the cutoff — the retention purge (ADR-0014 §1 "operability",
+     * review P3-2). Returns the number deleted so the caller can loop until a batch comes back short.
+     *
+     * <p><b>WHY only {@code status = 'PROCESSED'}:</b> {@link OutboxStatus#FAILED} rows are the DLQ — they
+     * must <b>never</b> be purged by retention (they stay queryable, alertable, and replayable). PENDING
+     * rows are still in flight. So the predicate pins {@code PROCESSED} explicitly rather than keying off
+     * {@code processed_at} alone (which FAILED rows also carry).</p>
+     *
+     * <p><b>WHY batched ({@code id IN (SELECT … LIMIT)}):</b> deleting an unbounded backlog in one
+     * statement would take a long lock and a fat transaction on this hot table. A bounded {@code LIMIT}
+     * sub-select keeps each delete small; the caller loops. Native SQL because JPQL has no {@code LIMIT}
+     * in a {@code DELETE}.</p>
+     *
+     * <p>{@code @Modifying(clearAutomatically=true)} flushes the persistence context after the bulk delete
+     * so subsequent reads in the same transaction do not see stale managed copies of purged rows.</p>
+     *
+     * @param cutoff    rows with {@code processed_at < cutoff} are eligible (i.e. {@code now - retention}).
+     * @param batchSize the maximum number of rows to delete in this statement.
+     * @return the number of rows deleted (0 when nothing is eligible; {@code < batchSize} ends the loop).
+     */
+    @Modifying(clearAutomatically = true)
+    @Query(value = """
+            DELETE FROM outbox_event
+            WHERE id IN (
+                SELECT id FROM outbox_event
+                WHERE status = 'PROCESSED' AND processed_at < :cutoff
+                ORDER BY processed_at
+                LIMIT :batchSize
+            )
+            """, nativeQuery = true)
+    int deleteProcessedOlderThan(@Param("cutoff") Instant cutoff, @Param("batchSize") int batchSize);
+
+    /**
+     * Counts the rows currently in terminal {@link OutboxStatus#FAILED} — the DLQ depth (review P3-2).
+     * Backs the {@code taarifu.outbox.failed} Micrometer gauge and the periodic WARN log so a growing DLQ
+     * is alertable (ARCHITECTURE §9). Never mutates state.
+     *
+     * @return the number of FAILED outbox rows (the dead-letter queue depth).
+     */
+    @Query("SELECT COUNT(e) FROM OutboxEvent e WHERE e.status = com.taarifu.common.outbox.OutboxStatus.FAILED")
+    long countFailed();
 }

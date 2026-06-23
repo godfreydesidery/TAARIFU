@@ -52,6 +52,12 @@ public class SecurityConfig {
     /**
      * URL patterns served without authentication (public reference reads + ops/docs).
      *
+     * <p><b>Paths are context-relative</b> — written WITHOUT the {@code /api/v1} prefix. Spring Security
+     * matches against the servlet path <i>after</i> the container strips {@code server.servlet.context-path}
+     * (={@code /api/v1}), so a pattern that included {@code /api/v1} would never match and the endpoint
+     * would fall through to {@code anyRequest().authenticated()} — a silent 401 on every "public" read.
+     * Do not re-add the prefix here.</p>
+     *
      * <p>GET-only: write/admin endpoints under these prefixes (POST/PUT/DELETE, or method-gated GETs
      * such as {@code /issue-categories/admin}) remain protected because (a) this allow-list is scoped to
      * {@link HttpMethod#GET} and (b) {@code @PreAuthorize} still runs at the method layer even when the
@@ -60,36 +66,36 @@ public class SecurityConfig {
      */
     private static final String[] PUBLIC_GET_PATTERNS = {
             // Geography reference data (M1)
-            "/api/v1/regions/**",
-            "/api/v1/districts/**",
-            "/api/v1/councils/**",
-            "/api/v1/wards/**",
-            "/api/v1/locations/**",
-            "/api/v1/constituencies/**",
+            "/regions/**",
+            "/districts/**",
+            "/councils/**",
+            "/wards/**",
+            "/locations/**",
+            "/constituencies/**",
             // Representatives & institutions directory (M2)
-            "/api/v1/representatives/**",
-            "/api/v1/parties/**",
-            "/api/v1/parliaments/**",
+            "/representatives/**",
+            "/parties/**",
+            "/parliaments/**",
             // Issue categories + public reports (M3)
-            "/api/v1/issue-categories/**",
-            "/api/v1/public/reports/**",
+            "/issue-categories/**",
+            "/public/reports/**",
             // Service-provider / responder directory (M18)
-            "/api/v1/responders/**",
-            "/api/v1/organisations/**",
+            "/responders/**",
+            "/organisations/**",
             // Engagement public reads (M8/M9/M10) — drafts/moderation-held excluded service-side
-            "/api/v1/petitions/**",
-            "/api/v1/surveys/**",
-            "/api/v1/questions/**",
+            "/petitions/**",
+            "/surveys/**",
+            "/questions/**",
             // Announcements public civic graph (M11) — single-segment so it matches the public
             // detail read `/announcements/{publicId}`; `/announcements/mine` is one segment too but
             // its own @PreAuthorize denies anonymous, so least-privilege still holds. Published +
             // in-window visibility is enforced service-side (404-not-403 to avoid enumeration, §18).
-            "/api/v1/announcements/*"
+            "/announcements/*"
     };
 
     /** Patterns served without authentication regardless of method (docs + health). */
     private static final String[] PUBLIC_ANY_PATTERNS = {
-            "/api/v1/openapi.json",
+            "/openapi.json",
             "/swagger-ui/**",
             "/swagger-ui.html",
             "/v3/api-docs/**",
@@ -104,16 +110,16 @@ public class SecurityConfig {
      * (rate-limit/lockout) and anti-enumeration protect these open endpoints (S-2).
      */
     private static final String[] PUBLIC_POST_PATTERNS = {
-            "/api/v1/auth/otp/request",
-            "/api/v1/auth/signup",
-            "/api/v1/auth/login/password",
-            "/api/v1/auth/login/otp",
-            "/api/v1/auth/login/otp/request",
+            "/auth/otp/request",
+            "/auth/signup",
+            "/auth/login/password",
+            "/auth/login/otp",
+            "/auth/login/otp/request",
             // Staff second-factor step (N-4): carries an MFA_CHALLENGE token (not a prior access token),
             // so it cannot require authentication; it is anti-automation-protected like the other open
             // login endpoints (AUTH-DESIGN §14.1, VERIFICATION-DESIGN §7.1/§9.5).
-            "/api/v1/auth/login/totp",
-            "/api/v1/auth/refresh"
+            "/auth/login/totp",
+            "/auth/refresh"
     };
 
     /**

@@ -1,10 +1,10 @@
 package com.taarifu.identity.application.service;
 
+import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.security.CurrentUser;
 import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.geography.domain.model.Constituency;
 import com.taarifu.identity.domain.model.RoleAssignment;
-import com.taarifu.identity.domain.model.enums.RoleStatus;
 import com.taarifu.identity.domain.repository.RoleAssignmentRepository;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,12 +35,15 @@ import java.util.UUID;
 public class ScopeGuardImpl implements ScopeGuard {
 
     private final RoleAssignmentRepository roleAssignmentRepository;
+    private final ClockPort clock;
 
     /**
-     * @param roleAssignmentRepository the live scope source (active assignments only — MF-3).
+     * @param roleAssignmentRepository the live scope source (active, in-window assignments only — MF-3, N-2).
+     * @param clock                    time source for the effective-window check (testable — N-2).
      */
-    public ScopeGuardImpl(RoleAssignmentRepository roleAssignmentRepository) {
+    public ScopeGuardImpl(RoleAssignmentRepository roleAssignmentRepository, ClockPort clock) {
         this.roleAssignmentRepository = roleAssignmentRepository;
+        this.clock = clock;
     }
 
     /** {@inheritDoc} */
@@ -101,11 +104,19 @@ public class ScopeGuardImpl implements ScopeGuard {
                 .orElse(false);
     }
 
-    /** @return the caller's active role assignments (the live scope set); empty if unauthenticated. */
+    /**
+     * @return the caller's active <b>and currently-effective</b> role assignments (the live scope set);
+     *         empty if unauthenticated.
+     *
+     *         <p>N-2 (P2): the source is now {@code findActiveEffectiveByUser}, which adds the
+     *         {@code effectiveFrom}/{@code effectiveTo} window to the ACTIVE filter — a lapsed or
+     *         not-yet-effective grant must not authorize. {@code now} comes from the injected
+     *         {@link ClockPort} for testability (never {@link java.time.Instant#now()} inline).</p>
+     */
     private List<RoleAssignment> activeAssignments() {
         return CurrentUser.current()
                 .map(cu -> roleAssignmentRepository
-                        .findByUser_PublicIdAndStatus(cu.publicId(), RoleStatus.ACTIVE))
+                        .findActiveEffectiveByUser(cu.publicId(), clock.now()))
                 .orElseGet(List::of);
     }
 }

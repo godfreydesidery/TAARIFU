@@ -120,6 +120,19 @@ public class OtpService {
     /**
      * Verifies a presented code against a challenge (single-use, attempt-capped, TTL-bounded).
      *
+     * <p><b>N-1 (P2) — durable failed-attempt counter.</b> WHY {@code noRollbackFor = ApiException.class}:
+     * on a wrong/invalid-code path this method calls {@link OtpChallenge#registerFailedAttempt()}
+     * (the {@code attempts++}) and then throws an {@link ApiException} (a {@code RuntimeException}). With
+     * the default rollback rule Spring would revert the managed entity's increment, so
+     * {@code otp_challenge.attempts} would never advance and the <b>durable</b> per-challenge DB cap in
+     * {@link OtpChallenge#isVerifiable(java.time.Instant)} ({@code attempts < maxAttempts}) would never
+     * fire — leaving only the single-instance, non-durable in-memory limiter as the backstop. Suppressing
+     * rollback for {@code ApiException} commits the increment. This is safe because on every throwing
+     * branch the <b>only</b> mutation written before the throw is that increment (the audit record is
+     * persisted in its own {@code REQUIRES_NEW} unit), so there is no other state we need to roll back
+     * here. The in-memory {@link AuthRateLimiter#allowOtpVerifyAttempt(String)} remains as defence in
+     * depth, but the DB counter is now the authoritative, restart-surviving cap (S-2, PRD §18).</p>
+     *
      * @param challengeId the challenge public id.
      * @param code        the code the user entered.
      * @param expected    the purpose the calling flow expects (a SIGNUP code cannot complete a LOGIN).
@@ -127,7 +140,7 @@ public class OtpService {
      * @throws ApiException {@link ErrorCode#BAD_REQUEST} for an invalid/expired/burned challenge or a
      *                      wrong code (uniform message — never reveals which).
      */
-    @Transactional
+    @Transactional(noRollbackFor = ApiException.class)
     public OtpChallenge verify(UUID challengeId, String code, OtpPurpose expected) {
         OtpChallenge challenge = challengeRepository.findByPublicId(challengeId).orElse(null);
         if (challenge == null || challenge.getPurpose() != expected

@@ -69,7 +69,8 @@ class TokenServiceTest {
         user = User.createPending("+255700000001");
         user.activate();
         setPublicId(user, subject);
-        when(roleAssignmentRepository.findByUser(any())).thenReturn(List.of());
+        // N-2: role claims now come from the active-AND-effective query, not the bare findByUser.
+        when(roleAssignmentRepository.findActiveEffectiveByUser(any(), any())).thenReturn(List.of());
         when(userRepository.findByPublicId(subject)).thenReturn(Optional.of(user));
     }
 

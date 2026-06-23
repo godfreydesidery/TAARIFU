@@ -54,7 +54,7 @@ public class TokenService {
      * @param jwtService               token signer/verifier.
      * @param jwtProperties            lifetimes (refresh TTL for the persisted row).
      * @param refreshTokenRepository   persisted hashed refresh tokens.
-     * @param roleAssignmentRepository active role names for the access-token hint claim.
+     * @param roleAssignmentRepository active, in-window role names for the access-token hint claim (N-2).
      * @param userRepository           account lookup on refresh.
      * @param audit                    append-only audit writer.
      * @param clock                    time source (testable).
@@ -190,9 +190,20 @@ public class TokenService {
                 .actor(userPublicId).build());
     }
 
-    /** Mints + persists a new pair in the given family. */
+    /**
+     * Mints + persists a new pair in the given family.
+     *
+     * <p>N-2 (P2): the access-token role claim is derived from {@code findActiveEffectiveByUser} — only
+     * grants that are ACTIVE <b>and</b> within their {@code effectiveFrom}/{@code effectiveTo} window at
+     * {@code clock.now()} emit a role authority. WHY: previously {@code findByUser} (no time filter) would
+     * stamp a role claim for a lapsed or not-yet-effective grant; even though that claim is only a hint
+     * (binding actions re-resolve server-side), a lapsed responder/representative authority must not be
+     * advertised — an integrity/neutrality concern for an election-period system. This is the same shared,
+     * DRY predicate the {@code ScopeGuard} enforces, so the token claim and the live scope check agree.</p>
+     */
     private TokenPair mintPair(User user, UUID familyId) {
-        List<String> roles = roleAssignmentRepository.findByUser(user).stream()
+        List<String> roles = roleAssignmentRepository
+                .findActiveEffectiveByUser(user.getPublicId(), clock.now()).stream()
                 .filter(ra -> ra.getRole() != null)
                 .map(ra -> ra.getRole().getName().name())
                 .distinct()

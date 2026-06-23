@@ -5,6 +5,7 @@ import com.taarifu.geography.api.dto.ConstituencyDto;
 import com.taarifu.geography.api.dto.DistrictDto;
 import com.taarifu.geography.api.dto.LocationDto;
 import com.taarifu.geography.api.dto.RegionDto;
+import com.taarifu.geography.api.dto.WardSummaryDto;
 import com.taarifu.geography.application.mapper.GeographyMapper;
 import com.taarifu.geography.domain.model.Constituency;
 import com.taarifu.geography.domain.model.Location;
@@ -92,6 +93,84 @@ public class GeographyQueryService {
         return locationRepository
                 .findChildrenByParentPublicIdAndType(regionPublicId, LocationType.DISTRICT, pageable)
                 .map(mapper::toDistrictDto);
+    }
+
+    /**
+     * Lists every ward under a district (its transitive ward descendants via the closure table), paged,
+     * as lean {@link WardSummaryDto}s for the manual ward-picker.
+     *
+     * <p>WHY this is a closure-backed read (not a {@code parent} children read): a ward's direct parent is a
+     * Council/LGA (with an optional Division in between), so "wards in a district" spans more than one hop —
+     * exactly what the closure table answers in one indexed query (ARCHITECTURE.md §4.3, PRD §9.0). The
+     * district is validated to exist <b>and</b> be a {@code DISTRICT} first, so a wrong-level or unknown id
+     * yields a Swahili-first 404 rather than a silently-empty page (ADR-0010).</p>
+     *
+     * @param districtPublicId the district's public id.
+     * @param pageable         paging/sorting (already bounded by {@code PageRequestFactory}).
+     * @return a page of {@link WardSummaryDto} for the district's wards.
+     * @throws ResourceNotFoundException if no district with that id exists, or the id is not a {@code DISTRICT}.
+     */
+    public Page<WardSummaryDto> listWardsInDistrict(UUID districtPublicId, Pageable pageable) {
+        Location district = requireLocation(districtPublicId);
+        if (district.getType() != LocationType.DISTRICT) {
+            throw new ResourceNotFoundException("geography.district.notFound", districtPublicId);
+        }
+        return locationRepository
+                .findWardSummariesUnderDistrict(districtPublicId, pageable)
+                .map(mapper::toWardSummaryDto);
+    }
+
+    /**
+     * Case-insensitive name-prefix ward search, optionally scoped to a district, paged, returning lean
+     * {@link WardSummaryDto}s for the manual ward-picker.
+     *
+     * <p>Backs {@code GET /wards?q=&districtId=} so a client can offer a typed ward picker when GPS is
+     * unavailable. A blank/absent {@code query} returns an <b>empty page</b> (a picker should not pull the
+     * whole national ward table on an empty box, PRD §15) rather than erroring. When
+     * {@code districtPublicId} is supplied it is validated to exist and be a {@code DISTRICT}, then used to
+     * constrain the search via the closure table; when {@code null} the search spans all wards.</p>
+     *
+     * <p>WHY the prefix is escaped before being handed to the {@code LIKE}: a user-supplied {@code _}/{@code %}
+     * must match literally, not act as a wildcard — {@link #toLikePrefix(String)} escapes them (and the
+     * escape char) and lowercases, so the search is both injection-safe (it is still a bound parameter) and
+     * behaves predictably.</p>
+     *
+     * @param query            the raw ward-name prefix typed by the user; blank/{@code null} yields an empty page.
+     * @param districtPublicId optional district scope; {@code null} searches all wards.
+     * @param pageable         paging/sorting (already bounded by {@code PageRequestFactory}).
+     * @return a page of matching {@link WardSummaryDto}.
+     * @throws ResourceNotFoundException if {@code districtPublicId} is given but unknown or not a {@code DISTRICT}.
+     */
+    public Page<WardSummaryDto> searchWards(String query, UUID districtPublicId, Pageable pageable) {
+        if (query == null || query.isBlank()) {
+            return Page.empty(pageable);
+        }
+        if (districtPublicId != null) {
+            Location district = requireLocation(districtPublicId);
+            if (district.getType() != LocationType.DISTRICT) {
+                throw new ResourceNotFoundException("geography.district.notFound", districtPublicId);
+            }
+        }
+        String likePrefix = toLikePrefix(query);
+        return locationRepository
+                .searchWardSummaries(likePrefix, districtPublicId, pageable)
+                .map(mapper::toWardSummaryDto);
+    }
+
+    /**
+     * Normalises a raw user prefix into a lowercased, {@code LIKE}-safe pattern with a trailing {@code %}.
+     *
+     * <p>Escapes the SQL {@code LIKE} metacharacters ({@code \}, {@code %}, {@code _}) so they match
+     * literally; the search query pairs this with an explicit {@code LIKE ... ESCAPE '\'} clause so the
+     * backslash escape is honoured deterministically (not left to a DB default). Lowercasing pairs with the
+     * {@code lower(w.name)} side of the query for a case-insensitive prefix match.</p>
+     */
+    private static String toLikePrefix(String query) {
+        String escaped = query.trim().toLowerCase()
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
+        return escaped + "%";
     }
 
     /**

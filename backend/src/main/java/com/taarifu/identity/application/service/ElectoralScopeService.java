@@ -1,6 +1,7 @@
 package com.taarifu.identity.application.service;
 
 import com.taarifu.geography.domain.model.Constituency;
+import com.taarifu.geography.domain.model.Location;
 import com.taarifu.identity.api.ElectoralScopeApi;
 import com.taarifu.identity.domain.model.Profile;
 import com.taarifu.identity.domain.model.ProfileLocation;
@@ -17,9 +18,11 @@ import java.util.UUID;
  *
  * <p>Responsibility: resolve the actor's account public id to its {@code Profile}, read the profile's single
  * voter-ID-authoritative {@code isElectoral} {@code ProfileLocation}, and compare that location's derived
- * constituency to the target. It is {@code @Transactional(readOnly = true)} and reads only identity-owned
- * rows plus the geography {@link Constituency} entity already FK-snapshotted on the electoral location (no
- * re-resolution of the ward→constituency bridge needed — the pin stored the effective constituency).</p>
+ * constituency (MP tier, {@link #isElectorOf}) or its pinned ward (councillor tier, {@link #isElectorOfWard}
+ * — F1) to the target. It is {@code @Transactional(readOnly = true)} and reads only identity-owned rows plus
+ * the geography {@link Constituency}/{@link Location} entities already FK-referenced on the electoral
+ * location (no re-resolution of the ward→constituency bridge needed — the pin stored both the ward and the
+ * effective constituency).</p>
  *
  * <p><b>Fence (D18, §23.5):</b> no token/wallet collaborator is injected or referenced — this is the
  * electoral-scope half of the binding-action fence and must never touch a balance. Every unresolved link
@@ -51,22 +54,52 @@ public class ElectoralScopeService implements ElectoralScopeApi {
     @Override
     public boolean isElectorOf(UUID userPublicId, UUID constituencyPublicId) {
         // Deny-by-default: a null target constituency, or any missing link, is never an elector match.
-        if (userPublicId == null || constituencyPublicId == null) {
+        if (constituencyPublicId == null) {
             return false;
         }
-        Profile profile = profileRepository.findByUser_PublicId(userPublicId).orElse(null);
-        if (profile == null) {
-            return false;
-        }
-        // The single voter-ID-authoritative electoral location (D13). Absent ⇒ no binding electoral scope.
-        ProfileLocation electoral = profileLocationRepository
-                .findByProfileAndElectoralTrue(profile)
-                .orElse(null);
+        ProfileLocation electoral = electoralLocationOf(userPublicId);
         if (electoral == null) {
             return false;
         }
         Constituency constituency = electoral.getConstituency();
         // The constituency was snapshotted on the pin via the effective-dated bridge; unresolved ⇒ deny.
         return constituency != null && constituencyPublicId.equals(constituency.getPublicId());
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean isElectorOfWard(UUID userPublicId, UUID wardPublicId) {
+        // Deny-by-default (F1): a null target ward, or any missing link, is never an elector match.
+        if (wardPublicId == null) {
+            return false;
+        }
+        ProfileLocation electoral = electoralLocationOf(userPublicId);
+        if (electoral == null) {
+            return false;
+        }
+        // The pinned ward is the minimum-granularity unit on the electoral location (PRD §9.0); it is a
+        // required FK (never null on a persisted pin), but stay deny-by-default if absent for any reason.
+        Location ward = electoral.getWard();
+        return ward != null && wardPublicId.equals(ward.getPublicId());
+    }
+
+    /**
+     * Resolves the user's single voter-ID-authoritative {@code isElectoral} {@code ProfileLocation}, or
+     * {@code null} if there is no profile / no electoral location (deny-by-default at every missing link,
+     * D13). Shared by {@link #isElectorOf} (constituency tier) and {@link #isElectorOfWard} (ward tier, F1).
+     *
+     * @param userPublicId the actor's account public id (the JWT subject), or {@code null}.
+     * @return the single electoral location, or {@code null} if unresolved.
+     */
+    private ProfileLocation electoralLocationOf(UUID userPublicId) {
+        if (userPublicId == null) {
+            return null;
+        }
+        Profile profile = profileRepository.findByUser_PublicId(userPublicId).orElse(null);
+        if (profile == null) {
+            return null;
+        }
+        // The single voter-ID-authoritative electoral location (D13). Absent ⇒ no binding electoral scope.
+        return profileLocationRepository.findByProfileAndElectoralTrue(profile).orElse(null);
     }
 }

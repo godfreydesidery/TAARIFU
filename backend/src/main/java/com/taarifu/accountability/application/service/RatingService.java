@@ -6,6 +6,10 @@ import com.taarifu.accountability.application.mapper.AccountabilityMapper;
 import com.taarifu.accountability.domain.model.Rating;
 import com.taarifu.accountability.domain.model.enums.RatingSubjectType;
 import com.taarifu.accountability.domain.repository.RatingRepository;
+import com.taarifu.common.audit.AuditEventService;
+import com.taarifu.common.audit.AuditEventType;
+import com.taarifu.common.audit.AuditOutcome;
+import com.taarifu.common.audit.domain.model.AuditEvent;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.security.CurrentUser;
@@ -30,13 +34,20 @@ import java.util.UUID;
  *       by the aspect, not the token claim) — so a sub-T3 caller never reaches this service.</li>
  *   <li><b>No self-action (D16):</b> {@link ScopeGuard#isNotSelf} blocks a representative rating their own
  *       subject id → {@link ErrorCode#CONFLICT_OF_INTEREST}.</li>
- *   <li><b>Electoral scope (D13):</b> a citizen may only rate a representative they are an elector of. The
- *       subject's constituency is resolved via {@link RepresentativeQueryApi#constituencyOf} (institutions);
- *       the rater's single voter-ID-authoritative {@code isElectoral} constituency is checked against it via
- *       {@link ElectoralScopeApi#isElectorOf} (identity). A mismatch is {@link ErrorCode#OUT_OF_SCOPE}. Both
- *       are published api-package query ports — accountability never imports identity/institutions internals
- *       (ADR-0013). A representative with <b>no</b> constituency (councillor/special-seats/nominated) carries
- *       no constituency electoral gate, so this check is skipped for them.</li>
+ *   <li><b>Electoral scope (D13, two-tier — F1):</b> a citizen may only rate a representative they are an
+ *       elector of, gated by the subject's <b>mandate</b>:
+ *       <ul>
+ *         <li>a <b>constituency-mandate MP</b> → the rater must be an elector of the rep's constituency
+ *             ({@link RepresentativeQueryApi#constituencyOf} × {@link ElectoralScopeApi#isElectorOf});</li>
+ *         <li>a <b>councillor / ward executive (Diwani)</b> → the rater must be an elector of the rep's
+ *             <b>ward</b> ({@link RepresentativeQueryApi#wardOf} × {@link ElectoralScopeApi#isElectorOfWard})
+ *             — a councillor holds a Ward (Kata), so the gate is the ward, not a constituency (F1: previously
+ *             skipped, letting anyone nationwide rate any councillor);</li>
+ *         <li>a genuinely seat-less rep (<b>special-seats/Viti Maalum, nominated</b>) → no geographic gate
+ *             (PRD §22.6).</li>
+ *       </ul>
+ *       A mismatch is {@link ErrorCode#OUT_OF_SCOPE}, audited. Both ports are published api-package query
+ *       ports — accountability never imports identity/institutions internals (ADR-0013).</li>
  *   <li><b>One per person (D16):</b> a pre-check plus the DB unique
  *       {@code (subject_type, subject_id, rater, period)} make a duplicate a hard {@link ErrorCode#CONFLICT}
  *       — one person, one rating per period, <b>regardless of token balance</b>.</li>
@@ -63,23 +74,28 @@ public class RatingService {
     private final RepresentativeQueryApi representativeQueryApi;
     private final ElectoralScopeApi electoralScopeApi;
     private final AccountabilityMapper mapper;
+    private final AuditEventService audit;
 
     /**
      * @param ratingRepository       append-only rating store (no token-balance access on this path — fence).
      * @param scopeGuard             the common security seam for the no-self-action check (D16).
-     * @param representativeQueryApi institutions' published port resolving the subject rep's constituency (D13).
+     * @param representativeQueryApi institutions' published port resolving the subject rep's constituency/ward (D13).
      * @param electoralScopeApi      identity's published port checking the rater's electoral scope (D13).
      * @param mapper                 entity → DTO mapper.
+     * @param audit                  append-only audit writer (binding-success {@code RATING_SUBMITTED} +
+     *                               out-of-scope denial evidence; refs/public-ids only, never PII — R-4, L-1).
      */
     public RatingService(RatingRepository ratingRepository, ScopeGuard scopeGuard,
                          RepresentativeQueryApi representativeQueryApi,
                          ElectoralScopeApi electoralScopeApi,
-                         AccountabilityMapper mapper) {
+                         AccountabilityMapper mapper,
+                         AuditEventService audit) {
         this.ratingRepository = ratingRepository;
         this.scopeGuard = scopeGuard;
         this.representativeQueryApi = representativeQueryApi;
         this.electoralScopeApi = electoralScopeApi;
         this.mapper = mapper;
+        this.audit = audit;
     }
 
     /**
@@ -102,17 +118,22 @@ public class RatingService {
         UUID subjectId = request.subjectId();
         String period = request.period();
 
-        // --- FENCE: electoral scope (D13). Only an elector of the representative may rate them. ---
-        // Resolve the subject rep's constituency (institutions' published port; throws NOT_FOUND if the rep
-        // does not exist), then check the rater's single isElectoral constituency against it (identity's
-        // published port). A rep with NO constituency (councillor/special-seats/nominated) carries no
-        // constituency gate, so the check is skipped. NOTE: no token balance is consulted here (fence, §23.5).
-        if (subjectType == RatingSubjectType.REPRESENTATIVE) {
-            Optional<UUID> repConstituency = representativeQueryApi.constituencyOf(subjectId);
-            if (repConstituency.isPresent()
-                    && !electoralScopeApi.isElectorOf(rater, repConstituency.get())) {
-                throw new ApiException(ErrorCode.OUT_OF_SCOPE);
-            }
+        // --- FENCE: electoral scope (D13, two-tier — F1). Only an elector of the representative's seat may
+        // rate them. The gate keys off the rep's MANDATE, resolved via institutions' published ports (both
+        // throw NOT_FOUND if the rep does not exist — cannot rate a phantom):
+        //   * constituency-mandate MP  -> rater must be an elector of the rep's CONSTITUENCY;
+        //   * councillor / ward-exec   -> rater must be an elector of the rep's WARD (F1: previously skipped);
+        //   * special-seats / nominated -> no geographic seat, no geographic gate (PRD §22.6).
+        // The rater's electoral location is checked via identity's published ports. NOTE: no token balance is
+        // ever consulted here (fence, §23.5).
+        if (subjectType == RatingSubjectType.REPRESENTATIVE && !isElectorOfRepSeat(rater, subjectId)) {
+            audit.record(AuditEvent.Builder
+                    .of(AuditEventType.AUTHZ_SCOPE_DENIED, AuditOutcome.DENIED)
+                    .actor(rater)
+                    .subject(subjectId)
+                    .reason("RATE_REP_OUT_OF_ELECTORAL_SCOPE")
+                    .build());
+            throw new ApiException(ErrorCode.OUT_OF_SCOPE);
         }
 
         // --- FENCE: one per (rater, subject, period) (D16). Revise the rater's OWN existing row only. ---
@@ -121,17 +142,64 @@ public class RatingService {
         if (existing.isPresent()) {
             Rating own = existing.get();
             own.revise(request.score(), request.comment());
-            return mapper.toRatingDto(ratingRepository.save(own));
+            RatingDto revised = mapper.toRatingDto(ratingRepository.save(own));
+            auditSubmitted(rater, subjectId, subjectType, period);
+            return revised;
         }
 
         Rating rating = Rating.create(subjectType, subjectId, rater, request.score(),
                 request.comment(), period);
         try {
-            return mapper.toRatingDto(ratingRepository.saveAndFlush(rating));
+            RatingDto created = mapper.toRatingDto(ratingRepository.saveAndFlush(rating));
+            auditSubmitted(rater, subjectId, subjectType, period);
+            return created;
         } catch (DataIntegrityViolationException ex) {
             // The DB unique is the final authority against a concurrent double-submit — surface a clean,
             // localised 409 rather than a 500. One person, one rating per period (D16).
             throw new ApiException(ErrorCode.CONFLICT, ex);
         }
+    }
+
+    /**
+     * Resolves whether the rater is an elector of the subject representative's seat, dispatching on the
+     * rep's mandate (F1, D13): a constituency-mandate MP is gated on the rep's constituency; a
+     * councillor/ward-exec on the rep's ward; a genuinely seat-less rep (special-seats/nominated) carries no
+     * geographic gate and is always allowed. Both ports throw {@code NOT_FOUND} for a non-existent rep.
+     *
+     * @param rater     the authenticated rater's account public id.
+     * @param subjectId the subject representative's public id.
+     * @return {@code true} if the rater may rate this rep on the electoral-scope axis.
+     */
+    private boolean isElectorOfRepSeat(UUID rater, UUID subjectId) {
+        Optional<UUID> constituency = representativeQueryApi.constituencyOf(subjectId);
+        if (constituency.isPresent()) {
+            return electoralScopeApi.isElectorOf(rater, constituency.get());
+        }
+        // No constituency: a councillor/ward-exec is ward-tier — gate on the ward (F1).
+        Optional<UUID> ward = representativeQueryApi.wardOf(subjectId);
+        if (ward.isPresent()) {
+            return electoralScopeApi.isElectorOfWard(rater, ward.get());
+        }
+        // Genuinely seat-less (special-seats / nominated) — no geographic electoral gate (PRD §22.6).
+        return true;
+    }
+
+    /**
+     * Appends a {@link AuditEventType#RATING_SUBMITTED} success event (R-4): the most sensitive civic acts
+     * carry a complete immutable trail. References/public-ids and a non-PII reason only (the subject type +
+     * period as the reason code) — never the score, comment, or any PII (PRD §18, PDPA).
+     *
+     * @param rater       the rater's account public id (actor).
+     * @param subjectId   the rated subject's public id (subject).
+     * @param subjectType the rated subject's type.
+     * @param period      the rating period (non-PII reason context).
+     */
+    private void auditSubmitted(UUID rater, UUID subjectId, RatingSubjectType subjectType, String period) {
+        audit.record(AuditEvent.Builder
+                .of(AuditEventType.RATING_SUBMITTED, AuditOutcome.SUCCESS)
+                .actor(rater)
+                .subject(subjectId)
+                .reason(subjectType.name() + ":" + period)
+                .build());
     }
 }

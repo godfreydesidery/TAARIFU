@@ -69,17 +69,26 @@ public class FlagService {
     /**
      * Flags content on behalf of the authenticated citizen.
      *
-     * @param flaggerProfileId the flagging citizen's profile public id (from the security context).
-     * @param request          the validated flag request.
+     * <p>WHY the grain is the <b>account</b> public id (R-2, D16): {@code flaggerAccountPublicId} carries the
+     * caller's immutable <b>account</b> public id ({@code CurrentUser.requirePublicId()} = the JWT subject =
+     * {@code app_user.publicId}), <b>not</b> a {@code Profile} id. The D16 self-action guard on the action
+     * endpoint compares the moderator's account id against the subject's author (also an account id), so this
+     * id must be the account grain end-to-end or the guard would silently mismatch. The persistence column is
+     * still named {@code flagger_profile_id} for historical reasons — the value stored there is the account
+     * public id (the grain contract, not the column name, is what matters for D16).</p>
+     *
+     * @param flaggerAccountPublicId the flagging citizen's <b>account</b> public id (from the security
+     *                               context, never a body-supplied id).
+     * @param request                the validated flag request.
      * @return the created {@link FlagDto} (so the flagger gets feedback — US-12.1).
      * @throws ApiException {@link ErrorCode#CONFLICT} if this citizen already flagged this subject.
      */
     @Transactional
-    public FlagDto flag(UUID flaggerProfileId, FlagContentRequest request) {
+    public FlagDto flag(UUID flaggerAccountPublicId, FlagContentRequest request) {
         // Anti-brigading: one live flag per (citizen, subject). The DB UNIQUE index is the hard backstop;
         // this pre-check returns a clean CONFLICT rather than a raw constraint violation on the common path.
         if (flagRepository.existsByFlaggerProfileIdAndSubjectTypeAndSubjectId(
-                flaggerProfileId, request.subjectType(), request.subjectId())) {
+                flaggerAccountPublicId, request.subjectType(), request.subjectId())) {
             throw new ApiException(ErrorCode.CONFLICT);
         }
 
@@ -98,7 +107,7 @@ public class FlagService {
         item.recordFlag(severity, clock.now());
         ModerationItem savedItem = itemRepository.save(item);
 
-        Flag flag = Flag.open(request.subjectType(), request.subjectId(), flaggerProfileId,
+        Flag flag = Flag.open(request.subjectType(), request.subjectId(), flaggerAccountPublicId,
                 request.reason(), request.detail());
         flag.attachTo(savedItem.getPublicId());
 

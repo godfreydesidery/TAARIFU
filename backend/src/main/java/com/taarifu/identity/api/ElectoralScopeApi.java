@@ -37,4 +37,27 @@ public interface ElectoralScopeApi {
      * @return {@code true} if the user's authoritative electoral location is in that constituency.
      */
     boolean isElectorOf(UUID userPublicId, UUID constituencyPublicId);
+
+    /**
+     * Resolves whether the given user is an elector of the given <b>ward</b> (Kata) — the ward-tier half of
+     * the binding-action electoral gate (F1, D13).
+     *
+     * <p>WHY this exists alongside {@link #isElectorOf} (F1): a Councillor (Diwani) holds a ward, not a
+     * constituency, so a citizen rating/petitioning a councillor must be an elector of that councillor's
+     * ward — exactly the ward of their single voter-ID-authoritative {@code isElectoral}
+     * {@code ProfileLocation} (the minimum pin granularity, PRD §9.0). Gating MPs by constituency but
+     * leaving councillors ungated let anyone in Tanzania rate/petition any councillor; this closes that gap
+     * while keeping the constituency path for MPs unchanged.</p>
+     *
+     * <p>Resolution: the user's account → its identity {@code Profile} → the profile's single
+     * {@code isElectoral} {@code ProfileLocation} → that location's ward. Returns {@code true} iff that
+     * ward's public id equals {@code wardPublicId}. Any missing link (no profile, no electoral location)
+     * yields {@code false} (deny-by-default — the caller denies {@code OUT_OF_SCOPE}). The same fence holds:
+     * no token/balance is read on this path (D18, §23.5).</p>
+     *
+     * @param userPublicId  the actor's immutable account public id (the JWT subject — never a body id).
+     * @param wardPublicId  the target ward's public id (the ward-tier rep's ward); {@code null} is never a match.
+     * @return {@code true} if the user's authoritative electoral location is in that ward.
+     */
+    boolean isElectorOfWard(UUID userPublicId, UUID wardPublicId);
 }

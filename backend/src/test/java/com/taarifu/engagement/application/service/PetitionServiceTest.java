@@ -111,6 +111,28 @@ class PetitionServiceTest {
     }
 
     @Test
+    void signOnSuccess_emitsPetitionSignedAudit_refsOnly_noPii() {
+        // R-4: a successful sign appends a PETITION_SIGNED event with actor=signer, subject=petition, and a
+        // non-PII reason (the target type) — never the signer's comment.
+        Petition petition = activeOfficePetition();
+        when(petitions.findByPublicId(petitionId)).thenReturn(Optional.of(petition));
+        when(signatures.existsByPetition_PublicIdAndSignerProfileId(petitionId, signer)).thenReturn(false);
+
+        service.sign(petitionId, signer, "ndio", false);
+
+        ArgumentCaptor<com.taarifu.common.audit.domain.model.AuditEvent> ev =
+                ArgumentCaptor.forClass(com.taarifu.common.audit.domain.model.AuditEvent.class);
+        verify(audit).record(ev.capture());
+        var e = ev.getValue();
+        assertThat(e.getEventType()).isEqualTo(com.taarifu.common.audit.AuditEventType.PETITION_SIGNED);
+        assertThat(e.getActorPublicId()).isEqualTo(signer);
+        assertThat(e.getSubjectPublicId()).isEqualTo(petition.getPublicId());
+        assertThat(e.getReasonCode()).isEqualTo(PetitionTargetType.OFFICE.name());
+        // The reason carries no signer comment (no PII).
+        assertThat(e.getReasonCode()).doesNotContain("ndio");
+    }
+
+    @Test
     void signRejectsDuplicate_onePerPerson_preCheck() {
         Petition petition = activeOfficePetition();
         when(petitions.findByPublicId(petitionId)).thenReturn(Optional.of(petition));
@@ -166,6 +188,54 @@ class PetitionServiceTest {
         var dto = service.sign(petitionId, signer, "ndio", false);
 
         assertThat(dto.signatureCount()).isEqualTo(1);
+        verify(signatures).save(any(PetitionSignature.class));
+    }
+
+    @Test
+    void signBlocksOutOfElectoralWard_onCouncillorPetition_andAudits() {
+        // F1: a petition targeting a COUNCILLOR (no constituency, but a ward) is ward-scoped. A signer who
+        // is NOT an elector of that ward → OUT_OF_SCOPE, audited, no signature saved. This test would FAIL
+        // (sign would proceed) under the old constituency-only logic, which silently skipped councillors.
+        UUID target = UUID.randomUUID();
+        UUID councillorWard = UUID.randomUUID();
+        Petition repPetition = Petition.create("Diwani", "body", PetitionTargetType.REPRESENTATIVE,
+                target, 100, null, UUID.randomUUID(), null);
+        repPetition.activate();
+        when(petitions.findByPublicId(petitionId)).thenReturn(Optional.of(repPetition));
+        when(scopeGuard.isNotSelf(target)).thenReturn(true);
+        when(signatures.existsByPetition_PublicIdAndSignerProfileId(petitionId, signer)).thenReturn(false);
+        when(representativeQueryApi.constituencyOf(target)).thenReturn(Optional.empty());
+        when(representativeQueryApi.wardOf(target)).thenReturn(Optional.of(councillorWard));
+        when(electoralScopeApi.isElectorOfWard(signer, councillorWard)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.sign(petitionId, signer, null, false))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.OUT_OF_SCOPE);
+
+        verify(signatures, never()).save(any());
+        verify(audit).record(any());
+    }
+
+    @Test
+    void signAllowsInElectoralWard_onCouncillorPetition() {
+        // F1: the signer IS an elector of the councillor's ward → the sign proceeds and counts.
+        UUID target = UUID.randomUUID();
+        UUID councillorWard = UUID.randomUUID();
+        Petition repPetition = Petition.create("Diwani", "body", PetitionTargetType.REPRESENTATIVE,
+                target, 100, null, UUID.randomUUID(), null);
+        repPetition.activate();
+        when(petitions.findByPublicId(petitionId)).thenReturn(Optional.of(repPetition));
+        when(scopeGuard.isNotSelf(target)).thenReturn(true);
+        when(signatures.existsByPetition_PublicIdAndSignerProfileId(petitionId, signer)).thenReturn(false);
+        when(representativeQueryApi.constituencyOf(target)).thenReturn(Optional.empty());
+        when(representativeQueryApi.wardOf(target)).thenReturn(Optional.of(councillorWard));
+        when(electoralScopeApi.isElectorOfWard(signer, councillorWard)).thenReturn(true);
+
+        var dto = service.sign(petitionId, signer, "ndio", false);
+
+        assertThat(dto.signatureCount()).isEqualTo(1);
+        verify(electoralScopeApi).isElectorOfWard(signer, councillorWard);
         verify(signatures).save(any(PetitionSignature.class));
     }
 

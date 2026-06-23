@@ -1,12 +1,15 @@
 package com.taarifu.responders;
 
+import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.reporting.api.IssueCategoryQueryApi;
 import com.taarifu.reporting.api.ReportLifecycleApi;
 import com.taarifu.reporting.api.ReportQueryApi;
+import com.taarifu.reporting.api.dto.ReportScopeDto;
 import com.taarifu.responders.api.dto.CreateAssignmentRequest;
 import com.taarifu.responders.api.dto.ResponderAssignmentDto;
 import com.taarifu.responders.application.mapper.ResponderMapper;
@@ -32,6 +35,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -56,11 +60,15 @@ class ResponderAdminServiceTest {
     private ReportQueryApi reportQueryApi;
     private IssueCategoryQueryApi issueCategoryQueryApi;
     private ReportLifecycleApi reportLifecycleApi;
+    private ScopeGuard scopeGuard;
+    private AuditEventService audit;
     private ResponderAdminService service;
 
     private final UUID reportId = UUID.randomUUID();
     private final UUID responderPublicId = UUID.randomUUID();
     private final UUID actor = UUID.randomUUID();
+    private final UUID reportWardId = UUID.randomUUID();
+    private final UUID reportCategoryId = UUID.randomUUID();
     private Responder responder;
 
     @BeforeEach
@@ -72,10 +80,12 @@ class ResponderAdminServiceTest {
         reportQueryApi = mock(ReportQueryApi.class);
         issueCategoryQueryApi = mock(IssueCategoryQueryApi.class);
         reportLifecycleApi = mock(ReportLifecycleApi.class);
+        scopeGuard = mock(ScopeGuard.class);
+        audit = mock(AuditEventService.class);
         ClockPort clock = () -> Instant.parse("2026-06-23T09:00:00Z");
         service = new ResponderAdminService(organisationRepository, responderRepository,
                 routingRuleRepository, assignmentRepository, reportQueryApi, issueCategoryQueryApi,
-                reportLifecycleApi, new ResponderMapper(), clock);
+                reportLifecycleApi, scopeGuard, audit, new ResponderMapper(), clock);
 
         Organisation org = Organisation.create("TANESCO", OrganisationType.PARASTATAL);
         responder = Responder.create(org, "TANESCO — Kilimanjaro", ResponderType.UTILITY,
@@ -85,6 +95,12 @@ class ResponderAdminServiceTest {
         when(assignmentRepository.findByReportAndResponder(any(), any())).thenReturn(Optional.empty());
         when(assignmentRepository.findOwner(any(), any())).thenReturn(Optional.empty());
         when(assignmentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // R-1 default: the report resolves to a ward+category, and the agent is in scope on both axes
+        // (lenient — plain mock()). Negative tests below override these to drive an out-of-scope denial.
+        lenient().when(reportQueryApi.scopeOf(reportId))
+                .thenReturn(new ReportScopeDto(reportWardId, reportCategoryId));
+        lenient().when(scopeGuard.canActOnArea(any())).thenReturn(true);
+        lenient().when(scopeGuard.canActOnCategory(any())).thenReturn(true);
     }
 
     @Test
@@ -194,7 +210,8 @@ class ResponderAdminServiceTest {
     @Test
     void lifecycleActions_delegateToReportingPort_drivingTheStateMachine() {
         // The responder-side lifecycle actions are thin pass-throughs to reporting's published command port
-        // (sync responders → reporting); reporting owns the §12.1 transitions (D21, ADR-0013 §4a).
+        // (sync responders → reporting); reporting owns the §12.1 transitions (D21, ADR-0013 §4a). The R-1
+        // scope check passes here (in-scope agent, stubbed in setUp), so each delegates to reporting.
         service.startCase(reportId, responderPublicId, actor);
         verify(reportLifecycleApi).assign(reportId, responderPublicId, actor);
 
@@ -206,5 +223,62 @@ class ResponderAdminServiceTest {
 
         service.escalateCase(reportId, actor, "urgent");
         verify(reportLifecycleApi).escalate(reportId, actor, "urgent");
+    }
+
+    @Test
+    void lifecycle_inScopeAgent_isAllowed_andGatesOnReportWardAndCategory() {
+        // R-1: an agent whose live RoleAssignment covers the report's ward AND category may drive the
+        // lifecycle. The scope is resolved from reporting's published port (ward + category public ids).
+        service.resolveCase(reportId, actor, "fixed");
+
+        // The scope was resolved off the report and BOTH axes were checked (area ∧ category).
+        verify(reportQueryApi).scopeOf(reportId);
+        verify(scopeGuard).canActOnArea(reportWardId);
+        verify(scopeGuard).canActOnCategory(reportCategoryId);
+        verify(reportLifecycleApi).resolve(reportId, actor, "fixed");
+    }
+
+    @Test
+    void lifecycle_agentOutsideReportArea_isOutOfScope_403_andNeverTransitions() {
+        // R-1: an agent whose RoleAssignment does NOT cover the report's ward is denied OUT_OF_SCOPE — the
+        // report's lifecycle is never driven. This test fails (no exception) the moment the area gate is
+        // removed from the lifecycle path — proving the guard, not the happy path (CLAUDE.md §10).
+        when(scopeGuard.canActOnArea(reportWardId)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.escalateCase(reportId, actor, "urgent"))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.OUT_OF_SCOPE);
+
+        // The out-of-scope agent never reaches reporting's state machine, and the denial is audited.
+        verify(reportLifecycleApi, never()).escalate(any(), any(), any());
+        verify(audit).record(any());
+    }
+
+    @Test
+    void lifecycle_agentOutsideReportCategory_isOutOfScope_403_andNeverTransitions() {
+        // R-1: in-area but NOT handling the report's category → still OUT_OF_SCOPE (both axes required).
+        when(scopeGuard.canActOnCategory(reportCategoryId)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.startCase(reportId, responderPublicId, actor))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.OUT_OF_SCOPE);
+
+        verify(reportLifecycleApi, never()).assign(any(), any(), any());
+        verify(audit).record(any());
+    }
+
+    @Test
+    void lifecycle_unknownReport_isNotFound_viaReportingScopePort() {
+        // R-1: the scope resolution runs first; an unknown report is NOT_FOUND before any transition.
+        UUID missing = UUID.randomUUID();
+        when(reportQueryApi.scopeOf(missing))
+                .thenThrow(new ResourceNotFoundException("reporting.report.notFound", missing));
+
+        assertThatThrownBy(() -> service.beginWork(missing, actor))
+                .isInstanceOf(ResourceNotFoundException.class);
+
+        verify(reportLifecycleApi, never()).start(any(), any());
     }
 }

@@ -5,6 +5,9 @@ import com.taarifu.accountability.application.mapper.AccountabilityMapper;
 import com.taarifu.accountability.domain.model.Rating;
 import com.taarifu.accountability.domain.model.enums.RatingSubjectType;
 import com.taarifu.accountability.domain.repository.RatingRepository;
+import com.taarifu.common.audit.AuditEventService;
+import com.taarifu.common.audit.AuditEventType;
+import com.taarifu.common.audit.domain.model.AuditEvent;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.security.CurrentUser;
@@ -53,6 +56,8 @@ class RatingServiceTest {
     private RepresentativeQueryApi representativeQueryApi;
     @Mock
     private ElectoralScopeApi electoralScopeApi;
+    @Mock
+    private AuditEventService audit;
 
     private final AccountabilityMapper mapper = new AccountabilityMapper();
 
@@ -78,7 +83,7 @@ class RatingServiceTest {
 
     private RatingService service() {
         return new RatingService(ratingRepository, scopeGuard, representativeQueryApi, electoralScopeApi,
-                mapper);
+                mapper, audit);
     }
 
     @Test
@@ -210,5 +215,99 @@ class RatingServiceTest {
 
         verify(electoralScopeApi).isElectorOf(caller, repConstituency);
         verify(ratingRepository).saveAndFlush(any(Rating.class));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // F1: councillor (ward-tier) electoral scope — a councillor holds a WARD, not a constituency, so the
+    // gate must be the rater's electoral WARD. Previously these reps were ungated (constituency empty).
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    void blocksRatingCouncillor_outsideElectoralWard_outOfScope() {
+        // The subject is a councillor: no constituency, but a ward the rater is NOT an elector of → the
+        // ward gate (F1) must deny OUT_OF_SCOPE. This test would FAIL (rating would proceed) under the old
+        // constituency-only logic, which silently skipped every councillor.
+        authenticateCaller();
+        UUID councillorWard = UUID.randomUUID();
+        when(scopeGuard.isNotSelf(subject)).thenReturn(true);
+        when(representativeQueryApi.constituencyOf(subject)).thenReturn(Optional.empty());
+        when(representativeQueryApi.wardOf(subject)).thenReturn(Optional.of(councillorWard));
+        when(electoralScopeApi.isElectorOfWard(caller, councillorWard)).thenReturn(false);
+
+        assertThatThrownBy(() -> service().submit(request()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.OUT_OF_SCOPE);
+
+        verify(ratingRepository, never()).saveAndFlush(any());
+        verify(ratingRepository, never()).save(any());
+    }
+
+    @Test
+    void allowsRatingCouncillor_withinElectoralWard_persists() {
+        // The rater IS an elector of the councillor's ward → the rating proceeds via the ward gate (F1).
+        authenticateCaller();
+        UUID councillorWard = UUID.randomUUID();
+        when(scopeGuard.isNotSelf(subject)).thenReturn(true);
+        when(representativeQueryApi.constituencyOf(subject)).thenReturn(Optional.empty());
+        when(representativeQueryApi.wardOf(subject)).thenReturn(Optional.of(councillorWard));
+        when(electoralScopeApi.isElectorOfWard(caller, councillorWard)).thenReturn(true);
+        when(ratingRepository.findBySubjectTypeAndSubjectIdAndRaterProfileIdAndPeriod(
+                RatingSubjectType.REPRESENTATIVE, subject, caller, "2026-Q2"))
+                .thenReturn(Optional.empty());
+        when(ratingRepository.saveAndFlush(any(Rating.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service().submit(request());
+
+        verify(electoralScopeApi).isElectorOfWard(caller, councillorWard);
+        verify(ratingRepository).saveAndFlush(any(Rating.class));
+    }
+
+    @Test
+    void allowsRatingSpecialSeatsRep_noGeographicGate_regressionGuard() {
+        // A special-seats / nominated rep has NEITHER a constituency NOR a ward → no geographic gate (PRD
+        // §22.6). F1 must not regress this: the rating proceeds without any electoral-location check.
+        authenticateCaller();
+        when(scopeGuard.isNotSelf(subject)).thenReturn(true);
+        when(representativeQueryApi.constituencyOf(subject)).thenReturn(Optional.empty());
+        when(representativeQueryApi.wardOf(subject)).thenReturn(Optional.empty());
+        when(ratingRepository.findBySubjectTypeAndSubjectIdAndRaterProfileIdAndPeriod(
+                RatingSubjectType.REPRESENTATIVE, subject, caller, "2026-Q2"))
+                .thenReturn(Optional.empty());
+        when(ratingRepository.saveAndFlush(any(Rating.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service().submit(request());
+
+        // Neither electoral check is consulted for a seat-less rep; the rating persists.
+        verify(electoralScopeApi, never()).isElectorOf(any(), any());
+        verify(electoralScopeApi, never()).isElectorOfWard(any(), any());
+        verify(ratingRepository).saveAndFlush(any(Rating.class));
+    }
+
+    @Test
+    void onSuccess_emitsRatingSubmittedAudit_refsOnly_noPii() {
+        // R-4: a successful submit appends a RATING_SUBMITTED audit event with actor=rater, subject=rated,
+        // and a non-PII reason (subjectType:period) — never the score or comment.
+        authenticateCaller();
+        UUID repConstituency = UUID.randomUUID();
+        when(scopeGuard.isNotSelf(subject)).thenReturn(true);
+        when(representativeQueryApi.constituencyOf(subject)).thenReturn(Optional.of(repConstituency));
+        when(electoralScopeApi.isElectorOf(caller, repConstituency)).thenReturn(true);
+        when(ratingRepository.findBySubjectTypeAndSubjectIdAndRaterProfileIdAndPeriod(
+                RatingSubjectType.REPRESENTATIVE, subject, caller, "2026-Q2"))
+                .thenReturn(Optional.empty());
+        when(ratingRepository.saveAndFlush(any(Rating.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service().submit(request());
+
+        ArgumentCaptor<AuditEvent> ev = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(audit).record(ev.capture());
+        AuditEvent e = ev.getValue();
+        assertThat(e.getEventType()).isEqualTo(AuditEventType.RATING_SUBMITTED);
+        assertThat(e.getActorPublicId()).isEqualTo(caller);
+        assertThat(e.getSubjectPublicId()).isEqualTo(subject);
+        assertThat(e.getReasonCode()).isEqualTo("REPRESENTATIVE:2026-Q2");
+        // The non-PII reason carries no score/comment.
+        assertThat(e.getReasonCode()).doesNotContain("good work");
     }
 }

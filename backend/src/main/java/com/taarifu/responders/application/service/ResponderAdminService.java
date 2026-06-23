@@ -1,13 +1,19 @@
 package com.taarifu.responders.application.service;
 
+import com.taarifu.common.audit.AuditEventService;
+import com.taarifu.common.audit.AuditEventType;
+import com.taarifu.common.audit.AuditOutcome;
+import com.taarifu.common.audit.domain.model.AuditEvent;
 import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.reporting.api.IssueCategoryQueryApi;
 import com.taarifu.reporting.api.ReportLifecycleApi;
 import com.taarifu.reporting.api.ReportQueryApi;
 import com.taarifu.reporting.api.dto.ReportDto;
+import com.taarifu.reporting.api.dto.ReportScopeDto;
 import com.taarifu.responders.api.dto.CreateAssignmentRequest;
 import com.taarifu.responders.api.dto.CreateOrganisationRequest;
 import com.taarifu.responders.api.dto.CreateResponderRequest;
@@ -66,6 +72,8 @@ public class ResponderAdminService {
     private final ReportQueryApi reportQueryApi;
     private final IssueCategoryQueryApi issueCategoryQueryApi;
     private final ReportLifecycleApi reportLifecycleApi;
+    private final ScopeGuard scopeGuard;
+    private final AuditEventService audit;
     private final ResponderMapper mapper;
     private final ClockPort clock;
 
@@ -74,9 +82,14 @@ public class ResponderAdminService {
      * @param responderRepository    responder persistence.
      * @param routingRuleRepository  routing-rule persistence.
      * @param assignmentRepository   assignment persistence.
-     * @param reportQueryApi         reporting's published port validating a {@code reportId} exists (D21).
+     * @param reportQueryApi         reporting's published port validating a {@code reportId} exists +
+     *                               resolving its ward/category scope (D21; R-1).
      * @param issueCategoryQueryApi  reporting's published port validating a {@code categoryId} (ADR-0013).
      * @param reportLifecycleApi     reporting's published command port driving the case state machine (D21).
+     * @param scopeGuard             the {@code @taarifuAuthz} live-scope seam — gates each lifecycle action on
+     *                               the acting agent's {@code RoleAssignment} area/category scope (R-1, never
+     *                               token).
+     * @param audit                  append-only audit writer (out-of-scope-denial evidence; refs only, R-1/L-1).
      * @param mapper                 entity→DTO mapper.
      * @param clock                  injectable time (assignment timestamps; testability).
      */
@@ -87,6 +100,8 @@ public class ResponderAdminService {
                                  ReportQueryApi reportQueryApi,
                                  IssueCategoryQueryApi issueCategoryQueryApi,
                                  ReportLifecycleApi reportLifecycleApi,
+                                 ScopeGuard scopeGuard,
+                                 AuditEventService audit,
                                  ResponderMapper mapper,
                                  ClockPort clock) {
         this.organisationRepository = organisationRepository;
@@ -96,6 +111,8 @@ public class ResponderAdminService {
         this.reportQueryApi = reportQueryApi;
         this.issueCategoryQueryApi = issueCategoryQueryApi;
         this.reportLifecycleApi = reportLifecycleApi;
+        this.scopeGuard = scopeGuard;
+        this.audit = audit;
         this.mapper = mapper;
         this.clock = clock;
     }
@@ -334,57 +351,107 @@ public class ResponderAdminService {
 
     // ---------------------------------------------------------------------------------------------
     // Responder-side case lifecycle (D21) — drives reporting's state machine via its published command
-    // port (sync responders → reporting, ADR-0013 §4a). These are thin pass-throughs: reporting owns the
-    // §12.1 transition rules, so an illegal transition surfaces as its typed CONFLICT unchanged here.
+    // port (sync responders → reporting, ADR-0013 §4a). Reporting owns the §12.1 transition rules, so an
+    // illegal transition surfaces as its typed CONFLICT unchanged here.
+    //
+    // R-1 (horizontal authz): role-gating alone (@PreAuthorize RESPONDER_AGENT/ADMIN) is NOT sufficient —
+    // it would let any agent drive ANY report's lifecycle out of their area/category. So each action first
+    // resolves the report's ward + category (reporting's published ReportQueryApi.scopeOf) and gates on the
+    // acting agent's LIVE RoleAssignment area/category scope (@taarifuAuthz.canActOnArea ∧ canActOnCategory,
+    // never the token). An out-of-scope agent is denied OUT_OF_SCOPE (403), audited. This is an
+    // election-period-neutrality control (an out-of-area agent must not resolve/escalate cases, §24.4).
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * Assigns a responder to a report and drives it {@code → ASSIGNED} (D21). The OWNER
-     * {@link ResponderAssignment} is created via {@link #assignResponder} (single-OWNER guard); this then
-     * records the assignment on the report and transitions its lifecycle through reporting's state machine.
+     * Assigns a responder to a report and drives it {@code → ASSIGNED} (D21), after the R-1 area/category
+     * scope check. The OWNER {@link ResponderAssignment} is created via {@link #assignResponder}
+     * (single-OWNER guard); this then transitions its lifecycle through reporting's state machine.
      *
      * @param reportId          the report to assign (validated to exist by reporting's port).
      * @param responderPublicId the responder taking the case.
      * @param actorPublicId     the acting agent's account public id (timeline attribution).
      * @return reporting's updated {@link ReportDto}.
+     * @throws ApiException {@link ErrorCode#OUT_OF_SCOPE} if the agent is outside the report's area/category
+     *                      scope (R-1); {@link ResourceNotFoundException} if the report does not exist.
      */
     public ReportDto startCase(UUID reportId, UUID responderPublicId, UUID actorPublicId) {
+        requireActorInReportScope(reportId, actorPublicId, "ASSIGN");
         return reportLifecycleApi.assign(reportId, responderPublicId, actorPublicId);
     }
 
     /**
-     * Drives an assigned report {@code → IN_PROGRESS} (§12.1).
+     * Drives an assigned report {@code → IN_PROGRESS} (§12.1), after the R-1 area/category scope check.
      *
      * @param reportId      the report to start.
      * @param actorPublicId the acting agent's account public id.
      * @return reporting's updated {@link ReportDto}.
+     * @throws ApiException {@link ErrorCode#OUT_OF_SCOPE} if the agent is outside the report's scope (R-1).
      */
     public ReportDto beginWork(UUID reportId, UUID actorPublicId) {
+        requireActorInReportScope(reportId, actorPublicId, "START");
         return reportLifecycleApi.start(reportId, actorPublicId);
     }
 
     /**
-     * Resolves a report with the required note ({@code → RESOLVED}, US-3.4).
+     * Resolves a report with the required note ({@code → RESOLVED}, US-3.4), after the R-1 scope check.
      *
      * @param reportId       the report to resolve.
      * @param actorPublicId  the acting agent's account public id.
      * @param resolutionNote the required resolution note.
      * @return reporting's updated {@link ReportDto}.
+     * @throws ApiException {@link ErrorCode#OUT_OF_SCOPE} if the agent is outside the report's scope (R-1).
      */
     public ReportDto resolveCase(UUID reportId, UUID actorPublicId, String resolutionNote) {
+        requireActorInReportScope(reportId, actorPublicId, "RESOLVE");
         return reportLifecycleApi.resolve(reportId, actorPublicId, resolutionNote);
     }
 
     /**
-     * Escalates a report to a supervisor ({@code → ESCALATED}; stays active, §12.1).
+     * Escalates a report to a supervisor ({@code → ESCALATED}; stays active, §12.1), after the R-1 check.
      *
      * @param reportId      the report to escalate.
      * @param actorPublicId the acting agent's account public id.
      * @param reason        optional escalation reason for the timeline.
      * @return reporting's updated {@link ReportDto}.
+     * @throws ApiException {@link ErrorCode#OUT_OF_SCOPE} if the agent is outside the report's scope (R-1).
      */
     public ReportDto escalateCase(UUID reportId, UUID actorPublicId, String reason) {
+        requireActorInReportScope(reportId, actorPublicId, "ESCALATE");
         return reportLifecycleApi.escalate(reportId, actorPublicId, reason);
+    }
+
+    /**
+     * R-1 horizontal-authorization gate for a case-lifecycle action: resolves the report's ward + category
+     * (reporting's published {@link ReportQueryApi#scopeOf}) and asserts the acting agent's <b>live</b>
+     * {@code RoleAssignment} scope covers <b>both</b> ({@link ScopeGuard#canActOnArea} ∧
+     * {@link ScopeGuard#canActOnCategory}). An out-of-scope agent is denied {@link ErrorCode#OUT_OF_SCOPE}
+     * (403) and the denial is audited (refs only, no PII).
+     *
+     * <p>WHY both axes (AND, not OR): a responder agent is scoped to an area <i>and</i> the categories they
+     * handle; acting on a report requires being in-area for it AND handling its category. An empty area or
+     * category set on the assignment means "unrestricted within that role" (handled inside {@code ScopeGuard}),
+     * so a nationwide/all-category agent still passes. WHY token is never consulted: scope comes from the
+     * live {@code RoleAssignment}, the integrity-fence rule (D18) — token balance must never gate routing/SLA.</p>
+     *
+     * @param reportId      the report whose scope gates the action (validated to exist by reporting's port).
+     * @param actorPublicId the acting agent's account public id (audited as the actor).
+     * @param action        a short machine label of the lifecycle action (for the audit reason code).
+     * @throws ResourceNotFoundException if the report does not exist (reporting's port throws NOT_FOUND).
+     * @throws ApiException {@link ErrorCode#OUT_OF_SCOPE} if the agent is outside the report's area/category.
+     */
+    private void requireActorInReportScope(UUID reportId, UUID actorPublicId, String action) {
+        ReportScopeDto scope = reportQueryApi.scopeOf(reportId);
+        boolean inArea = scopeGuard.canActOnArea(scope.wardPublicId());
+        boolean inCategory = scopeGuard.canActOnCategory(scope.categoryPublicId());
+        if (!inArea || !inCategory) {
+            audit.record(AuditEvent.Builder
+                    .of(AuditEventType.AUTHZ_SCOPE_DENIED, AuditOutcome.DENIED)
+                    .actor(actorPublicId)
+                    .subject(reportId)
+                    .reason("RESPONDER_LIFECYCLE_" + action + "_OUT_OF_SCOPE")
+                    .build());
+            throw new ApiException(ErrorCode.OUT_OF_SCOPE);
+        }
     }
 
     // ---------------------------------------------------------------------------------------------

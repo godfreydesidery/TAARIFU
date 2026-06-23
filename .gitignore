@@ -14,6 +14,10 @@ taarifu-core-api/
 _prd_drafts/
 *.bak
 
+# Temporary parallel-build worktrees (auto-created/removed by the worktree-isolation
+# tooling; the real code lives at the repo root and is merged from these branches).
+.claude/worktrees/
+
 # OS / editor noise
 Thumbs.db
 .DS_Store

@@ -53,7 +53,8 @@ import java.util.stream.Collectors;
  * substrate is a later increment (ARCHITECTURE §8). This service is written so it can be moved behind the
  * bus unchanged — it never throws on a routine channel failure (it records {@code FAILED}/falls back), so
  * the caller's transaction (e.g. publishing the announcement) never rolls back on a provider outage
- * (DI3). TODO(wiring): invoke this from the {@code AnnouncementPublished} outbox consumer once it exists.</p>
+ * (DI3). It is now invoked from the {@code AnnouncementPublishedHandler} outbox consumer (ADR-0014 §5a),
+ * which the {@code OutboxRelay} drives off the request thread.</p>
  */
 @Service
 public class NotificationDispatchService {

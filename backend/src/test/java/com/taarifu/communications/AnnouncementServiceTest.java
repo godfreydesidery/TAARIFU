@@ -2,6 +2,8 @@ package com.taarifu.communications;
 
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.communications.api.event.AnnouncementPublished;
 import com.taarifu.communications.application.service.AnnouncementService;
 import com.taarifu.communications.domain.model.Announcement;
@@ -10,7 +12,7 @@ import com.taarifu.communications.domain.model.enums.Channel;
 import com.taarifu.communications.domain.repository.AnnouncementRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.context.ApplicationEventPublisher;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -30,15 +32,17 @@ import static org.mockito.Mockito.when;
  * (PRD §12, US-4.1).
  *
  * <p>Responsibility: pins the load-bearing publish rules without a DB (Mockito only): a trusted author
- * publishes immediately and the {@link AnnouncementPublished} event fires; a new/untrusted author is
- * <b>held for moderation</b> (DRAFT + held) and <b>no</b> event fires; a future {@code publishAt} yields
- * {@code SCHEDULED}; an inverted schedule window is rejected. The held-author test fails if the
- * moderation gate is removed — the integrity guarantee the PRD demands for new authors.</p>
+ * publishes immediately and the {@link AnnouncementPublished} event is <b>appended to the transactional
+ * outbox</b> (ADR-0014) in the publish transaction; a new/untrusted author is <b>held for moderation</b>
+ * (DRAFT + held) and <b>no</b> event is appended; a future {@code publishAt} yields {@code SCHEDULED} and
+ * appends nothing; an inverted schedule window is rejected. The held-author test fails if the moderation
+ * gate is removed — the integrity guarantee the PRD demands for new authors. The outbox-append assertions
+ * pin the atomicity wiring: removing the {@code outboxWriter.append} fails them.</p>
  */
 class AnnouncementServiceTest {
 
     private AnnouncementRepository announcementRepository;
-    private ApplicationEventPublisher events;
+    private OutboxWriter outboxWriter;
     private FixedClock clock;
     private AnnouncementService service;
 
@@ -48,31 +52,43 @@ class AnnouncementServiceTest {
     @BeforeEach
     void setUp() {
         announcementRepository = mock(AnnouncementRepository.class);
-        events = mock(ApplicationEventPublisher.class);
+        outboxWriter = mock(OutboxWriter.class);
         clock = new FixedClock(Instant.parse("2026-06-23T12:00:00Z"));
-        service = new AnnouncementService(announcementRepository, events, clock);
+        service = new AnnouncementService(announcementRepository, outboxWriter, clock);
         when(announcementRepository.save(any(Announcement.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     @Test
-    void trustedAuthor_publishesImmediately_andEmitsEvent() {
+    void trustedAuthor_publishesImmediately_andAppendsEventToOutbox() {
         Announcement a = service.publish(author, true, "Title", "Mwili", null,
                 Set.of(area), null, null, Set.of("FEED", "PUSH"), null, null, null);
 
         assertThat(a.getStatus()).isEqualTo(AnnouncementStatus.PUBLISHED);
         assertThat(a.isModerationHeld()).isFalse();
-        verify(events).publishEvent(any(AnnouncementPublished.class));
+        // The event is appended to the outbox in the publish tx (ADR-0014 §5a), not raised in-process —
+        // and it carries the right taxonomy key, aggregate, and a PII-free payload.
+        ArgumentCaptor<EventEnvelope<?>> captor = envelopeCaptor();
+        verify(outboxWriter).append(captor.capture());
+        EventEnvelope<?> envelope = captor.getValue();
+        assertThat(envelope.eventType()).isEqualTo(AnnouncementPublished.EVENT_TYPE);
+        assertThat(envelope.aggregateType()).isEqualTo(AnnouncementPublished.AGGREGATE_TYPE);
+        assertThat(envelope.aggregateId()).isEqualTo(a.getPublicId());
+        assertThat(envelope.payload()).isInstanceOf(AnnouncementPublished.class);
+        AnnouncementPublished payload = (AnnouncementPublished) envelope.payload();
+        assertThat(payload.announcementId()).isEqualTo(a.getPublicId());
+        assertThat(payload.authorProfileId()).isEqualTo(author);
+        assertThat(payload.audienceAreaIds()).containsExactly(area);
     }
 
     @Test
-    void newAuthor_isHeldForModeration_andEmitsNoEvent() {
+    void newAuthor_isHeldForModeration_andAppendsNoEvent() {
         Announcement a = service.publish(author, false, "Title", "Mwili", null,
                 Set.of(area), null, null, Set.of("FEED"), null, null, null);
 
         // Held → stays DRAFT, flagged, NOT published (US-4.1). This is the integrity gate.
         assertThat(a.getStatus()).isEqualTo(AnnouncementStatus.DRAFT);
         assertThat(a.isModerationHeld()).isTrue();
-        verify(events, never()).publishEvent(any());
+        verify(outboxWriter, never()).append(any());
     }
 
     @Test
@@ -83,7 +99,7 @@ class AnnouncementServiceTest {
 
         assertThat(a.getStatus()).isEqualTo(AnnouncementStatus.SCHEDULED);
         // A scheduled (not-yet-live) announcement does not fan out yet.
-        verify(events, never()).publishEvent(any());
+        verify(outboxWriter, never()).append(any());
     }
 
     @Test
@@ -118,7 +134,20 @@ class AnnouncementServiceTest {
 
         assertThat(out.isModerationHeld()).isFalse();
         assertThat(out.getStatus()).isEqualTo(AnnouncementStatus.PUBLISHED);
-        verify(events).publishEvent(any(AnnouncementPublished.class));
+        // Clearing the hold publishes → the event is appended to the outbox in the same tx (ADR-0014).
+        ArgumentCaptor<EventEnvelope<?>> captor = envelopeCaptor();
+        verify(outboxWriter).append(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo(AnnouncementPublished.EVENT_TYPE);
+    }
+
+    /**
+     * Builds a captor for {@link EventEnvelope} appends. The wildcard generic of {@code OutboxWriter.append}
+     * lets {@code forClass} capture cleanly; confining it here keeps the assertions above readable.
+     *
+     * @return an {@link ArgumentCaptor} capturing the envelope passed to {@link OutboxWriter#append}.
+     */
+    private static ArgumentCaptor<EventEnvelope<?>> envelopeCaptor() {
+        return ArgumentCaptor.forClass(EventEnvelope.class);
     }
 
     // --- getPublicDetail: the public citizen-readable visibility gate (PRD §22.6, SR-3) -------------------

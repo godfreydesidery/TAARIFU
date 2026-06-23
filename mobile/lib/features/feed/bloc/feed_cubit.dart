@@ -60,6 +60,11 @@ class FeedCubit extends Cubit<FeedState> {
 
   final FeedRepository _repository;
 
+  /// The feed repository, exposed so the detail route can build its own
+  /// [AnnouncementDetailCubit] over the same shared repository (and its cache)
+  /// without threading the composition root through every feed widget.
+  FeedRepository get repository => _repository;
+
   /// Loads the first page; keeps any previously shown items on failure so the
   /// screen does not blank out when the network drops mid-session.
   Future<void> load() async {

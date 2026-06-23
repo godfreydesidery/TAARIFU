@@ -13,6 +13,7 @@ import '../../../core/widgets/status_views.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
+import '../bloc/announcement_detail_cubit.dart';
 import '../bloc/feed_cubit.dart';
 import '../data/feed_models.dart';
 import 'feed_detail_screen.dart';
@@ -82,13 +83,23 @@ class _FeedTile extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
       ),
       trailing: const Icon(Icons.chevron_right),
-      // Open the full item on tap (US-4.2). The detail uses the snippet already
-      // in hand — no extra fetch, the most data-frugal choice.
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => FeedDetailScreen(item: item),
-        ),
-      ),
+      // Open the full announcement on tap (US-4.2). The detail seeds from the
+      // snippet already in hand (instant, offline-safe) and fetches the full body
+      // via GET /announcements/{id} over the shared feed repository + its cache.
+      onTap: () {
+        final repository = context.read<FeedCubit>().repository;
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => BlocProvider(
+              create: (_) => AnnouncementDetailCubit(
+                repository: repository,
+                announcementId: item.id,
+              )..load(),
+              child: FeedDetailScreen(item: item),
+            ),
+          ),
+        );
+      },
     ),
   );
 }

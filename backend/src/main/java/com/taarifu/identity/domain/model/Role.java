@@ -41,6 +41,27 @@ public class Role extends BaseEntity {
     protected Role() {
     }
 
+    /**
+     * Creates a catalogue row for a role.
+     *
+     * <p>WHY a factory (rather than only DB-seeding): the role catalogue is referenced by FK from
+     * {@link RoleAssignment} and is normally provisioned by an admin/seed path. Exposing a guarded factory
+     * lets the identity module materialise a missing catalogue row programmatically (e.g. the dev bootstrap
+     * admin) without a sibling reaching into this entity's internals — construction stays inside the owning
+     * module (CLAUDE.md §8, ARCHITECTURE §3.2). It does not weaken uniqueness: the {@code ux_role_name}
+     * constraint remains the hard guarantee against a duplicate name.</p>
+     *
+     * @param name        the canonical role identifier.
+     * @param description a human-readable description (admin/UI display).
+     * @return the populated, transient catalogue row.
+     */
+    public static Role create(RoleName name, String description) {
+        Role r = new Role();
+        r.name = name;
+        r.description = description;
+        return r;
+    }
+
     /** @return the canonical role name. */
     public RoleName getName() {
         return name;

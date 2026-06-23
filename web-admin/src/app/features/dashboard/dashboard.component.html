@@ -1,0 +1,34 @@
+<!-- Dashboard: link-only overview cards. Data-free landing for a fast first paint (PRD §15). -->
+<section>
+  <h1 class="h3 mb-1">{{ 'dashboard.title' | translate }}</h1>
+  <p class="text-muted mb-4">{{ 'dashboard.subtitle' | translate }}</p>
+
+  <div class="row g-3">
+    <div class="col-12 col-md-6 col-lg-4">
+      <a routerLink="/geography/regions" class="card h-100 text-decoration-none text-reset shadow-sm">
+        <div class="card-body">
+          <h2 class="h5 card-title">{{ 'nav.geography' | translate }}</h2>
+          <p class="card-text text-muted mb-0">{{ 'dashboard.geographyCard' | translate }}</p>
+        </div>
+      </a>
+    </div>
+
+    <div class="col-12 col-md-6 col-lg-4">
+      <a routerLink="/representatives" class="card h-100 text-decoration-none text-reset shadow-sm">
+        <div class="card-body">
+          <h2 class="h5 card-title">{{ 'nav.representatives' | translate }}</h2>
+          <p class="card-text text-muted mb-0">{{ 'dashboard.representativesCard' | translate }}</p>
+        </div>
+      </a>
+    </div>
+
+    <div class="col-12 col-md-6 col-lg-4">
+      <a routerLink="/issue-categories" class="card h-100 text-decoration-none text-reset shadow-sm">
+        <div class="card-body">
+          <h2 class="h5 card-title">{{ 'nav.issueCategories' | translate }}</h2>
+          <p class="card-text text-muted mb-0">{{ 'dashboard.categoriesCard' | translate }}</p>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>

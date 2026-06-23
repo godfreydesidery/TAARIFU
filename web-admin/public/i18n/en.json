@@ -1,0 +1,120 @@
+{
+  "app": {
+    "title": "Taarifu — Admin Console",
+    "shortTitle": "Taarifu Admin"
+  },
+  "common": {
+    "loading": "Loading…",
+    "save": "Save",
+    "cancel": "Cancel",
+    "create": "Create",
+    "edit": "Edit",
+    "delete": "Delete",
+    "search": "Search",
+    "actions": "Actions",
+    "yes": "Yes",
+    "no": "No",
+    "back": "Back",
+    "confirm": "Confirm",
+    "retry": "Retry",
+    "noData": "No data to display.",
+    "errorLoading": "Failed to load data.",
+    "page": "Page",
+    "of": "of",
+    "rowsPerPage": "Rows per page",
+    "total": "Total",
+    "active": "Active",
+    "inactive": "Inactive",
+    "required": "Required",
+    "saved": "Saved successfully.",
+    "deleted": "Deleted.",
+    "all": "All"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "geography": "Geography",
+    "regions": "Regions",
+    "representatives": "Representatives",
+    "parties": "Parties",
+    "issueCategories": "Issue Categories",
+    "logout": "Log out",
+    "language": "Language",
+    "menu": "Menu"
+  },
+  "auth": {
+    "loginTitle": "Sign in to the Admin Console",
+    "accountKey": "Phone or Email",
+    "accountKeyPlaceholder": "e.g. 0712345678 or admin@taarifu.go.tz",
+    "password": "Password",
+    "passwordPlaceholder": "Enter your password",
+    "loginButton": "Sign in",
+    "loggingIn": "Signing in…",
+    "loginFailed": "Sign in failed. Check your credentials.",
+    "mfaRequired": "This account requires two-step verification (TOTP). Use a staff device.",
+    "loggedOut": "You have been logged out.",
+    "accountKeyRequired": "Please enter a phone or email.",
+    "passwordRequired": "Please enter a password."
+  },
+  "dashboard": {
+    "title": "Welcome to the Taarifu Admin Console",
+    "subtitle": "Manage geography, representatives, parties, and issue categories.",
+    "geographyCard": "Browse Tanzania's regions and districts.",
+    "representativesCard": "View the directory of MPs and councillors.",
+    "categoriesCard": "Manage the reportable issue taxonomy."
+  },
+  "geography": {
+    "regionsTitle": "Regions",
+    "code": "Code",
+    "name": "Name",
+    "districts": "Districts",
+    "viewDistricts": "View Districts",
+    "districtsOf": "Districts of {{region}}",
+    "noRegions": "No regions found."
+  },
+  "representatives": {
+    "title": "Representatives",
+    "type": "Type",
+    "status": "Status",
+    "party": "Party",
+    "constituency": "Constituency",
+    "ward": "Ward",
+    "searchPlaceholder": "Search a representative…",
+    "filterType": "Filter by type",
+    "filterStatus": "Filter by status",
+    "noResults": "No representatives found."
+  },
+  "parties": {
+    "title": "Political Parties",
+    "abbreviation": "Abbrev.",
+    "ideology": "Ideology",
+    "foundedYear": "Founded",
+    "status": "Status",
+    "searchPlaceholder": "Search a party…",
+    "noResults": "No parties found."
+  },
+  "categories": {
+    "title": "Issue Categories",
+    "code": "Code",
+    "name": "Name",
+    "routingLevel": "Routing level",
+    "ttfr": "TTFR (min)",
+    "ttr": "TTR (min)",
+    "sensitive": "Sensitive",
+    "forcePrivate": "Force Private",
+    "visibility": "Visibility",
+    "icon": "Icon",
+    "active": "Active",
+    "newCategory": "New Category",
+    "editCategory": "Edit Category",
+    "createCategory": "Create Category",
+    "confirmDelete": "Are you sure you want to retire this category?",
+    "noResults": "No issue categories found.",
+    "codeHint": "UPPER_SNAKE_CASE (e.g. WATER_SANITATION). Immutable after creation."
+  },
+  "errors": {
+    "network": "Network unavailable. Check your connection.",
+    "forbidden": "You are not allowed to perform this action.",
+    "notFound": "Resource not found.",
+    "unknown": "Unknown error. Please try again."
+  }
+}

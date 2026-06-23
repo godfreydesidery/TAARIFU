@@ -1,0 +1,78 @@
+<!-- Issue categories admin list: CRUD entry points + soft-delete. -->
+<section>
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <h1 class="h3 mb-0">{{ 'categories.title' | translate }}</h1>
+    <a routerLink="/issue-categories/new" class="btn btn-primary btn-sm">
+      + {{ 'categories.newCategory' | translate }}
+    </a>
+  </div>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
+    </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="loadPage(0)">
+        {{ 'common.retry' | translate }}
+      </button>
+    </div>
+  } @else if (rows().length === 0) {
+    <div class="alert alert-info" role="status">{{ 'categories.noResults' | translate }}</div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th scope="col">{{ 'categories.code' | translate }}</th>
+            <th scope="col">{{ 'categories.name' | translate }}</th>
+            <th scope="col">{{ 'categories.routingLevel' | translate }}</th>
+            <th scope="col">{{ 'categories.sensitive' | translate }}</th>
+            <th scope="col">{{ 'categories.active' | translate }}</th>
+            <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (category of rows(); track category.id) {
+            <tr>
+              <td><code>{{ category.code }}</code></td>
+              <td>{{ category.name }}</td>
+              <td>{{ category.defaultRoutingLevel }}</td>
+              <td>
+                @if (category.sensitive) {
+                  <span class="badge text-bg-warning">{{ 'common.yes' | translate }}</span>
+                } @else {
+                  <span class="text-muted">{{ 'common.no' | translate }}</span>
+                }
+              </td>
+              <td>
+                @if (category.active) {
+                  <span class="badge text-bg-success">{{ 'common.active' | translate }}</span>
+                } @else {
+                  <span class="badge text-bg-secondary">{{ 'common.inactive' | translate }}</span>
+                }
+              </td>
+              <td class="text-end">
+                <a
+                  [routerLink]="['/issue-categories', category.id, 'edit']"
+                  class="btn btn-sm btn-outline-secondary me-1"
+                >
+                  {{ 'common.edit' | translate }}
+                </a>
+                @if (category.active) {
+                  <button type="button" class="btn btn-sm btn-outline-danger" (click)="retire(category)">
+                    {{ 'common.delete' | translate }}
+                  </button>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="loadPage($event)" />
+  }
+</section>

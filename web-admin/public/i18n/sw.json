@@ -1,0 +1,120 @@
+{
+  "app": {
+    "title": "Taarifu — Kituo cha Usimamizi",
+    "shortTitle": "Taarifu Admin"
+  },
+  "common": {
+    "loading": "Inapakia…",
+    "save": "Hifadhi",
+    "cancel": "Ghairi",
+    "create": "Tengeneza",
+    "edit": "Hariri",
+    "delete": "Futa",
+    "search": "Tafuta",
+    "actions": "Vitendo",
+    "yes": "Ndiyo",
+    "no": "Hapana",
+    "back": "Rudi",
+    "confirm": "Thibitisha",
+    "retry": "Jaribu tena",
+    "noData": "Hakuna data ya kuonyesha.",
+    "errorLoading": "Imeshindikana kupakia data.",
+    "page": "Ukurasa",
+    "of": "kati ya",
+    "rowsPerPage": "Safu kwa ukurasa",
+    "total": "Jumla",
+    "active": "Inatumika",
+    "inactive": "Haitumiki",
+    "required": "Inahitajika",
+    "saved": "Imehifadhiwa kikamilifu.",
+    "deleted": "Imefutwa.",
+    "all": "Zote"
+  },
+  "nav": {
+    "dashboard": "Dashibodi",
+    "geography": "Jiografia",
+    "regions": "Mikoa",
+    "representatives": "Wawakilishi",
+    "parties": "Vyama",
+    "issueCategories": "Aina za Matatizo",
+    "logout": "Toka",
+    "language": "Lugha",
+    "menu": "Menyu"
+  },
+  "auth": {
+    "loginTitle": "Ingia kwenye Kituo cha Usimamizi",
+    "accountKey": "Simu au Barua pepe",
+    "accountKeyPlaceholder": "Mf. 0712345678 au admin@taarifu.go.tz",
+    "password": "Nenosiri",
+    "passwordPlaceholder": "Weka nenosiri lako",
+    "loginButton": "Ingia",
+    "loggingIn": "Inaingia…",
+    "loginFailed": "Kuingia kumeshindikana. Angalia taarifa zako.",
+    "mfaRequired": "Akaunti hii inahitaji uthibitishaji wa hatua mbili (TOTP). Tumia kifaa cha staff.",
+    "loggedOut": "Umetoka kikamilifu.",
+    "accountKeyRequired": "Tafadhali weka simu au barua pepe.",
+    "passwordRequired": "Tafadhali weka nenosiri."
+  },
+  "dashboard": {
+    "title": "Karibu kwenye Kituo cha Usimamizi cha Taarifu",
+    "subtitle": "Simamia jiografia, wawakilishi, vyama, na aina za matatizo.",
+    "geographyCard": "Vinjari mikoa na wilaya za Tanzania.",
+    "representativesCard": "Tazama orodha ya wabunge na madiwani.",
+    "categoriesCard": "Simamia aina za matatizo zinazoripotiwa."
+  },
+  "geography": {
+    "regionsTitle": "Mikoa",
+    "code": "Msimbo",
+    "name": "Jina",
+    "districts": "Wilaya",
+    "viewDistricts": "Tazama Wilaya",
+    "districtsOf": "Wilaya za {{region}}",
+    "noRegions": "Hakuna mikoa iliyopatikana."
+  },
+  "representatives": {
+    "title": "Wawakilishi",
+    "type": "Aina",
+    "status": "Hali",
+    "party": "Chama",
+    "constituency": "Jimbo",
+    "ward": "Kata",
+    "searchPlaceholder": "Tafuta mwakilishi…",
+    "filterType": "Chuja kwa aina",
+    "filterStatus": "Chuja kwa hali",
+    "noResults": "Hakuna mwakilishi aliyepatikana."
+  },
+  "parties": {
+    "title": "Vyama vya Siasa",
+    "abbreviation": "Kifupi",
+    "ideology": "Itikadi",
+    "foundedYear": "Mwaka wa kuanzishwa",
+    "status": "Hali",
+    "searchPlaceholder": "Tafuta chama…",
+    "noResults": "Hakuna chama kilichopatikana."
+  },
+  "categories": {
+    "title": "Aina za Matatizo",
+    "code": "Msimbo",
+    "name": "Jina",
+    "routingLevel": "Ngazi ya uelekezaji",
+    "ttfr": "TTFR (dakika)",
+    "ttr": "TTR (dakika)",
+    "sensitive": "Nyeti",
+    "forcePrivate": "Lazimisha Faragha",
+    "visibility": "Uonekanaji",
+    "icon": "Aikoni",
+    "active": "Inatumika",
+    "newCategory": "Aina Mpya",
+    "editCategory": "Hariri Aina",
+    "createCategory": "Tengeneza Aina",
+    "confirmDelete": "Una uhakika unataka kustaafisha aina hii?",
+    "noResults": "Hakuna aina za matatizo zilizopatikana.",
+    "codeHint": "HERUFI_KUBWA_NA_MISTARI (mf. MAJI_USAFI). Haibadiliki baadaye."
+  },
+  "errors": {
+    "network": "Mtandao haupatikani. Angalia muunganisho wako.",
+    "forbidden": "Huna ruhusa ya kufanya kitendo hiki.",
+    "notFound": "Rasilimali haikupatikana.",
+    "unknown": "Hitilafu isiyojulikana. Jaribu tena."
+  }
+}

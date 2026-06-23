@@ -1,0 +1,52 @@
+<!-- Login page: centred card, accessible reactive form. All strings via i18n. -->
+<div class="d-flex align-items-center justify-content-center min-vh-100 bg-body-secondary p-3">
+  <div class="card shadow-sm w-100" style="max-width: 24rem;">
+    <div class="card-body p-4">
+      <h1 class="h4 mb-1">{{ 'app.shortTitle' | translate }}</h1>
+      <p class="text-muted mb-4">{{ 'auth.loginTitle' | translate }}</p>
+
+      <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+        <div class="mb-3">
+          <label class="form-label" for="accountKey">{{ 'auth.accountKey' | translate }}</label>
+          <input
+            id="accountKey"
+            type="text"
+            class="form-control"
+            formControlName="accountKey"
+            autocomplete="username"
+            [attr.placeholder]="'auth.accountKeyPlaceholder' | translate"
+            [class.is-invalid]="form.controls.accountKey.touched && form.controls.accountKey.invalid"
+          />
+          @if (form.controls.accountKey.touched && form.controls.accountKey.invalid) {
+            <div class="invalid-feedback">{{ 'auth.accountKeyRequired' | translate }}</div>
+          }
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label" for="password">{{ 'auth.password' | translate }}</label>
+          <input
+            id="password"
+            type="password"
+            class="form-control"
+            formControlName="password"
+            autocomplete="current-password"
+            [attr.placeholder]="'auth.passwordPlaceholder' | translate"
+            [class.is-invalid]="form.controls.password.touched && form.controls.password.invalid"
+          />
+          @if (form.controls.password.touched && form.controls.password.invalid) {
+            <div class="invalid-feedback">{{ 'auth.passwordRequired' | translate }}</div>
+          }
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100" [disabled]="submitting()">
+          @if (submitting()) {
+            <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+            {{ 'auth.loggingIn' | translate }}
+          } @else {
+            {{ 'auth.loginButton' | translate }}
+          }
+        </button>
+      </form>
+    </div>
+  </div>
+</div>

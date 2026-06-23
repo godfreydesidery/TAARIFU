@@ -1,0 +1,17 @@
+import { HttpClient } from '@angular/common/http';
+import { TranslateHttpLoader } from '@ngx-translate/http-loader';
+
+/**
+ * Factory for ngx-translate's HTTP loader: loads `/i18n/{lang}.json` static dictionaries.
+ *
+ * <p>Responsibility: externalises ALL user-facing strings into per-locale JSON (CLAUDE.md §5: "all
+ * user-facing strings externalised"), served from `public/i18n/`. Lazy HTTP loading keeps each locale's
+ * dictionary out of the initial JS bundle (PRD §15 bundle budget) — only the active language is fetched.
+ * The SW→EN fallback is configured on the {@code TranslateService} default lang (see {@link LocaleService}).</p>
+ *
+ * @param http the Angular HTTP client.
+ * @returns a configured {@link TranslateHttpLoader}.
+ */
+export function createTranslateLoader(http: HttpClient): TranslateHttpLoader {
+  return new TranslateHttpLoader(http, './i18n/', '.json');
+}

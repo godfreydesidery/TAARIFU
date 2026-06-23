@@ -78,4 +78,33 @@ public interface RoleAssignmentRepository extends JpaRepository<RoleAssignment, 
      * @return the assignment, or empty.
      */
     Optional<RoleAssignment> findByPublicId(UUID publicId);
+
+    /**
+     * Finds a user's <b>active</b> grant of a given role, if any — the idempotency check for an additive
+     * admin grant (M14, D15): if the account already holds the role active, re-granting it is a no-op
+     * success rather than a duplicate row.
+     *
+     * @param user     the account.
+     * @param roleName the role to look for.
+     * @param status   the grant status (typically {@link RoleStatus#ACTIVE}).
+     * @return the matching active grant of that role, or empty.
+     */
+    Optional<RoleAssignment> findFirstByUserAndRole_NameAndStatus(
+            com.taarifu.identity.domain.model.User user,
+            com.taarifu.identity.domain.model.enums.RoleName roleName,
+            RoleStatus status);
+
+    /**
+     * Counts a user's <b>active</b> grants of a given role — used by the revoke guard to refuse removing the
+     * account's last {@code CITIZEN} base role (every account keeps its base role; §6.4).
+     *
+     * @param user     the account.
+     * @param roleName the role to count.
+     * @param status   the grant status (typically {@link RoleStatus#ACTIVE}).
+     * @return the number of active grants of that role the account holds.
+     */
+    long countByUserAndRole_NameAndStatus(
+            com.taarifu.identity.domain.model.User user,
+            com.taarifu.identity.domain.model.enums.RoleName roleName,
+            RoleStatus status);
 }

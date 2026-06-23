@@ -14,6 +14,12 @@ taarifu-core-api/
 _prd_drafts/
 *.bak
 
+# Local environment secrets (docker compose auto-loads ./.env) — NEVER commit.
+# Template lives at deploy/.env.example.
+.env
+*.env
+!deploy/.env.example
+
 # OS / editor noise
 Thumbs.db
 .DS_Store

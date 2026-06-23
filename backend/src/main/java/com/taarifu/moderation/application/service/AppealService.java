@@ -8,6 +8,7 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.moderation.api.dto.AppealDto;
+import com.taarifu.moderation.api.dto.AppealSummaryDto;
 import com.taarifu.moderation.api.dto.DecideAppealRequest;
 import com.taarifu.moderation.api.dto.FileAppealRequest;
 import com.taarifu.moderation.domain.model.Appeal;
@@ -16,6 +17,8 @@ import com.taarifu.moderation.domain.model.enums.AppealStatus;
 import com.taarifu.moderation.domain.repository.AppealRepository;
 import com.taarifu.moderation.domain.repository.ModerationActionRepository;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -110,6 +113,28 @@ public class AppealService {
         } catch (DataIntegrityViolationException dup) {
             throw new ApiException(ErrorCode.CONFLICT, dup);
         }
+    }
+
+    /**
+     * Lists the moderator <b>appeals queue</b> as lean summary rows (UC-H03;
+     * {@code GET /moderation/appeals}).
+     *
+     * <p>This is the read side that the web-admin appeals triage screen consumes. It does <b>not</b> apply
+     * the appeal-independence (D16) fence — that fence is a <i>decide-time</i> guarantee (a moderator may
+     * not <i>adjudicate</i> their own action's appeal), enforced in {@link #decideAppeal}. Merely
+     * <i>viewing</i> the queue carries no such conflict, so every {@code ROLE_MODERATOR} may see all
+     * appeals (deciding is what is fenced). The projection returns only summary fields — no grounds, no
+     * decision note, no moderated content (data minimisation, §18).</p>
+     *
+     * @param status   the appeal status to filter by, or {@code null} for all statuses.
+     * @param pageable page + sort (the controller defaults to {@code createdAt,desc} → newest first).
+     * @return the paged appeal summary rows.
+     */
+    @Transactional(readOnly = true)
+    public Page<AppealSummaryDto> appealQueue(AppealStatus status, Pageable pageable) {
+        return status == null
+                ? appealRepository.findSummaries(pageable)
+                : appealRepository.findSummariesByStatus(status, pageable);
     }
 
     /**

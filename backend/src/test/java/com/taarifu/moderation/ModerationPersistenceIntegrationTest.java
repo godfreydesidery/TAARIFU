@@ -1,6 +1,7 @@
 package com.taarifu.moderation;
 
 import com.taarifu.AbstractPostgisIntegrationTest;
+import com.taarifu.moderation.api.dto.AppealSummaryDto;
 import com.taarifu.moderation.domain.model.Appeal;
 import com.taarifu.moderation.domain.model.Flag;
 import com.taarifu.moderation.domain.model.ModerationAction;
@@ -18,6 +19,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
@@ -116,5 +120,43 @@ class ModerationPersistenceIntegrationTest extends AbstractPostgisIntegrationTes
         assertThatThrownBy(() -> appealRepository.saveAndFlush(
                 Appeal.open(action, author, "again")))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void appealQueueSummaryProjectsSubjectTypeAcrossTheActionJoin() {
+        // GIVEN an OPEN appeal whose appealed action resolved a COMMENT queue item: the queue summary
+        // (GET /moderation/appeals) must project subjectType from the joined item — proving the
+        // appeal→action→item JPQL constructor expression resolves and the V100 index migration applied
+        // (the whole context boots with ddl-auto=validate). Validates the read path the broken MVC layer
+        // cannot exercise in this worktree.
+        UUID author = UUID.randomUUID();
+        UUID moderator = UUID.randomUUID();
+        ModerationItem item = itemRepository.saveAndFlush(ModerationItem.open(
+                FlagSubjectType.COMMENT, UUID.randomUUID(), author, ModerationSeverity.MEDIUM, NOW));
+        ModerationAction action = actionRepository.saveAndFlush(ModerationAction.record(
+                item, ModerationActionType.REMOVE, moderator, author, "RULE_ABUSE", null, NOW));
+        Appeal appeal = appealRepository.saveAndFlush(Appeal.open(action, author, "grounds"));
+
+        var pageable = PageRequest.of(0, 20, Sort.by(Sort.Direction.DESC, "createdAt"));
+
+        // Status-filtered query (?status=OPEN) — backed by the V100 (status, created_at) index.
+        Page<AppealSummaryDto> openPage = appealRepository.findSummariesByStatus(AppealStatus.OPEN, pageable);
+        assertThat(openPage.getContent()).anySatisfy(row -> {
+            assertThat(row.publicId()).isEqualTo(appeal.getPublicId());
+            assertThat(row.subjectType()).isEqualTo(FlagSubjectType.COMMENT); // joined from the item
+            assertThat(row.appellant()).isEqualTo(author);
+            assertThat(row.status()).isEqualTo(AppealStatus.OPEN);
+            assertThat(row.outcome()).isNull();                                // derived: no outcome while OPEN
+            assertThat(row.filedAt()).isNotNull();
+        });
+
+        // Unfiltered query (no ?status) returns the same row.
+        assertThat(appealRepository.findSummaries(pageable).getContent())
+                .anySatisfy(row -> assertThat(row.publicId()).isEqualTo(appeal.getPublicId()));
+
+        // A status with no rows yields an empty page (not an error).
+        assertThat(appealRepository.findSummariesByStatus(AppealStatus.OVERTURNED, pageable)
+                .getContent())
+                .noneSatisfy(row -> assertThat(row.publicId()).isEqualTo(appeal.getPublicId()));
     }
 }

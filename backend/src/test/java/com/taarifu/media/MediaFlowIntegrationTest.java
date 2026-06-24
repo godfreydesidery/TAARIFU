@@ -5,12 +5,14 @@ import com.taarifu.common.security.JwtService;
 import com.taarifu.media.domain.model.MediaObject;
 import com.taarifu.media.domain.model.enums.ScanStatus;
 import com.taarifu.media.domain.repository.MediaObjectRepository;
+import com.taarifu.media.infrastructure.adapter.InMemoryObjectStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.io.ByteArrayOutputStream;
 import java.util.List;
 import java.util.UUID;
 
@@ -42,6 +44,9 @@ class MediaFlowIntegrationTest extends AbstractHttpIntegrationTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private JwtService jwtService;
     @Autowired private MediaObjectRepository repository;
+    // The dev/test object store (stub) — lets the test seed the uploaded bytes so the CLEAN-verdict
+    // EXIF-strip worker (A6) has bytes to scrub, mirroring a completed pre-signed PUT.
+    @Autowired private InMemoryObjectStore objectStore;
 
     private String bearer;
 
@@ -83,6 +88,10 @@ class MediaFlowIntegrationTest extends AbstractHttpIntegrationTest {
         assertThat(persisted.getScanStatus()).isEqualTo(ScanStatus.PENDING);
         assertThat(persisted.getObjectKey()).startsWith("quarantine/");
 
+        // Seed the uploaded bytes (a JPEG carrying an APP1/EXIF segment) as if the client had completed the
+        // pre-signed PUT — so the CLEAN-verdict EXIF-strip worker (A6) has real bytes to scrub.
+        objectStore.putBytesForTest(persisted.getObjectKey(), jpegWithExif());
+
         // 2) A download before scanning is refused with 409 CONFLICT (EI-8 serving rule).
         mockMvc.perform(get("/api/v1/media/" + mediaId + "/download-url")
                         .header("Authorization", bearer))
@@ -90,7 +99,8 @@ class MediaFlowIntegrationTest extends AbstractHttpIntegrationTest {
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.data.code").value("CONFLICT"));
 
-        // 3) The scan callback returns CLEAN → object is promoted and EXIF-strip seam flagged.
+        // 3) The scan callback returns CLEAN → the EXIF-strip worker scrubs the bytes in place and the
+        // object is promoted (exifStripped=true). This is the A6 enforcement: the strip runs before serve.
         mockMvc.perform(post("/api/v1/media/" + mediaId + "/scan-callback")
                         .header("Authorization", bearer)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -99,6 +109,10 @@ class MediaFlowIntegrationTest extends AbstractHttpIntegrationTest {
                 .andExpect(jsonPath("$.data.scanStatus").value("CLEAN"))
                 .andExpect(jsonPath("$.data.servable").value(true))
                 .andExpect(jsonPath("$.data.exifStripped").value(true));
+
+        // The bytes now stored at the key no longer carry the EXIF APP1 marker — the strip ran on real bytes.
+        byte[] served = objectStore.getBytes(persisted.getObjectKey());
+        assertThat(containsApp1Marker(served)).isFalse();
 
         // 4) Now a download URL is issued.
         mockMvc.perform(get("/api/v1/media/" + mediaId + "/download-url")
@@ -133,6 +147,40 @@ class MediaFlowIntegrationTest extends AbstractHttpIntegrationTest {
                         .header("Authorization", bearer))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.data.code").value("CONFLICT"));
+    }
+
+    /**
+     * Builds a minimal, structurally-valid JPEG carrying an {@code APP1}/EXIF segment — the segment a
+     * camera/phone uses to embed GPS. Used to prove the CLEAN-verdict worker actually scrubs real bytes.
+     *
+     * @return JPEG bytes containing an EXIF APP1 marker segment.
+     */
+    private static byte[] jpegWithExif() {
+        byte[] exifPayload = {'E', 'x', 'i', 'f', 0x00, 0x00, 0x11, 0x22};
+        int segLen = exifPayload.length + 2;
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(0xFF); out.write(0xD8);                          // SOI
+        out.write(0xFF); out.write(0xE1);                          // APP1 marker
+        out.write((segLen >> 8) & 0xFF); out.write(segLen & 0xFF); // big-endian length
+        out.write(exifPayload, 0, exifPayload.length);
+        out.write(0xFF); out.write(0xDA);                          // SOS
+        out.write(0x00); out.write(0x00);
+        out.write(0x12);                                           // one byte of "scan data"
+        out.write(0xFF); out.write(0xD9);                          // EOI
+        return out.toByteArray();
+    }
+
+    /**
+     * @param jpeg JPEG bytes.
+     * @return {@code true} if the bytes still contain an {@code APP1} (0xFF 0xE1) marker — the EXIF segment.
+     */
+    private static boolean containsApp1Marker(byte[] jpeg) {
+        for (int i = 0; i + 1 < jpeg.length; i++) {
+            if ((jpeg[i] & 0xFF) == 0xFF && (jpeg[i + 1] & 0xFF) == 0xE1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Minimal valid upload request body for a given host id. */

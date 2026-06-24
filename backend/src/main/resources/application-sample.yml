@@ -33,6 +33,17 @@
 # TAARIFU_VERIFICATION_PROVIDER=operator-assisted  # or 'auto-stub' (dev/E2E); no NIDA dependency at launch
 # TAARIFU_ELECTORAL_COOLDOWN_DAYS=183    # ~6-month manual isElectoral change cooldown (voter-ID bypasses)
 
+# --- Prod-safe first-admin bootstrap (threat-model E / TR-5 / G16) ---
+# Turn ON for a SINGLE first-boot of a fresh prod DB (it has zero accounts), then turn OFF and reboot.
+# Idempotent (no-op if any ACTIVE ROOT already exists) and fail-safe (no/weak password => creates nothing;
+# there is NO default credential). The password is BCrypt-hashed + never logged; the staff TOTP enrolment
+# otpauth:// URI is written to a 0600 file (never to the log). Enrol from the file, DELETE it, then log in
+# and ROTATE the password immediately.
+# TAARIFU_BOOTSTRAP_ADMIN_ENABLED=true                 # opt-in; keep unset/false in steady state
+# TAARIFU_BOOTSTRAP_ADMIN_PHONE=+2557XXXXXXXX           # E.164 account key (no default)
+# TAARIFU_BOOTSTRAP_ADMIN_PASSWORD=<strong, >=12 chars, mixed>   # SECRET — env only, never committed
+# TAARIFU_BOOTSTRAP_ADMIN_TOTP_FILE=/var/run/taarifu/root-totp-enrollment.txt  # 0600; delete after enrolling
+
 # --- CORS allow-list (PRD §18) ---
 # Comma-separated EXACT origins. Never use '*' with credentials.
 # TAARIFU_CORS_ORIGINS=https://admin.taarifu.example,https://app.taarifu.example
@@ -43,6 +54,58 @@
 # --- Geocoder adapter selection ---
 # 'postgis' (default; requires seeded ward boundaries) or 'stub' (dev/test, no geometry needed).
 # TAARIFU_GEOCODER=postgis
+
+# --- Rate-limit backend (W3-2: multi-instance anti-automation) ---
+# 'memory' (default): in-process limiters — fine for dev/test/single-instance; NOT shared across instances.
+# 'redis': shared, auto-expiring counters across every app instance — REQUIRED in multi-instance production
+# (TR-3 / G14). When set to 'redis', point spring.data.redis.* at a reachable Redis (host/port via env below).
+# TAARIFU_RATELIMIT_BACKEND=redis
+# TAARIFU_REDIS_HOST=redis.internal           # Redis host (only used when backend=redis)
+# TAARIFU_REDIS_PORT=6379
+# SPRING_DATA_REDIS_PASSWORD=<set-in-env>      # SECRET — only if the Redis deployment requires auth; never committed
+
+# --- USSD aggregator webhook auth (P2-1, PRD §14/§18) ---
+# Shared secret the aggregator presents on POST /ussd/gateway (constant-time header compare). FAIL-CLOSED:
+# if unset, the webhook rejects EVERY call — do not expose USSD in prod until this is set. Env only, never
+# committed. Generate: openssl rand -base64 48
+# TAARIFU_USSD_GATEWAY_SECRET=<set-in-env>     # SECRET — shared with the aggregator out-of-band
+# TAARIFU_USSD_GATEWAY_HEADER=X-Ussd-Secret    # header the aggregator presents the secret in
+
+# --- Media malware-scanner verdict callback auth (MF-3, PRD §18/§21 EI-8) ---
+# Shared secret the scanner presents on POST /media/{id}/scan-callback (constant-time header compare).
+# FAIL-CLOSED: if unset, the callback rejects EVERY call — do not wire a real scanner in prod until this is
+# set, so a citizen token cannot forge a CLEAN/INFECTED verdict. Env only, never committed.
+# TAARIFU_MEDIA_SCANNER_SECRET=<set-in-env>    # SECRET — shared with the scanner service out-of-band
+# TAARIFU_MEDIA_SCANNER_HEADER=X-Scanner-Secret # header the scanner presents the secret in
+
+# --- Communications channels (PRD §21 EI-3/5/6) ---
+# Each channel defaults to the safe LOGGING stub (no external calls). Set the provider AND its
+# required endpoints to enable a real adapter. Secrets are env/secret-mount only — NEVER committed.
+#
+# SMS (HTTPS-submit aggregator). When provider=http, submit-url + sender-id are required.
+# TAARIFU_SMS_PROVIDER=http
+# TAARIFU_SMS_SUBMIT_URL=https://aggregator.example/sms/submit
+# TAARIFU_SMS_SENDER_ID=TAARIFU            # TCRA-registered sender-id / shortcode (D-Q7)
+# TAARIFU_SMS_API_KEY=<set-in-env>         # SECRET — aggregator API key, never committed
+# TAARIFU_SMS_AUTH_HEADER=Authorization    # or X-API-Key etc. per the aggregator
+# TAARIFU_SMS_REQUEST_TIMEOUT=5s
+#
+# Push (FCM HTTP v1). When provider=fcm, project-id + credentials-file are required.
+# TAARIFU_PUSH_PROVIDER=fcm
+# TAARIFU_FCM_PROJECT_ID=my-firebase-project
+# TAARIFU_FCM_CREDENTIALS_FILE=/var/run/secrets/fcm/service-account.json   # SECRET mount path
+# TAARIFU_PUSH_REQUEST_TIMEOUT=5s
+#
+# Email (Spring Mail / SMTP). When provider=smtp, `from` is required and the SMTP transport comes
+# from spring.mail.* (set via SPRING_MAIL_* env). The from address must be SPF/DKIM/DMARC-aligned at the ESP.
+# TAARIFU_EMAIL_PROVIDER=smtp
+# TAARIFU_EMAIL_FROM=no-reply@taarifu.example
+# TAARIFU_EMAIL_FROM_NAME=Taarifu
+# TAARIFU_EMAIL_REPLY_TO=support@taarifu.example
+# SPRING_MAIL_HOST=smtp.esp.example
+# SPRING_MAIL_PORT=587
+# SPRING_MAIL_USERNAME=<set-in-env>        # SECRET — SMTP user
+# SPRING_MAIL_PASSWORD=<set-in-env>        # SECRET — SMTP password
 
 # Notes:
 # - In production, TAARIFU_JWT_SECRET / TAARIFU_CRYPTO_DEV_KEY are replaced by

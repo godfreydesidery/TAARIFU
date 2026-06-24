@@ -1,0 +1,6 @@
+# Real environment files under deploy/ hold secrets — NEVER commit them.
+# Only the *.example templates are tracked (PRD §18, CLAUDE.md §12).
+.env
+.env.*
+!.env.example
+!.env.prod.example

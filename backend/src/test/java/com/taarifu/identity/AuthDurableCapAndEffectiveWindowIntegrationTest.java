@@ -33,7 +33,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -78,6 +78,7 @@ class AuthDurableCapAndEffectiveWindowIntegrationTest extends AbstractPostgisInt
     @Autowired private UserRepository userRepository;
     @Autowired private RoleRepository roleRepository;
     @Autowired private RoleAssignmentRepository roleAssignmentRepository;
+    @Autowired private TransactionTemplate txTemplate;
 
     @PersistenceContext private EntityManager em;
 
@@ -115,23 +116,33 @@ class AuthDurableCapAndEffectiveWindowIntegrationTest extends AbstractPostgisInt
         }
     }
 
+    /**
+     * Cleans the identity/audit tables and re-seeds the role catalogue before each test.
+     *
+     * <p>WHY a {@link TransactionTemplate} rather than {@code @Transactional} on this {@code @BeforeEach}:
+     * the annotation is not woven on a JUnit lifecycle callback (no AOP proxy; the test transaction listener
+     * only manages {@code @Test}), so the native {@code executeUpdate} calls would raise
+     * {@code TransactionRequiredException}. The programmatic transaction binds a manager and commits the
+     * seed so the services/security stack read it on their own connections.</p>
+     */
     @BeforeEach
-    @Transactional
     void cleanAndSeedRoles() {
-        // create-drop keeps rows across methods; clean the identity/audit tables between tests.
-        em.createNativeQuery("DELETE FROM audit_event").executeUpdate();
-        em.createNativeQuery("DELETE FROM refresh_token").executeUpdate();
-        em.createNativeQuery("DELETE FROM otp_challenge").executeUpdate();
-        em.createNativeQuery("DELETE FROM role_assignment_area").executeUpdate();
-        em.createNativeQuery("DELETE FROM role_assignment_category").executeUpdate();
-        em.createNativeQuery("DELETE FROM role_assignment").executeUpdate();
-        em.createNativeQuery("DELETE FROM profile_location").executeUpdate();
-        em.createNativeQuery("DELETE FROM profile").executeUpdate();
-        em.createNativeQuery("DELETE FROM app_user").executeUpdate();
-        em.createNativeQuery("DELETE FROM role").executeUpdate();
-        // Seed the role-catalogue rows the flows below grant/assign.
-        seedRole(RoleName.CITIZEN, "Registered citizen");
-        seedRole(RoleName.RESPONDER_AGENT, "Responder agent (scoped)");
+        txTemplate.executeWithoutResult(s -> {
+            // create-drop keeps rows across methods; clean the identity/audit tables between tests.
+            em.createNativeQuery("DELETE FROM audit_event").executeUpdate();
+            em.createNativeQuery("DELETE FROM refresh_token").executeUpdate();
+            em.createNativeQuery("DELETE FROM otp_challenge").executeUpdate();
+            em.createNativeQuery("DELETE FROM role_assignment_area").executeUpdate();
+            em.createNativeQuery("DELETE FROM role_assignment_category").executeUpdate();
+            em.createNativeQuery("DELETE FROM role_assignment").executeUpdate();
+            em.createNativeQuery("DELETE FROM profile_location").executeUpdate();
+            em.createNativeQuery("DELETE FROM profile").executeUpdate();
+            em.createNativeQuery("DELETE FROM app_user").executeUpdate();
+            em.createNativeQuery("DELETE FROM role").executeUpdate();
+            // Seed the role-catalogue rows the flows below grant/assign.
+            seedRole(RoleName.CITIZEN, "Registered citizen");
+            seedRole(RoleName.RESPONDER_AGENT, "Responder agent (scoped)");
+        });
     }
 
     @AfterEach

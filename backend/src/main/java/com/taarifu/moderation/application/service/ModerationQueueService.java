@@ -1,5 +1,7 @@
 package com.taarifu.moderation.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.audit.AuditOutcome;
@@ -7,10 +9,15 @@ import com.taarifu.common.audit.domain.model.AuditEvent;
 import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.moderation.api.dto.ModerationActionDto;
 import com.taarifu.moderation.api.dto.ModerationItemDto;
 import com.taarifu.moderation.api.dto.TakeActionRequest;
+import com.taarifu.moderation.api.event.ModerationEventTypes;
+import com.taarifu.moderation.api.event.ModerationSanctionApplied;
+import com.taarifu.moderation.api.event.SanctionType;
 import com.taarifu.moderation.domain.model.Flag;
 import com.taarifu.moderation.domain.model.ModerationAction;
 import com.taarifu.moderation.domain.model.ModerationItem;
@@ -53,6 +60,7 @@ public class ModerationQueueService {
     private final ScopeGuard scopeGuard;
     private final AuditEventService audit;
     private final ClockPort clock;
+    private final OutboxWriter outboxWriter;
 
     /**
      * @param itemRepository   queue store.
@@ -61,19 +69,24 @@ public class ModerationQueueService {
      * @param scopeGuard       {@code @taarifuAuthz} — supplies the D16 {@code isNotSelf} conflict check.
      * @param audit            append-only audit writer (denial + decision evidence).
      * @param clock            time source (testable).
+     * @param outboxWriter     the transactional-outbox port; {@link #takeAction} appends a
+     *                         {@code moderation_action_taken} analytics fact in the action transaction so the
+     *                         analytics sink records it asynchronously, off the moderator's path (Appendix E, M15).
      */
     public ModerationQueueService(ModerationItemRepository itemRepository,
                                   ModerationActionRepository actionRepository,
                                   FlagRepository flagRepository,
                                   ScopeGuard scopeGuard,
                                   AuditEventService audit,
-                                  ClockPort clock) {
+                                  ClockPort clock,
+                                  OutboxWriter outboxWriter) {
         this.itemRepository = itemRepository;
         this.actionRepository = actionRepository;
         this.flagRepository = flagRepository;
         this.scopeGuard = scopeGuard;
         this.audit = audit;
         this.clock = clock;
+        this.outboxWriter = outboxWriter;
     }
 
     /**
@@ -151,10 +164,67 @@ public class ModerationQueueService {
                 .reason(request.type().name())
                 .detailRef(item.getPublicId().toString())
                 .build());
-        // TODO(wiring): also emit `moderation_action_taken` {host_type, host_ref, action, action_latency_s}
-        // via the transactional outbox; and, for SUSPEND/VERIFY_REQUEST, an identity-module sanction event —
-        // never by reaching into identity from here (ARCHITECTURE.md §3.2, §8).
+        // ANALYTICS (Appendix E, M15): emit a moderation_action_taken civic-activity fact on the outbox in
+        // THIS transaction — the analytics sink records it ASYNCHRONOUSLY, off the moderator's path. The
+        // action taken is carried as the controlled-vocabulary `outcome` code (e.g. APPROVE/HIDE/REMOVE); the
+        // active role is MODERATOR. Ids/codes ONLY — NO content body, NO author identity, NO flag text
+        // (PRD §18, PDPA, ADR-0014 §1). The aggregate is the moderation item's public id.
+        outboxWriter.append(EventEnvelope.of(
+                AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED,
+                AnalyticsEventTypes.AGGREGATE_CIVIC_ACTIVITY,
+                item.getPublicId(),
+                new CivicActivityRecorded(
+                        AnalyticsEventTypes.MODERATION_ACTION_TAKEN,
+                        clock.now(),
+                        null,                       // actorRef: no pseudonymous actor hash resolved here
+                        null,                       // geoAreaId: moderation is not geo-scoped
+                        null,                       // categoryId: n/a for a moderation action
+                        null,                       // tier: n/a
+                        null,                       // channel: n/a (server-side action)
+                        "MODERATOR",                // activeRole name (string — NOT the analytics enum; ADR-0013 §3)
+                        null,                       // latencySeconds: action latency is a later refinement
+                        null,                       // breachType: n/a
+                        request.type().name()),     // outcome = the moderation action taken (controlled vocab)
+                clock.now()));
+
+        // ACCOUNT SANCTION (A5; ADR-0013 §2, ADR-0014 §1): a SUSPEND/VERIFY_REQUEST action sanctions the
+        // author's ACCOUNT. Moderation does NOT own account state and must NOT reach into identity
+        // (ARCHITECTURE.md §3.2). Instead it appends a MODERATION_SANCTION_APPLIED event to the outbox in
+        // THIS transaction; the identity module's handler consumes it asynchronously and applies the
+        // account-state change (suspend / verify-request gate). Skipped when the author is not surfaced
+        // (null) — there is no account to sanction. Payload = {subjectAccountId, sanctionType} only — ids/
+        // enums, NO PII (PRD §18, PDPA). Idempotency key = the outbox public_id (the identity transition is
+        // naturally idempotent — re-suspending an already-suspended account is a no-op, ADR-0014 §3).
+        SanctionType sanction = sanctionFor(request.type());
+        if (sanction != null && authorProfileId != null) {
+            outboxWriter.append(EventEnvelope.of(
+                    ModerationEventTypes.MODERATION_SANCTION_APPLIED,
+                    ModerationEventTypes.AGGREGATE_MODERATION_ITEM,
+                    item.getPublicId(),
+                    new ModerationSanctionApplied(authorProfileId, sanction, clock.now()),
+                    clock.now()));
+        }
         return ModerationActionDto.from(saved);
+    }
+
+    /**
+     * Maps a moderation action to the account sanction it implies, or {@code null} for content-only actions.
+     *
+     * <p>Only {@link ModerationActionType#SUSPEND} and {@link ModerationActionType#VERIFY_REQUEST} sanction
+     * the <i>account</i>; APPROVE/HIDE/REMOVE/WARN act on the <i>content</i> and raise no sanction event
+     * (the content-hide effect is a separate, also event-driven, takedown — ADR-0013 §2). Returning a
+     * dedicated {@link SanctionType} (an {@code api.event} enum, not the domain {@code ModerationActionType})
+     * keeps the cross-module contract to identity minimal and free of any moderation domain type.</p>
+     *
+     * @param type the action just recorded.
+     * @return the implied {@link SanctionType}, or {@code null} if the action is content-only.
+     */
+    private static SanctionType sanctionFor(ModerationActionType type) {
+        return switch (type) {
+            case SUSPEND -> SanctionType.SUSPEND;
+            case VERIFY_REQUEST -> SanctionType.VERIFY_REQUEST;
+            case APPROVE, HIDE, REMOVE, WARN -> null;
+        };
     }
 
     /**

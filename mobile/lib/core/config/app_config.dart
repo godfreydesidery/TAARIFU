@@ -13,8 +13,8 @@ library;
 /// falling back to developer-friendly defaults so a plain `flutter run` works
 /// against a locally running backend.
 class AppConfig {
-  /// Creates a config with an explicit [apiBaseUrl].
-  const AppConfig({required this.apiBaseUrl});
+  /// Creates a config with an explicit [apiBaseUrl] and [appVersion].
+  const AppConfig({required this.apiBaseUrl, this.appVersion = '0.1.0+1'});
 
   /// The base URL of the Taarifu backend, including the `/api/v1` context path.
   ///
@@ -25,14 +25,27 @@ class AppConfig {
   /// `--dart-define=TAARIFU_API_BASE_URL=https://api.example.tz/api/v1`.
   final String apiBaseUrl;
 
+  /// The display version (`version+build`) shown on the Settings screen.
+  ///
+  /// WHY a build-time string (not `package_info_plus`): the dependency budget is
+  /// tight (PRD §15) and a plugin to read one constant is not worth the APK
+  /// growth. CI injects the real value with
+  /// `--dart-define=TAARIFU_APP_VERSION=$(version)`; the default tracks pubspec.
+  final String appVersion;
+
   /// Builds the config from the ambient `--dart-define` environment.
   ///
-  /// Reads `TAARIFU_API_BASE_URL`; when unset, uses the emulator-to-host default.
+  /// Reads `TAARIFU_API_BASE_URL` and `TAARIFU_APP_VERSION`; when unset, uses the
+  /// emulator-to-host default and the pubspec version.
   factory AppConfig.fromEnvironment() {
     const baseUrl = String.fromEnvironment(
       'TAARIFU_API_BASE_URL',
       defaultValue: 'http://10.0.2.2:8081/api/v1',
     );
-    return const AppConfig(apiBaseUrl: baseUrl);
+    const version = String.fromEnvironment(
+      'TAARIFU_APP_VERSION',
+      defaultValue: '0.1.0+1',
+    );
+    return const AppConfig(apiBaseUrl: baseUrl, appVersion: version);
   }
 }

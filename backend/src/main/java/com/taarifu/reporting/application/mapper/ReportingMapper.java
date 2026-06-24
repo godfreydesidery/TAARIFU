@@ -81,6 +81,7 @@ public class ReportingMapper {
                 report.getUpvotes(),
                 report.getFollowers(),
                 report.isAnonymous(),
+                parseAttachmentRefs(report.getAttachmentRefs()),
                 report.getCreatedAt());
     }
 
@@ -187,5 +188,35 @@ public class ReportingMapper {
                 event.getActorProfileId(),
                 event.getMessage(),
                 event.getCreatedAt());
+    }
+
+    /**
+     * Parses the report's stored delimited attachment refs into media public-id {@code UUID}s for the owner
+     * view. Surfaced ONLY via {@link #toReportDto} (the reporter's own/authorised view), never on
+     * {@link #toPublicReportDto} — so an anonymous/sensitive report's attachments respect the report's
+     * visibility (PRD §25.3). The bytes themselves stay access-controlled by the media module (a presigned
+     * GET only for a scanned-CLEAN object); these ids are not the storage keys and carry no PII.
+     *
+     * @param attachmentRefs the stored comma-delimited refs, or {@code null}.
+     * @return the parsed media public ids (never {@code null}; empty if none); a non-UUID token is skipped
+     *         defensively so the read path never throws on legacy/malformed stored data.
+     */
+    private List<java.util.UUID> parseAttachmentRefs(String attachmentRefs) {
+        if (attachmentRefs == null || attachmentRefs.isBlank()) {
+            return List.of();
+        }
+        List<java.util.UUID> ids = new java.util.ArrayList<>();
+        for (String token : attachmentRefs.split(",")) {
+            String trimmed = token.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            try {
+                ids.add(java.util.UUID.fromString(trimmed));
+            } catch (IllegalArgumentException ignored) {
+                // Defensive: a legacy/non-UUID stored ref is skipped rather than failing the read.
+            }
+        }
+        return ids;
     }
 }

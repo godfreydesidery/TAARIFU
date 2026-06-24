@@ -50,9 +50,19 @@ public class GeographyTestData {
 
     /**
      * Removes all geography rows so each test starts clean.
+     *
+     * <p>WHY {@code profile_location}/{@code representative} are cleared first: both carry an FK to
+     * {@code constituency}/{@code location}. If a test that <b>committed</b> such a row (an identity electoral
+     * location, or an institutions representative) ran earlier against the shared static container, the
+     * {@code DELETE FROM constituency}/{@code location} below would fail with a foreign-key violation —
+     * coupling this geography fixture to test order. Clearing the referencing rows first keeps the wipe robust
+     * regardless of order (TEST-ONLY reset; no production code, no production behaviour touched).</p>
      */
     @Transactional
     public void clear() {
+        // Drop any leaked cross-module rows that reference geography before wiping geography itself.
+        em.createNativeQuery("DELETE FROM profile_location").executeUpdate();
+        em.createNativeQuery("DELETE FROM representative").executeUpdate();
         em.createNativeQuery("DELETE FROM ward_constituency").executeUpdate();
         em.createNativeQuery("DELETE FROM location_closure").executeUpdate();
         em.createNativeQuery("DELETE FROM constituency").executeUpdate();

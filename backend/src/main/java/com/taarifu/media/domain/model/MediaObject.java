@@ -26,13 +26,16 @@ import java.util.UUID;
  * This module must not import those modules (ARCHITECTURE.md §3.2), so the host is referenced by an
  * opaque {@code (ownerType, ownerId)} pair: a string discriminator plus the host's public {@code UUID}.
  * Visibility/ownership of the host is therefore enforced <b>by the host module</b> at attach/serve time
- * — see the {@code // TODO(wiring)} guards in the download path. This row never grants access on its own.</p>
+ * — the download path delegates to the host's visibility port (MF-2, e.g. reporting's
+ * {@code ReportMediaAccessApi}). This row never grants access on its own.</p>
  *
- * <p><b>EXIF/geo stripping (privacy seam — EI-8, §18).</b> Photos routinely embed GPS coordinates and
+ * <p><b>EXIF/geo stripping (privacy — EI-8, §18, A6).</b> Photos routinely embed GPS coordinates and
  * device identifiers in EXIF; serving them would leak a reporter's exact location even when the civic
  * Report's incident geo is captured (and access-controlled) separately. {@link #exifStripped} records
- * whether the privacy-stripping pass has run for this object; the stripping itself is a pipeline step
- * (worker) wired in the scan/promote flow — this flag is the seam that proves it happened before serve.</p>
+ * whether the privacy-stripping pass has run for this object. The strip worker runs on a CLEAN verdict
+ * (see {@code MediaService.applyScanVerdict}): it scrubs the stored bytes and only then sets this flag,
+ * and the download path refuses any handled image type whose flag is still {@code false}. So this flag
+ * is the enforced proof — not merely a seam — that the scrub happened before any byte is served.</p>
  *
  * <p><b>WHY scan status gates serving, not uploading.</b> Per EI-8 the citizen's action (e.g. filing a
  * report) is never blocked by the scanner; the object is accepted into quarantine immediately and only
@@ -66,8 +69,15 @@ public class MediaObject extends BaseEntity {
     /**
      * The public {@code UUID} of the host resource (e.g. a Report's {@code publicId}) this object is
      * attached to. Referenced by id only — never a JPA association into another module (boundary rule).
+     *
+     * <p><b>Nullable until bound (V121).</b> In the citizen attachment pipeline the evidence photo is
+     * uploaded <i>before</i> the host resource exists: the client requests an upload URL, uploads the
+     * bytes, and only then files the report carrying the media public ids. At upload time the host id is
+     * therefore unknown, so this column is {@code null} until the host module <b>binds</b> the object to
+     * the created resource via {@link #bindTo(UUID)} (the reporting module does this through the
+     * {@code media.api} port at file time). An unbound, uploaded object is an orphan a janitor may purge.</p>
      */
-    @Column(name = "owner_id", nullable = false)
+    @Column(name = "owner_id")
     private UUID ownerId;
 
     /**
@@ -119,6 +129,16 @@ public class MediaObject extends BaseEntity {
     @Column(name = "exif_stripped", nullable = false)
     private boolean exifStripped = false;
 
+    /**
+     * {@code true} once the client confirmed the bytes were PUT and the declared content-type/size
+     * passed policy ({@code confirm} step, V121). The pre-signed PUT happens directly client<->store, so
+     * the app never observes the upload finishing; the explicit confirm asserts "the bytes are there"
+     * and is the point the allow-list/max-size are enforced. A never-confirmed object is a dangling
+     * upload-intent and is never attachable or served. Defaults {@code false}.
+     */
+    @Column(name = "uploaded", nullable = false)
+    private boolean uploaded = false;
+
     /** JPA requires a no-arg constructor; not for application use. */
     protected MediaObject() {
     }
@@ -145,6 +165,7 @@ public class MediaObject extends BaseEntity {
         this.uploadedByProfileId = uploadedByProfileId;
         this.scanStatus = ScanStatus.PENDING;
         this.exifStripped = false;
+        this.uploaded = false;
     }
 
     /**
@@ -171,6 +192,32 @@ public class MediaObject extends BaseEntity {
     /** Marks the EXIF/geo-stripping privacy pass as completed for this object (EI-8, §18). */
     public void markExifStripped() {
         this.exifStripped = true;
+    }
+
+    /**
+     * Marks the object as confirmed-uploaded (bytes are in storage and declared content-type/size passed
+     * policy). Called by {@code confirm}; idempotent (re-confirming is a no-op).
+     */
+    public void markUploaded() {
+        this.uploaded = true;
+    }
+
+    /**
+     * Binds this previously-unbound object to its host resource once it exists (V121).
+     *
+     * <p>WHY a distinct step: the photo is uploaded before the report is filed, so the host id is unknown
+     * at upload time ({@link #ownerId} starts {@code null}); the host module supplies it at file time via
+     * the {@code media.api} port. Binding is allowed once and only to the same host; re-binding to a
+     * different host is rejected so an attacker cannot graft an object onto a different report.</p>
+     *
+     * @param hostPublicId the host resource public id (e.g. the filed report's {@code publicId}).
+     * @throws IllegalStateException if already bound to a different host (single-bind guard).
+     */
+    public void bindTo(UUID hostPublicId) {
+        if (this.ownerId != null && !this.ownerId.equals(hostPublicId)) {
+            throw new IllegalStateException("Media object is already bound to a different host");
+        }
+        this.ownerId = hostPublicId;
     }
 
     /**
@@ -225,5 +272,10 @@ public class MediaObject extends BaseEntity {
     /** @return {@code true} if the EXIF/geo-stripping pass has run. */
     public boolean isExifStripped() {
         return exifStripped;
+    }
+
+    /** @return {@code true} once the client confirmed the bytes were uploaded and policy was validated. */
+    public boolean isUploaded() {
+        return uploaded;
     }
 }

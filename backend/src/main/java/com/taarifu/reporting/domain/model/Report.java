@@ -42,12 +42,14 @@ import java.util.UUID;
  *       ward/constituency references — they are {@code geography.Location}/{@code Constituency}
  *       {@code publicId}s resolved through geography's service at file time, then stored as ids
  *       (ARCHITECTURE.md §4.3 cross-module reference-by-id).</li>
- *   <li><b>Routing is wired (one-way):</b> filing emits a {@code REPORT_ROUTED} outbox event and the
- *       responders module creates the OWNER assignment asynchronously (D21, ADR-0014 §5b). The reverse
- *       leg — setting {@link #assignedResponderId} from the responders' {@code RESPONDER_ASSIGNED}
- *       back-event — is the remaining {@code // TODO(wiring)}: until a reporting handler consumes that
- *       event this field stays {@code null} and the report stays {@code NEW} (the OWNER assignment still
- *       exists on the responders side).</li>
+ *   <li><b>Routing round-trip is wired (both legs, async):</b> filing emits a {@code REPORT_ROUTED}
+ *       outbox event and the responders module creates the OWNER assignment asynchronously (D21,
+ *       ADR-0014 §5b), emitting {@code RESPONDER_ASSIGNED} back. The reverse leg is now closed: the
+ *       reporting {@code ResponderAssignedHandler} consumes that back-event and (via
+ *       {@code ReportService.applySystemAssignment}) sets {@link #assignedResponderId} and transitions the
+ *       report {@code NEW -> ASSIGNED} idempotently — it fires only while the report is still {@code NEW},
+ *       so an at-least-once relay redelivery never double-transitions (the OWNER assignment is owned by the
+ *       responders side; this is the denormalised pointer + auto-transition on the report row).</li>
  *   <li><b>Counters are denormalised, integrity-fenced:</b> {@link #upvotes}/{@link #followers} are
  *       discovery-reach counters only. Per the civic-integrity fence (D18, §23.5) they must <b>never</b>
  *       influence official routing, SLA, priority, or resolution — boosting reach is not buying weight.</li>
@@ -137,10 +139,12 @@ public class Report extends BaseCodedEntity {
     private ReportPriority priority = ReportPriority.NORMAL;
 
     /**
-     * {@code publicId} of the assigned responder office/scope — <b>STUB</b>. Routing to responders is
-     * DEFERRED (a later module); reports are created {@code NEW} and never auto-assigned here.
+     * {@code publicId} of the assigned OWNER responder office/scope, or {@code null} until routing completes.
+     * Set by the reporting {@code ResponderAssignedHandler} (via {@code ReportService.applySystemAssignment})
+     * when it consumes the responders' {@code RESPONDER_ASSIGNED} back-event, together with the
+     * {@code NEW -> ASSIGNED} transition (D21; ADR-0014 §5b). A bare {@code UUID}, not a JPA FK: the responder
+     * is owned by the responders module and referenced across the boundary by public id (ARCHITECTURE §4.3).
      */
-    // TODO(wiring): set on routing once the responders module assigns an OWNER (D21).
     @Column(name = "assigned_responder_id")
     private UUID assignedResponderId;
 
@@ -337,7 +341,7 @@ public class Report extends BaseCodedEntity {
         return priority;
     }
 
-    /** @return the assigned responder {@code publicId} (STUB; null until routing is wired). */
+    /** @return the assigned OWNER responder {@code publicId}, or {@code null} until routing assigns one (D21). */
     public UUID getAssignedResponderId() {
         return assignedResponderId;
     }

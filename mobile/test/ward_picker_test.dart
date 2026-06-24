@@ -5,7 +5,8 @@
 ///
 /// These pin the replacement of the hand-typed ward UUID (PRD §9.0, §22.6): a
 /// blank search makes no call (data-frugal), a district listing is cached for
-/// offline reuse, and search results flow through the cubit's status states.
+/// offline reuse, and search/browse results flow through the cubit's status and
+/// mode states.
 library;
 
 import 'package:bloc_test/bloc_test.dart';
@@ -14,6 +15,7 @@ import 'package:taarifu_citizen/core/network/api_client.dart';
 import 'package:taarifu_citizen/core/network/api_exception.dart';
 import 'package:taarifu_citizen/core/storage/json_cache.dart';
 import 'package:taarifu_citizen/features/geography/bloc/ward_picker_cubit.dart';
+import 'package:taarifu_citizen/features/geography/data/geography_models.dart';
 import 'package:taarifu_citizen/features/geography/data/geography_repository.dart';
 
 /// A controllable fake [ApiClient] recording GET paths + queries, returning
@@ -64,6 +66,13 @@ Map<String, dynamic> _ward(String id, String name) => {
   'districtName': 'Kinondoni',
 };
 
+const _district = District(
+  id: 'd-1',
+  code: 'D-1',
+  name: 'Kinondoni',
+  regionId: 'r-1',
+);
+
 void main() {
   late _FakeApiClient api;
   late GeographyRepository repo;
@@ -84,7 +93,8 @@ void main() {
       expect(api.gets.single.path, '/districts/d-1/wards');
       expect(wards.map((w) => w.name), ['Mengwe', 'Msasani']);
       expect(wards.first.id, 'w-1');
-      expect(wards.first.locationLabel, 'Kinondoni MC · Kinondoni');
+      // The breadcrumb disambiguates same-named wards (council · district).
+      expect(wards.first.qualifiedLabel, 'Mengwe · Kinondoni MC · Kinondoni');
     });
 
     test('listWardsInDistrict serves the cached list when offline', () async {
@@ -118,35 +128,33 @@ void main() {
         api.responses['/districts/d-1/wards'] = [_ward('w-1', 'Mengwe')];
       },
       build: () => WardPickerCubit(repository: repo),
-      act: (cubit) => cubit.selectDistrict('d-1'),
+      act: (cubit) => cubit.selectDistrict(_district),
       verify: (cubit) {
-        expect(cubit.state.wardStatus, WardListStatus.loaded);
-        expect(cubit.state.mode, WardListMode.browse);
+        expect(cubit.state.status, WardPickerStatus.loaded);
+        expect(cubit.state.mode, WardPickerMode.browse);
         expect(cubit.state.wards.single.name, 'Mengwe');
       },
     );
 
     blocTest<WardPickerCubit, WardPickerState>(
-      'search with text loads results (search mode)',
+      'search with text loads results',
       setUp: () {
         api.responses['/wards'] = [_ward('w-9', 'Mikocheni')];
       },
       build: () => WardPickerCubit(repository: repo),
       act: (cubit) => cubit.search('Miko'),
       verify: (cubit) {
-        expect(cubit.state.mode, WardListMode.search);
-        expect(cubit.state.wardStatus, WardListStatus.loaded);
-        expect(cubit.state.wards.single.id, 'w-9');
+        expect(cubit.state.results.single.id, 'w-9');
+        expect(cubit.state.searching, isFalse);
       },
     );
 
     blocTest<WardPickerCubit, WardPickerState>(
-      'blank search returns to idle without a call',
+      'blank search clears results without a call',
       build: () => WardPickerCubit(repository: repo),
       act: (cubit) => cubit.search('   '),
       verify: (cubit) {
-        expect(cubit.state.wardStatus, WardListStatus.idle);
-        expect(cubit.state.wards, isEmpty);
+        expect(cubit.state.results, isEmpty);
         expect(api.gets, isEmpty);
       },
     );
@@ -155,9 +163,9 @@ void main() {
       'a failed listing surfaces the failure status for retry',
       setUp: () => api.offline = true,
       build: () => WardPickerCubit(repository: repo),
-      act: (cubit) => cubit.selectDistrict('d-1'),
+      act: (cubit) => cubit.selectDistrict(_district),
       verify: (cubit) {
-        expect(cubit.state.wardStatus, WardListStatus.failure);
+        expect(cubit.state.status, WardPickerStatus.failure);
         expect(cubit.state.error, isA<OfflineException>());
       },
     );

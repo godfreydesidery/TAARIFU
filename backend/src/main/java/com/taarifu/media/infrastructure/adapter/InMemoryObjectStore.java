@@ -37,6 +37,14 @@ public class InMemoryObjectStore implements ObjectStore {
     private final Set<String> knownKeys = ConcurrentHashMap.newKeySet();
 
     /**
+     * In-memory bytes for keys written via {@link #putBytes}. Lets the EXIF/geo-strip worker round-trip
+     * (read → scrub → re-store) entirely in dev/test with no S3. A pre-signed PUT in this stub does not
+     * actually deposit bytes (the client uploads to a fake URL), so a test seeds bytes via
+     * {@link #putBytesForTest} (or the worker's own {@code putBytes}).
+     */
+    private final Map<String, byte[]> contents = new ConcurrentHashMap<>();
+
+    /**
      * {@inheritDoc}
      *
      * <p>Records the key as known and returns a fake PUT URL binding {@code Content-Type}, mirroring how
@@ -62,10 +70,40 @@ public class InMemoryObjectStore implements ObjectStore {
         return new PresignedUrl(devUrl(objectKey, "download"), "GET", Map.of(), ttl.toSeconds());
     }
 
-    /** {@inheritDoc} Forgets the key; idempotent (no error if absent). */
+    /** {@inheritDoc} Forgets the key and any stored bytes; idempotent (no error if absent). */
     @Override
     public void delete(String objectKey) {
         knownKeys.remove(objectKey);
+        contents.remove(objectKey);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Returns the bytes previously stored at the key via {@link #putBytes} (or {@link #putBytesForTest}).
+     * The pre-signed PUT in this stub does not deposit bytes, so a key the EXIF-strip worker must read has
+     * to have been seeded; an absent key throws {@link ObjectNotFoundException} so the worker fails safe
+     * rather than scrub-nothing and mark the object servable.</p>
+     */
+    @Override
+    public byte[] getBytes(String objectKey) {
+        byte[] stored = contents.get(objectKey);
+        if (stored == null) {
+            throw new ObjectNotFoundException(objectKey);
+        }
+        return stored.clone();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Stores the bytes in memory, replacing any prior content at the key (the strip worker re-stores the
+     * scrubbed image in place). Also marks the key known so {@link #exists} reflects it.</p>
+     */
+    @Override
+    public void putBytes(String objectKey, String contentType, byte[] bytes) {
+        knownKeys.add(objectKey);
+        contents.put(objectKey, bytes.clone());
     }
 
     /**
@@ -76,6 +114,17 @@ public class InMemoryObjectStore implements ObjectStore {
      */
     public boolean exists(String objectKey) {
         return knownKeys.contains(objectKey);
+    }
+
+    /**
+     * Test seam: deposits bytes at a key as if a client had completed the pre-signed PUT, so a test can
+     * exercise the EXIF-strip worker's read→scrub→re-store round-trip against this stub.
+     *
+     * @param objectKey the key to seed.
+     * @param bytes     the bytes to store.
+     */
+    public void putBytesForTest(String objectKey, byte[] bytes) {
+        putBytes(objectKey, null, bytes);
     }
 
     /** Builds a deterministic, clearly-fake dev URL for the given key and operation. */

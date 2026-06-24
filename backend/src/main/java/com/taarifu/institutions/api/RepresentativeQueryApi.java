@@ -16,6 +16,29 @@ import java.util.UUID;
 public interface RepresentativeQueryApi {
 
     /**
+     * Existence guard for a referenced representative — answers "is there a live (non-soft-deleted)
+     * representative with this public id?" without loading or exposing the aggregate.
+     *
+     * <p>WHY this exists alongside {@link #constituencyOf}/{@link #wardOf} (which already throw
+     * {@code NOT_FOUND} for a phantom): the electoral-scope resolvers are only consulted on the
+     * <i>binding-action</i> path (accountability rate-rep), and only for a {@code REPRESENTATIVE} subject.
+     * The <b>curated-authoring</b> path (contribution, attendance, promise — D-Q4) records data
+     * <i>about</i> a representative but does <b>not</b> resolve their electoral seat, so it has no other
+     * reason to call the institutions module. Without this method a curator could persist a contribution,
+     * an attendance row, or a promise against a representative public id that does not exist — orphaned
+     * accountability data attributed to nobody. This cheap boolean lets the curated-authoring service
+     * reject a non-existent referent up front, through the published port only (ADR-0013), never reaching
+     * into institutions' {@code domain}/{@code infrastructure}.</p>
+     *
+     * <p>The method is read-only and returns {@code false} (never throws) for a missing referent, so the
+     * caller chooses the rejection shape (typically a localised {@code NOT_FOUND}/validation error).</p>
+     *
+     * @param representativePublicId the representative's public id (may be {@code null} → {@code false}).
+     * @return {@code true} if a live representative with that public id exists, else {@code false}.
+     */
+    boolean exists(UUID representativePublicId);
+
+    /**
      * Resolves the representative's constituency public id (the electoral unit a citizen must be an elector
      * of to rate/petition against them, D13).
      *

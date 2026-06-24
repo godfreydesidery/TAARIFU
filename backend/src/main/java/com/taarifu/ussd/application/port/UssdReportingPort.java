@@ -14,12 +14,12 @@ import java.util.UUID;
  * §23 "USSD users get equivalent quotas") and <b>never</b> on a token balance (the civic-integrity fence,
  * D18, §23.5). Nothing on this port takes or returns a token.</p>
  *
- * <p>WHY a consumer-owned interface: reporting publishes read ports ({@code IssueCategoryQueryApi},
- * {@code ReportQueryApi}) and a responder-side lifecycle port, but <b>no citizen-side file/track command
- * port</b> yet (filing is an authenticated controller path). Per the isolation rule this module must not
- * import reporting's {@code application}/{@code domain}, so the seam is defined here, bound to a dev stub
- * now, and delegated to reporting's published file/track ports once they exist ({@code // TODO(wiring)}; see
- * CENTRAL INTEGRATION NEEDS). All ids are public {@code UUID}s; no reporting entity crosses the boundary.</p>
+ * <p>WHY a consumer-owned interface: per the isolation rule this module must not import reporting's
+ * {@code application}/{@code domain}. The seam is defined here and bound (by {@code UssdReportingAdapter}) to
+ * reporting's published {@code UssdReportApi} citizen file/track command port — the sanctioned synchronous
+ * {@code ussd → reporting} contract (ADR-0013 §4d), which offers the active-category menu, files a real
+ * {@code Report} on the same lifecycle/SLA/ticket/routing path as a web filing, and tracks by ticket code.
+ * All ids are public {@code UUID}s; no reporting entity crosses the boundary.</p>
  */
 public interface UssdReportingPort {
 

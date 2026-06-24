@@ -1,5 +1,6 @@
 package com.taarifu.identity.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
 import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.audit.AuditOutcome;
@@ -8,16 +9,10 @@ import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.identity.domain.model.OtpChallenge;
 import com.taarifu.identity.domain.model.Profile;
-import com.taarifu.identity.domain.model.Role;
-import com.taarifu.identity.domain.model.RoleAssignment;
 import com.taarifu.identity.domain.model.User;
 import com.taarifu.identity.domain.model.enums.OtpPurpose;
 import com.taarifu.identity.domain.model.enums.RoleName;
-import com.taarifu.identity.domain.model.enums.RoleStatus;
 import com.taarifu.identity.domain.model.enums.TrustTier;
-import com.taarifu.identity.domain.repository.ProfileRepository;
-import com.taarifu.identity.domain.repository.RoleAssignmentRepository;
-import com.taarifu.identity.domain.repository.RoleRepository;
 import com.taarifu.identity.domain.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,39 +34,32 @@ public class SignupService {
 
     private final OtpService otpService;
     private final TokenService tokenService;
-    private final TierService tierService;
+    private final AccountCreator accountCreator;
     private final UserRepository userRepository;
-    private final ProfileRepository profileRepository;
-    private final RoleRepository roleRepository;
-    private final RoleAssignmentRepository roleAssignmentRepository;
     private final AuditEventService audit;
+    private final IdentityFunnelAnalytics funnel;
 
     /**
-     * @param otpService               OTP issue/verify.
-     * @param tokenService             issues the first token pair.
-     * @param tierService              recomputes + caches the live tier.
-     * @param userRepository           account persistence (one-per-phone guard).
-     * @param profileRepository        profile persistence.
-     * @param roleRepository           CITIZEN catalogue row lookup.
-     * @param roleAssignmentRepository grants the CITIZEN role.
-     * @param audit                    append-only audit writer.
+     * @param otpService     OTP issue/verify.
+     * @param tokenService   issues the first token pair.
+     * @param accountCreator the shared "create one T1 account for a phone" routine (DRY with the USSD
+     *                       provisioning path — {@link AccountCreator}).
+     * @param userRepository account persistence (one-per-phone guard).
+     * @param audit          append-only audit writer.
+     * @param funnel         emits the {@code account_signed_up} verification-funnel analytics fact (A1).
      */
     public SignupService(OtpService otpService,
                          TokenService tokenService,
-                         TierService tierService,
+                         AccountCreator accountCreator,
                          UserRepository userRepository,
-                         ProfileRepository profileRepository,
-                         RoleRepository roleRepository,
-                         RoleAssignmentRepository roleAssignmentRepository,
-                         AuditEventService audit) {
+                         AuditEventService audit,
+                         IdentityFunnelAnalytics funnel) {
         this.otpService = otpService;
         this.tokenService = tokenService;
-        this.tierService = tierService;
+        this.accountCreator = accountCreator;
         this.userRepository = userRepository;
-        this.profileRepository = profileRepository;
-        this.roleRepository = roleRepository;
-        this.roleAssignmentRepository = roleAssignmentRepository;
         this.audit = audit;
+        this.funnel = funnel;
     }
 
     /**
@@ -112,20 +100,10 @@ public class SignupService {
             throw new ApiException(ErrorCode.CONFLICT);
         }
 
-        User user = User.createPending(phone);
-        user.activate();
-        user = userRepository.save(user);
-
-        Profile profile = Profile.createPersonForSignup(user);
-        profileRepository.save(profile);
-
-        Role citizen = roleRepository.findByName(RoleName.CITIZEN)
-                .orElseThrow(() -> new ApiException(ErrorCode.INTERNAL_ERROR));
-        roleAssignmentRepository.save(RoleAssignment.grant(user, citizen, RoleStatus.ACTIVE));
-
-        // Server computes the tier (T1 here) and caches it; the client never asserts a tier (MF-2).
-        TrustTier tier = tierService.resolveLiveTier(profile);
-        user.setTrustTier(tier);
+        // Shared create-T1-account core (DRY with the USSD provisioning path — AccountCreator). One account
+        // per phone is the caller's decision: signup has already rejected an existing phone with CONFLICT above.
+        User user = accountCreator.createCitizenAtT1(phone);
+        TrustTier tier = user.getTrustTier();
 
         audit.record(AuditEvent.Builder
                 .of(AuditEventType.AUTH_SIGNUP_COMPLETED, AuditOutcome.SUCCESS)
@@ -134,6 +112,11 @@ public class SignupService {
                 .of(AuditEventType.AUTH_TIER_CHANGED, AuditOutcome.SUCCESS)
                 .actor(user.getPublicId()).subject(user.getPublicId())
                 .reason("T0->" + tier.name()).build());
+
+        // ANALYTICS (A1, §3.3 funnel): the T0→T1 funnel-entry fact, emitted on the outbox in THIS transaction
+        // and recorded asynchronously off the citizen path. Channel APP — this is the OTP/app signup path
+        // (the USSD provisioning path emits the same fact with channel USSD). Coarse tier+channel only, no PII.
+        funnel.emit(AnalyticsEventTypes.ACCOUNT_SIGNED_UP, tier.name(), IdentityFunnelAnalytics.CHANNEL_APP);
 
         TokenService.TokenPair tokens = tokenService.issuePair(user);
         return new SignupResult(user.getPublicId(), tier, tokens);

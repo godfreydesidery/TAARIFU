@@ -11,10 +11,11 @@
 ///
 /// Seams flagged as CENTRAL INTEGRATION NEEDS (kept out of scope to stay
 /// dependency-light): the GPS button needs a `geolocator` + the GPS→ward resolve
-/// call; the voice mic needs a `speech_to_text` engine (EI-17); photo attach
-/// needs an image picker + the (EI-8) pre-signed upload that yields the
-/// `attachmentRefs`. Each is wired behind a disabled affordance here so the
-/// contract and UX are visible without pulling the packages in yet.
+/// call; the voice mic needs a `speech_to_text` engine (EI-17). Photo attach
+/// (EI-8) is now a **live** capture seam — the camera/gallery affordances are
+/// real and call an injectable [AttachmentService]; the default binding reports
+/// "coming soon" rather than faking media, and captured items queue their refs
+/// (local until the pre-signed upload endpoint lands). See attachment_service.dart.
 library;
 
 import 'package:flutter/material.dart';
@@ -27,6 +28,8 @@ import '../../../features/geography/data/geography_repository.dart';
 import '../../../features/geography/view/ward_picker.dart';
 import '../../../l10n/app_localizations.dart';
 import '../bloc/report_form_cubit.dart';
+import '../data/attachment_models.dart';
+import '../data/attachment_service.dart';
 import '../data/reporting_models.dart';
 
 /// The file-a-report form.
@@ -104,7 +107,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(l10n.reportTitle)),
       body: BlocConsumer<ReportFormCubit, ReportFormState>(
-        listenWhen: (p, c) => p.status != c.status,
+        listenWhen: (p, c) =>
+            p.status != c.status || p.attachmentError != c.attachmentError,
         listener: (context, state) {
           if (state.status == ReportFormStatus.filed ||
               state.status == ReportFormStatus.queued) {
@@ -116,6 +120,16 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
               ..showSnackBar(
                 SnackBar(content: Text(FailureMessages.of(l10n, state.error!))),
               );
+          }
+          // A capture failure (cancelled / picker not wired) is non-fatal — the
+          // report is still filable without media.
+          if (state.attachmentError != null) {
+            final msg = state.attachmentError is AttachmentUnavailable
+                ? l10n.reportAttachUnavailable
+                : FailureMessages.of(l10n, state.attachmentError!);
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(SnackBar(content: Text(msg)));
           }
         },
         builder: (context, state) {
@@ -211,12 +225,12 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 (v == null || v.trim().isEmpty) ? l10n.requiredField : null,
           ),
           const SizedBox(height: 8),
-          // Photo-attach seam (EI-8) — disabled until image-picker + pre-signed
-          // upload yield the attachmentRefs.
-          OutlinedButton.icon(
-            onPressed: null,
-            icon: const Icon(Icons.add_a_photo_outlined),
-            label: Text(l10n.reportAddPhotoButton),
+          // Photo-attach (EI-8): live camera/gallery capture seam. Captured items
+          // queue their refs in the draft (local until the upload endpoint lands).
+          _AttachmentsSection(
+            attachments: state.attachments,
+            busy: state.attachmentBusy,
+            submitting: submitting,
           ),
           const SizedBox(height: 16),
           // Ward chosen through the manual ward picker (no hand-typed UUID).
@@ -346,6 +360,93 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The attachment capture + preview block: camera/gallery buttons and a
+/// thumbnail strip of held items, each removable. Reads the cubit directly so it
+/// stays a small, const-friendly widget.
+class _AttachmentsSection extends StatelessWidget {
+  const _AttachmentsSection({
+    required this.attachments,
+    required this.busy,
+    required this.submitting,
+  });
+
+  final List<PendingAttachment> attachments;
+  final bool busy;
+  final bool submitting;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final cubit = context.read<ReportFormCubit>();
+    final locked = submitting || busy;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(l10n.reportPhotoLabel, style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: locked
+                    ? null
+                    : () => cubit.addAttachment(AttachmentSource.camera),
+                icon: const Icon(Icons.photo_camera_outlined),
+                label: Text(l10n.reportTakePhotoButton),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: locked
+                    ? null
+                    : () => cubit.addAttachment(AttachmentSource.gallery),
+                icon: const Icon(Icons.photo_library_outlined),
+                label: Text(l10n.reportPickPhotoButton),
+              ),
+            ),
+          ],
+        ),
+        if (busy)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: LinearProgressIndicator(),
+          ),
+        if (attachments.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final a in attachments)
+                Chip(
+                  avatar: Icon(
+                    a.isUploaded
+                        ? Icons.cloud_done_outlined
+                        : Icons.image_outlined,
+                    size: 18,
+                  ),
+                  label: Text(
+                    a.filename,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onDeleted: submitting
+                      ? null
+                      : () => cubit.removeAttachment(a.localPath),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            l10n.reportAttachQueuedNote,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ],
     );
   }
 }

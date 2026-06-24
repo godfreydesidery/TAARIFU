@@ -3,6 +3,8 @@ package com.taarifu.media.domain.repository;
 import com.taarifu.media.domain.model.MediaObject;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -29,4 +31,23 @@ public interface MediaObjectRepository extends JpaRepository<MediaObject, Long> 
      * @return the matching object, or empty if none/soft-deleted.
      */
     Optional<MediaObject> findByObjectKey(String objectKey);
+
+    /**
+     * Loads the (non-deleted) objects matching any of the given public ids — for the
+     * {@link com.taarifu.media.api.MediaAttachmentApi} validate-and-bind batch.
+     *
+     * @param publicIds the media public ids to load.
+     * @return the matching objects (may be smaller than the input if some ids are unknown/soft-deleted).
+     */
+    List<MediaObject> findAllByPublicIdIn(Collection<UUID> publicIds);
+
+    /**
+     * Lists the (non-deleted) objects bound to a host resource — for the host's read path to surface its
+     * attachments ({@link com.taarifu.media.api.MediaAttachmentApi#attachmentsOf}).
+     *
+     * @param ownerType the host-resource discriminator.
+     * @param ownerId   the host resource public id.
+     * @return the bound objects (never {@code null}; empty if none).
+     */
+    List<MediaObject> findByOwnerTypeAndOwnerId(String ownerType, UUID ownerId);
 }

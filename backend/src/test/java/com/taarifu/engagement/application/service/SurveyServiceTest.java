@@ -2,6 +2,7 @@ package com.taarifu.engagement.application.service;
 
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.engagement.application.mapper.EngagementMapper;
 import com.taarifu.engagement.domain.model.Survey;
 import com.taarifu.engagement.domain.model.SurveyResponse;
@@ -36,6 +37,8 @@ class SurveyServiceTest {
     private SurveyRepository surveys;
     @Mock
     private SurveyResponseRepository responses;
+    @Mock
+    private OutboxWriter outboxWriter;
 
     private final EngagementMapper mapper = new EngagementMapper();
     private SurveyService service;
@@ -46,7 +49,8 @@ class SurveyServiceTest {
     @BeforeEach
     void setUp() {
         // No token collaborator is injectable here — SurveyService cannot read a balance (integrity fence).
-        service = new SurveyService(surveys, responses, mapper);
+        // The OutboxWriter mock receives the survey_responded analytics fact (a passive side-record, not a gate).
+        service = new SurveyService(surveys, responses, mapper, outboxWriter);
     }
 
     private Survey openBindingPoll() {

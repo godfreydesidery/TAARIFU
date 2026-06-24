@@ -3,19 +3,47 @@
   <h1 class="h3 mb-1">{{ 'dashboard.title' | translate }}</h1>
   <p class="text-muted mb-4">{{ 'dashboard.subtitle' | translate }}</p>
 
-  <!-- Stat cards -->
+  <!-- Stat cards: report-domain figures from the single /admin/stats aggregate; the rest from list totals. -->
   <div class="row g-3 mb-4">
     <div class="col-6 col-lg-3">
       <a routerLink="/reports" class="card h-100 text-decoration-none text-reset shadow-sm">
         <div class="card-body text-center">
           <p class="h2 mb-0">
-            @if (reportsCount() === undefined) {
+            @if (openCases() === undefined) {
               <span class="placeholder col-4"></span>
             } @else {
-              {{ reportsCount() === null ? '—' : (reportsCount() | number) }}
+              {{ openCases() === null ? '—' : (openCases() | number) }}
             }
           </p>
-          <small class="text-muted">{{ 'dashboard.statReports' | translate }}</small>
+          <small class="text-muted">{{ 'dashboard.statOpenCases' | translate }}</small>
+        </div>
+      </a>
+    </div>
+    <div class="col-6 col-lg-3">
+      <a routerLink="/reports" class="card h-100 text-decoration-none text-reset shadow-sm">
+        <div class="card-body text-center">
+          <p class="h2 mb-0" [class.text-danger]="!!slaBreachedCases()">
+            @if (slaBreachedCases() === undefined) {
+              <span class="placeholder col-4"></span>
+            } @else {
+              {{ slaBreachedCases() === null ? '—' : (slaBreachedCases() | number) }}
+            }
+          </p>
+          <small class="text-muted">{{ 'dashboard.statSlaBreached' | translate }}</small>
+        </div>
+      </a>
+    </div>
+    <div class="col-6 col-lg-3">
+      <a routerLink="/moderation" class="card h-100 text-decoration-none text-reset shadow-sm">
+        <div class="card-body text-center">
+          <p class="h2 mb-0">
+            @if (flagsPending() === undefined) {
+              <span class="placeholder col-4"></span>
+            } @else {
+              {{ flagsPending() === null ? '—' : (flagsPending() | number) }}
+            }
+          </p>
+          <small class="text-muted">{{ 'dashboard.statModeration' | translate }}</small>
         </div>
       </a>
     </div>
@@ -30,34 +58,6 @@
             }
           </p>
           <small class="text-muted">{{ 'dashboard.statOrganisations' | translate }}</small>
-        </div>
-      </a>
-    </div>
-    <div class="col-6 col-lg-3">
-      <a routerLink="/representatives" class="card h-100 text-decoration-none text-reset shadow-sm">
-        <div class="card-body text-center">
-          <p class="h2 mb-0">
-            @if (representativesCount() === undefined) {
-              <span class="placeholder col-4"></span>
-            } @else {
-              {{ representativesCount() === null ? '—' : (representativesCount() | number) }}
-            }
-          </p>
-          <small class="text-muted">{{ 'dashboard.statRepresentatives' | translate }}</small>
-        </div>
-      </a>
-    </div>
-    <div class="col-6 col-lg-3">
-      <a routerLink="/moderation" class="card h-100 text-decoration-none text-reset shadow-sm">
-        <div class="card-body text-center">
-          <p class="h2 mb-0">
-            @if (moderationCount() === undefined) {
-              <span class="placeholder col-4"></span>
-            } @else {
-              {{ moderationCount() === null ? '—' : (moderationCount() | number) }}
-            }
-          </p>
-          <small class="text-muted">{{ 'dashboard.statModeration' | translate }}</small>
         </div>
       </a>
     </div>

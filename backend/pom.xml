@@ -108,6 +108,20 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!--
+          Micrometer Prometheus registry — RENDERS the /actuator/prometheus scrape surface
+          (ARCHITECTURE §9, deploy/README §10). application.yml exposes the `prometheus`
+          actuator endpoint, but with only spring-boot-starter-actuator on the classpath that
+          endpoint is unavailable (no PrometheusMeterRegistry). This runtime dependency supplies
+          the registry so the scraper renders the text exposition format. Runtime scope: it is a
+          telemetry sink, not a compile-time API. The endpoint stays internal-only at the edge
+          (reverse-proxy/network-policy job, NOT app config).
+        -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
 
         <!-- ============================ Database ============================= -->
         <dependency>
@@ -141,6 +155,40 @@
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
             <version>${springdoc.version}</version>
+        </dependency>
+
+        <!-- ============================ Email / SMTP ======================== -->
+        <!--
+          Spring Mail (JavaMail/Jakarta Mail) backs the communications module's SMTP
+          EmailSender adapter (PRD §21 EI-6): transactional OTP-fallback / staff notices /
+          digests over a deliverability-aligned ESP (SPF/DKIM/DMARC at the ESP, not here).
+          The host/port/credentials come from spring.mail.* env placeholders — NEVER source
+          (CLAUDE.md §12, PRD §18). The dev/test/prod-default EmailSender stays the logging
+          no-op (taarifu.communications.email.provider unset → matchIfMissing), so this
+          dependency is dormant on the boot path unless the SMTP adapter is explicitly selected
+          (taarifu.communications.email.provider=smtp). JavaMailSender is auto-configured by
+          Spring Boot only when spring.mail.host is set, so an unconfigured prod still boots.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
+        <!-- ============================ Redis (rate-limiters) =============== -->
+        <!--
+          Spring Data Redis (Lettuce client) backs the OPTIONAL multi-instance rate-limiters
+          (W3-2): RedisAuthRateLimiter + RedisUssdGatewayRateLimiter. The in-memory adapters
+          remain the dev/test/single-instance default (taarifu.ratelimit.backend=memory, the
+          match-if-missing value), so this dependency is DORMANT on the default boot path — a
+          context with no Redis still starts. The Redis adapters are selected ONLY by
+          taarifu.ratelimit.backend=redis, and the StringRedisTemplate auto-configuration is
+          driven by spring.data.redis.host/port (env, never source — no Redis credentials live
+          in this repo). This is the shared, auto-expiring counter store the security review
+          requires for production correctness across instances (TR-3 / G14, AUTH-DESIGN §9).
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
         <!-- ============================ Object storage (S3) ================= -->

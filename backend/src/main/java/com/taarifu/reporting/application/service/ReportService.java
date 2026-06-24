@@ -4,6 +4,8 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.outbox.EventEnvelope;
 import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.persistence.CodeGenerator;
@@ -22,6 +24,7 @@ import com.taarifu.reporting.domain.model.enums.CaseEventType;
 import com.taarifu.reporting.domain.model.enums.ReportPriority;
 import com.taarifu.reporting.domain.model.enums.ReportStatus;
 import com.taarifu.reporting.domain.model.enums.ReportVisibility;
+import com.taarifu.reporting.domain.port.AttachmentValidator;
 import com.taarifu.reporting.domain.port.WardResolver;
 import com.taarifu.reporting.domain.repository.CaseEventRepository;
 import com.taarifu.reporting.domain.repository.IssueCategoryRepository;
@@ -66,9 +69,13 @@ import java.util.UUID;
  * <i>same</i> transaction as the report row, and a responders routing handler creates the OWNER
  * {@code ResponderAssignment} <b>asynchronously</b>. WHY async (not a direct call into responders): a
  * synchronous {@code reporting → responders} edge would be a dependency cycle and would couple the
- * citizen's filing to a responders outage (ADR-0013 §1; PRD §15 DI3). The notifications fan-out
- * (ack/status-change) is likewise a later increment; this service records the timeline event those
- * notifications will key off.</p>
+ * citizen's filing to a responders outage (ADR-0013 §1; PRD §15 DI3). The <b>reverse leg</b> is also wired:
+ * the responders module emits {@code RESPONDER_ASSIGNED} after creating the OWNER, the reporting
+ * {@code ResponderAssignedHandler} consumes it and calls {@link #applySystemAssignment}, which records the
+ * assignee and transitions the report {@code NEW -> ASSIGNED} idempotently — so the routing round-trip is
+ * complete on the report side, with no synchronous {@code responders -> reporting} write into the lifecycle.
+ * The notifications fan-out (ack/status-change) is likewise a later increment; this service records the
+ * timeline event those notifications will key off.</p>
  */
 @Service
 @Transactional(readOnly = true)
@@ -91,6 +98,7 @@ public class ReportService implements ReportLifecycleApi {
     private final ReportingMapper mapper;
     private final ClockPort clock;
     private final OutboxWriter outboxWriter;
+    private final AttachmentValidator attachmentValidator;
 
     /**
      * @param reportRepository    report persistence port.
@@ -103,11 +111,14 @@ public class ReportService implements ReportLifecycleApi {
      * @param outboxWriter        the transactional-outbox port; {@link #fileReport} appends a
      *                            {@link ReportEventTypes#REPORT_ROUTED} event in the filing transaction so a
      *                            responders handler creates the OWNER assignment asynchronously (ADR-0014 §5b).
+     * @param attachmentValidator validates+binds the citizen's media attachment refs at file time (delegates
+     *                            to the media module's public api port; the bind runs in the file transaction
+     *                            so a bad attachment set rolls the whole filing back).
      */
     public ReportService(ReportRepository reportRepository, IssueCategoryRepository categoryRepository,
                          CaseEventRepository caseEventRepository, WardResolver wardResolver,
                          CodeGenerator codeGenerator, ReportingMapper mapper, ClockPort clock,
-                         OutboxWriter outboxWriter) {
+                         OutboxWriter outboxWriter, AttachmentValidator attachmentValidator) {
         this.reportRepository = reportRepository;
         this.categoryRepository = categoryRepository;
         this.caseEventRepository = caseEventRepository;
@@ -116,6 +127,7 @@ public class ReportService implements ReportLifecycleApi {
         this.mapper = mapper;
         this.clock = clock;
         this.outboxWriter = outboxWriter;
+        this.attachmentValidator = attachmentValidator;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -167,6 +179,9 @@ public class ReportService implements ReportLifecycleApi {
         // SLA: dueAt = filedAt + category TTR (UC-D04).
         var dueAt = clock.now().plus(category.getDefaultSlaTtrMinutes(), ChronoUnit.MINUTES);
 
+        // Parse the citizen-supplied attachment refs (media public ids) early so a malformed id is a clean
+        // 400 before any persistence; the canonical bound set is established via the media port below.
+        java.util.List<UUID> attachmentIds = parseAttachmentRefs(request.attachmentRefs());
         String attachmentRefs = joinAttachmentRefs(request.attachmentRefs());
 
         Report report = new Report(effectiveReporterId, category, request.title(), request.description(),
@@ -176,6 +191,13 @@ public class ReportService implements ReportLifecycleApi {
         // Issue the human ticket code from the DB sequence before persist (race-safe, gap-tolerant).
         report.setCode(codeGenerator.nextCode(REPORT_CODE_PREFIX, REPORT_CODE_SEQUENCE, REPORT_CODE_PAD_WIDTH));
         reportRepository.save(report);
+
+        // ATTACHMENTS: validate the refs are THIS citizen's own confirmed uploads and bind them to the
+        // just-saved report (the report's publicId is now assigned). Runs in THIS file transaction via the
+        // media.api port, so any bad/forged/foreign attachment id rejects the whole filing (atomic). An
+        // anonymous filing (effectiveReporterId == null) carrying media is rejected by the port — an
+        // account-owned attachment cannot be proven for an anonymous report (PDPA, PRD §25.3).
+        attachmentValidator.validateAndBind(report.getPublicId(), effectiveReporterId, attachmentIds);
 
         // Initial timeline entry (public): the case opened at NEW.
         appendEvent(report, CaseEventType.STATUS_CHANGE, true, effectiveReporterId,
@@ -189,7 +211,8 @@ public class ReportService implements ReportLifecycleApi {
         // synchronous reporting → responders call here — that edge would be a dependency cycle (responders
         // already reads reporting synchronously for validation, ADR-0013 §1) and would couple the citizen's
         // filing to a responders outage. The report stays NEW until the responders side assigns an OWNER and
-        // emits ResponderAssigned back (a later reporting handler sets Report.assignedResponderId, D21).
+        // emits RESPONDER_ASSIGNED back, which the reporting ResponderAssignedHandler consumes to set
+        // Report.assignedResponderId and transition NEW -> ASSIGNED via applySystemAssignment (D21).
         outboxWriter.append(EventEnvelope.of(
                 ReportEventTypes.REPORT_ROUTED,
                 ReportEventTypes.AGGREGATE_REPORT,
@@ -197,6 +220,14 @@ public class ReportService implements ReportLifecycleApi {
                 new ReportRouted(report.getPublicId(), category.getPublicId(),
                         report.getReporterWardId(), clock.now()),
                 clock.now()));
+
+        // ANALYTICS (Appendix E, M15): emit a report_filed civic-activity fact on the SAME outbox in THIS
+        // transaction, consumed asynchronously by the analytics sink — off the citizen's critical path
+        // (Appendix E "never on the critical path"). Dimensions are ids/codes ONLY (ward, category, role) —
+        // NO reporter, NO title/description, NO geo-point (PRD §18, ADR-0014 §1). A null reporter (anonymous
+        // filing) carries no actorRef — analytics still counts the volume without a person.
+        emitAnalytics(report.getPublicId(), AnalyticsEventTypes.REPORT_FILED,
+                report.getReporterWardId(), category.getPublicId());
 
         return mapper.toReportDto(report);
     }
@@ -369,8 +400,9 @@ public class ReportService implements ReportLifecycleApi {
     // Responder-side lifecycle (D21) — the ReportLifecycleApi published command port (ADR-0013 §4a).
     // The responders module calls these (sync responders → reporting); reporting stays the single owner of
     // the §12.1 state machine, so every transition is guarded and appends a CaseEvent. NOTE: the reverse
-    // routing-on-creation (reporting → responders OWNER assignment) is async via the outbox — see the
-    // // TODO(wiring) in fileReport — so there is no synchronous cycle between the two modules.
+    // routing-on-creation (reporting → responders OWNER assignment) is async via the outbox (REPORT_ROUTED
+    // emitted in fileReport), and its report-side back-leg is applySystemAssignment (driven by the outbox
+    // RESPONDER_ASSIGNED consumer) — so there is no synchronous cycle between the two modules.
     // ---------------------------------------------------------------------------------------------
 
     /** {@inheritDoc} */
@@ -382,6 +414,52 @@ public class ReportService implements ReportLifecycleApi {
         transition(report, ReportStatus.ASSIGNED, actorPublicId,
                 "Imepangiwa mtekelezaji (%s → %s)".formatted(report.getStatus(), ReportStatus.ASSIGNED));
         return mapper.toReportDto(report);
+    }
+
+    /**
+     * Applies the <b>report-side leg of routing</b> for a system-created OWNER assignment, closing the
+     * round-trip the responders {@code RESPONDER_ASSIGNED} back-event drives (D21; ADR-0014 §5b): records the
+     * assigned responder on the report and transitions it {@code NEW → ASSIGNED}. Invoked <b>only</b> by the
+     * reporting {@code ResponderAssignedHandler} off the outbox relay thread — never by a controller — so it
+     * carries no caller; the transition is attributed to the system ({@code actorProfileId == null}).
+     *
+     * <p>WHY this lives on {@link ReportService} (not in the handler): reporting is the single owner of the
+     * §12.1 state machine, so the guarded {@code transition} (legality check + {@code STATUS_CHANGE}
+     * {@link CaseEvent} + the status-changed analytics fact) stays in one place; the handler only decodes the
+     * event and calls this (CLAUDE.md §3 DRY).</p>
+     *
+     * <p><b>Idempotent (at-least-once relay delivery — ADR-0014 §3):</b> the assignment is applied <b>only</b>
+     * while the report is still {@code NEW}. A redelivered event, or one that arrives after an operator already
+     * moved the case past {@code NEW} via the {@link ReportLifecycleApi}, is a <b>no-op</b> — no
+     * double-transition, no duplicate timeline entry, no analytics double-count. A missing report (e.g.
+     * soft-deleted before the relay caught up) is likewise a no-op (returns {@code false}), never an error —
+     * so a benign race never pushes the event to the DLQ. WHY gated on {@code NEW} specifically (not any
+     * non-ASSIGNED state): system routing only ever fires once on a freshly-filed report; a later operator
+     * re-assign is the synchronous {@link #assign} path, not this one.</p>
+     *
+     * @param reportPublicId    the routed report's public id (from the {@code RESPONDER_ASSIGNED} payload).
+     * @param responderPublicId the assigned OWNER responder's public id (stored as a bare {@code UUID}, no FK —
+     *                          the responder is owned by the responders module, referenced across the boundary
+     *                          by public id; ARCHITECTURE §4.3).
+     * @return {@code true} if the assignment was applied ({@code NEW → ASSIGNED}); {@code false} if it was a
+     *         no-op (report absent, or already past {@code NEW}).
+     */
+    @Transactional
+    public boolean applySystemAssignment(UUID reportPublicId, UUID responderPublicId) {
+        Report report = reportRepository.findByPublicIdWithCategory(reportPublicId).orElse(null);
+        if (report == null) {
+            // The report vanished (soft-deleted) before the relay delivered the back-event — benign no-op.
+            return false;
+        }
+        if (report.getStatus() != ReportStatus.NEW) {
+            // Already routed/transitioned (redelivery, or an operator moved it past NEW) — idempotent no-op.
+            return false;
+        }
+        report.assignResponder(responderPublicId);
+        // System transition (actorProfileId == null): guarded NEW → ASSIGNED + STATUS_CHANGE event + analytics.
+        transition(report, ReportStatus.ASSIGNED, null,
+                "Imepangiwa mtekelezaji kiotomatiki (%s → %s)".formatted(ReportStatus.NEW, ReportStatus.ASSIGNED));
+        return true;
     }
 
     /** {@inheritDoc} */
@@ -409,6 +487,10 @@ public class ReportService implements ReportLifecycleApi {
         report.resolve(resolutionNote);
         appendEvent(report, CaseEventType.STATUS_CHANGE, true, actorPublicId,
                 "%s → %s".formatted(from, ReportStatus.RESOLVED));
+        // ANALYTICS (Appendix E, M15): a report reached RESOLVED — the loop-closure / TTR metric. Emitted on
+        // the outbox in THIS transaction; recorded asynchronously by the analytics sink (off the actor path).
+        emitAnalytics(report.getPublicId(), AnalyticsEventTypes.REPORT_RESOLVED,
+                report.getReporterWardId(), report.getCategory().getPublicId());
         return mapper.toReportDto(report);
     }
 
@@ -449,6 +531,11 @@ public class ReportService implements ReportLifecycleApi {
         guardTransition(report.getStatus(), target, report.getCode());
         report.setStatus(target);
         appendEvent(report, CaseEventType.STATUS_CHANGE, true, actorProfileId, message);
+        // ANALYTICS (Appendix E, M15): every case state transition is a report_status_changed fact powering the
+        // state-machine analytics. Single emit point because EVERY lifecycle move (assign/start/escalate/the
+        // AWAITING_INFO resume) routes through here. Ids/codes only (ward, category) — no actor PII, no message.
+        emitAnalytics(report.getPublicId(), AnalyticsEventTypes.REPORT_STATUS_CHANGED,
+                report.getReporterWardId(), report.getCategory().getPublicId());
     }
 
     /**
@@ -469,6 +556,29 @@ public class ReportService implements ReportLifecycleApi {
     private CaseEvent appendEvent(Report report, CaseEventType type, boolean publicEvent, UUID actorProfileId,
                                   String message) {
         return caseEventRepository.save(new CaseEvent(report, type, publicEvent, actorProfileId, message));
+    }
+
+    /**
+     * Emits one civic-activity analytics fact to the transactional outbox in the <b>caller's</b> transaction
+     * (Appendix E, M15; ADR-0013 §2 — analytics is event-driven; ADR-0014 §2). The analytics sink consumes it
+     * <b>asynchronously</b> off the citizen path, so a failed/slow analytics write never rolls back the report
+     * write. WHY ids/codes only: the {@link CivicActivityRecorded} payload carries the report (as the outbox
+     * {@code aggregateId}), ward, and category public ids and a controlled event-type code — <b>never</b> the
+     * reporter, title, description, or geo-point (PRD §18, PDPA, ADR-0014 §1). The {@code activeRole} is left
+     * {@code null} here (the reporting service does not resolve the actor's hat; the dimension is optional).
+     *
+     * @param reportPublicId     the report the fact concerns (the outbox aggregate id).
+     * @param analyticsEventType the analytics catalogue value (see {@link AnalyticsEventTypes}).
+     * @param wardId             the report's ward (Kata) public id — a ward-or-coarser geo dimension.
+     * @param categoryId         the report's issue-category public id.
+     */
+    private void emitAnalytics(UUID reportPublicId, String analyticsEventType, UUID wardId, UUID categoryId) {
+        outboxWriter.append(EventEnvelope.of(
+                AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED,
+                AnalyticsEventTypes.AGGREGATE_CIVIC_ACTIVITY,
+                reportPublicId,
+                CivicActivityRecorded.of(analyticsEventType, wardId, categoryId, null, clock.now()),
+                clock.now()));
     }
 
     /**
@@ -517,5 +627,28 @@ public class ReportService implements ReportLifecycleApi {
             return null;
         }
         return String.join(",", refs);
+    }
+
+    /**
+     * Parses the citizen-supplied attachment ref strings (media public ids) into {@code UUID}s, rejecting a
+     * malformed id with a clean {@link ErrorCode#BAD_REQUEST} before any persistence.
+     *
+     * @param refs the raw ref strings, or {@code null}.
+     * @return the parsed ids (empty list if {@code null}/empty input).
+     * @throws ApiException {@link ErrorCode#BAD_REQUEST} if any ref is not a valid UUID.
+     */
+    private java.util.List<UUID> parseAttachmentRefs(java.util.List<String> refs) {
+        if (refs == null || refs.isEmpty()) {
+            return java.util.List.of();
+        }
+        java.util.List<UUID> ids = new java.util.ArrayList<>(refs.size());
+        for (String ref : refs) {
+            try {
+                ids.add(UUID.fromString(ref));
+            } catch (IllegalArgumentException badUuid) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "media.attach.unknown", String.valueOf(ref));
+            }
+        }
+        return ids;
     }
 }

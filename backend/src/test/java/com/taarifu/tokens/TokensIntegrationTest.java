@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 
@@ -115,7 +116,14 @@ class TokensIntegrationTest extends AbstractPostgisIntegrationTest {
     }
 
     @Test
+    @Transactional
     void duplicateIdempotencyKey_isRejectedByUniqueIndex() {
+        // @Transactional: the native INSERTs below run through the EntityManager, which requires an active
+        // transaction for executeUpdate() — without it the first insertLedgerRow() raised
+        // TransactionRequiredException before the unique index could even be exercised. The other methods in
+        // this class drive writes through WalletService, which manages its own transaction; this method does
+        // not, so it must declare one itself (mirrors IdentityConstraintsIntegrationTest's @Transactional
+        // native-insert constraint tests). The transaction rolls back at method end — no cross-test leakage.
         UUID owner = UUID.randomUUID();
         Wallet wallet = walletService.getOrCreateWallet(WalletOwnerType.USER, owner);
         long walletId = wallet.getId();

@@ -1,5 +1,6 @@
 package com.taarifu.identity.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
 import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.audit.AuditOutcome;
@@ -41,6 +42,7 @@ public class ProfileService {
     private final OtpService otpService;
     private final LocationService locationService;
     private final AuditEventService audit;
+    private final IdentityFunnelAnalytics funnel;
 
     /**
      * @param userRepository    account lookup.
@@ -49,19 +51,22 @@ public class ProfileService {
      * @param otpService        OTP issue/verify (the EMAIL VERIFY channel for T2 contact verification).
      * @param locationService   {@code ProfileLocation} lifecycle (SRP — pin/remove/primary/electoral).
      * @param audit             append-only audit writer.
+     * @param funnel            emits the {@code profile_completed} verification-funnel fact on T1→T2 (A1).
      */
     public ProfileService(UserRepository userRepository,
                           ProfileRepository profileRepository,
                           TierService tierService,
                           OtpService otpService,
                           LocationService locationService,
-                          AuditEventService audit) {
+                          AuditEventService audit,
+                          IdentityFunnelAnalytics funnel) {
         this.userRepository = userRepository;
         this.profileRepository = profileRepository;
         this.tierService = tierService;
         this.otpService = otpService;
         this.locationService = locationService;
         this.audit = audit;
+        this.funnel = funnel;
     }
 
     /**
@@ -200,6 +205,14 @@ public class ProfileService {
                     .of(AuditEventType.AUTH_TIER_CHANGED, AuditOutcome.SUCCESS)
                     .actor(user.getPublicId()).subject(user.getPublicId())
                     .reason(before.name() + "->" + after.name()).build());
+            // ANALYTICS (A1, §3.3 funnel): the T1→T2 step — emitted only on the genuine RISE to T2 (this is the
+            // single point every T2-affecting profile change funnels through: name/email/location). Guarding on
+            // an upward transition (before < T2 <= after) avoids re-emitting on a no-op recompute or a downgrade
+            // (§25.5). Channel APP — the profile-completion path is app/web. Coarse tier only, no PII.
+            if (after == TrustTier.T2 && before.compareTo(TrustTier.T2) < 0) {
+                funnel.emit(AnalyticsEventTypes.PROFILE_COMPLETED, after.name(),
+                        IdentityFunnelAnalytics.CHANNEL_APP);
+            }
         }
         return after;
     }

@@ -55,6 +55,7 @@ class ReportServiceTest {
     private CodeGenerator codeGenerator;
     private ClockPort clock;
     private OutboxWriter outboxWriter;
+    private com.taarifu.reporting.domain.port.AttachmentValidator attachmentValidator;
     private ReportService service;
 
     private final UUID reporter = UUID.randomUUID();
@@ -71,9 +72,10 @@ class ReportServiceTest {
         codeGenerator = mock(CodeGenerator.class);
         clock = mock(ClockPort.class);
         outboxWriter = mock(OutboxWriter.class);
+        attachmentValidator = mock(com.taarifu.reporting.domain.port.AttachmentValidator.class);
         ReportingMapper mapper = new ReportingMapper();
         service = new ReportService(reportRepository, categoryRepository, caseEventRepository,
-                wardResolver, codeGenerator, mapper, clock, outboxWriter);
+                wardResolver, codeGenerator, mapper, clock, outboxWriter, attachmentValidator);
 
         when(clock.now()).thenReturn(now);
         when(codeGenerator.nextCode(any(), any(), org.mockito.ArgumentMatchers.anyInt()))
@@ -115,21 +117,37 @@ class ReportServiceTest {
 
         ReportDto dto = service.fileReport(reporter, request);
 
+        // Filing now appends TWO outbox events in the same transaction: (1) REPORT_ROUTED (D21 routing) and
+        // (2) the analytics CIVIC_ACTIVITY_RECORDED report_filed fact (M15). Capture both.
         @SuppressWarnings({"unchecked", "rawtypes"})
         ArgumentCaptor<EventEnvelope<?>> captor =
                 (ArgumentCaptor<EventEnvelope<?>>) (ArgumentCaptor) ArgumentCaptor.forClass(EventEnvelope.class);
-        verify(outboxWriter).append(captor.capture());
-        EventEnvelope<?> envelope = captor.getValue();
-        assertThat(envelope.eventType()).isEqualTo(ReportEventTypes.REPORT_ROUTED);
-        assertThat(envelope.aggregateType()).isEqualTo(ReportEventTypes.AGGREGATE_REPORT);
-        assertThat(envelope.aggregateId()).isEqualTo(dto.id());
+        verify(outboxWriter, org.mockito.Mockito.times(2)).append(captor.capture());
 
+        EventEnvelope<?> routed = captor.getAllValues().stream()
+                .filter(e -> e.eventType().equals(ReportEventTypes.REPORT_ROUTED)).findFirst().orElseThrow();
+        assertThat(routed.aggregateType()).isEqualTo(ReportEventTypes.AGGREGATE_REPORT);
+        assertThat(routed.aggregateId()).isEqualTo(dto.id());
         // Payload is IDS ONLY (report/category/ward) — no reporter, title, description, or geo (PRD §18).
-        assertThat(envelope.payload()).isInstanceOf(ReportRouted.class);
-        ReportRouted payload = (ReportRouted) envelope.payload();
+        assertThat(routed.payload()).isInstanceOf(ReportRouted.class);
+        ReportRouted payload = (ReportRouted) routed.payload();
         assertThat(payload.reportId()).isEqualTo(dto.id());
         assertThat(payload.categoryId()).isEqualTo(category.getPublicId());
         assertThat(payload.wardId()).isEqualTo(wardId);
+
+        // ANALYTICS (M15): the report_filed civic-activity fact carries the right dimensions (ids/codes ONLY —
+        // ward + category, NO reporter/title/description). This assertion fails if the analytics emit is removed.
+        EventEnvelope<?> analytics = captor.getAllValues().stream()
+                .filter(e -> e.eventType().equals(com.taarifu.analytics.api.event.AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED))
+                .findFirst().orElseThrow();
+        assertThat(analytics.payload())
+                .isInstanceOf(com.taarifu.analytics.api.event.CivicActivityRecorded.class);
+        var fact = (com.taarifu.analytics.api.event.CivicActivityRecorded) analytics.payload();
+        assertThat(fact.analyticsEventType())
+                .isEqualTo(com.taarifu.analytics.api.event.AnalyticsEventTypes.REPORT_FILED);
+        assertThat(fact.geoAreaId()).isEqualTo(wardId);
+        assertThat(fact.categoryId()).isEqualTo(category.getPublicId());
+        assertThat(fact.actorRef()).isNull(); // no PII on the analytics fact
     }
 
     @Test
@@ -259,6 +277,57 @@ class ReportServiceTest {
         assertThat(dto.status()).isEqualTo(ReportStatus.ASSIGNED.name());
         assertThat(report.getAssignedResponderId()).isEqualTo(responderId);
         verify(caseEventRepository).save(any());
+    }
+
+    @Test
+    void applySystemAssignment_setsOwner_andTransitionsNewToAssigned() {
+        // The report-side leg of routing (A2): the RESPONDER_ASSIGNED back-event lands → assignee set +
+        // NEW → ASSIGNED through the §12.1 state machine, appending a timeline event. FAILS if the leg breaks.
+        IssueCategory category = ReportingTestFixtures.publicCategory("WATER");
+        Report report = ReportingTestFixtures.report(reporter, category, ReportVisibility.PUBLIC);
+        assertThat(report.getStatus()).isEqualTo(ReportStatus.NEW);
+        when(reportRepository.findByPublicIdWithCategory(report.getPublicId()))
+                .thenReturn(Optional.of(report));
+        UUID responderId = UUID.randomUUID();
+
+        boolean applied = service.applySystemAssignment(report.getPublicId(), responderId);
+
+        assertThat(applied).isTrue();
+        assertThat(report.getStatus()).isEqualTo(ReportStatus.ASSIGNED);
+        assertThat(report.getAssignedResponderId()).isEqualTo(responderId);
+        verify(caseEventRepository).save(any());
+    }
+
+    @Test
+    void applySystemAssignment_isIdempotent_whenAlreadyPastNew() {
+        // At-least-once relay redelivery (or a prior operator transition): the report is no longer NEW, so the
+        // back-event is a NO-OP — no second transition, no duplicate timeline entry, assignee untouched.
+        IssueCategory category = ReportingTestFixtures.publicCategory("WATER");
+        Report report = ReportingTestFixtures.report(reporter, category, ReportVisibility.PUBLIC);
+        UUID firstResponder = UUID.randomUUID();
+        report.assignResponder(firstResponder);
+        report.setStatus(ReportStatus.ASSIGNED);
+        when(reportRepository.findByPublicIdWithCategory(report.getPublicId()))
+                .thenReturn(Optional.of(report));
+
+        boolean applied = service.applySystemAssignment(report.getPublicId(), UUID.randomUUID());
+
+        assertThat(applied).isFalse();
+        assertThat(report.getStatus()).isEqualTo(ReportStatus.ASSIGNED);
+        assertThat(report.getAssignedResponderId()).isEqualTo(firstResponder); // not overwritten
+        verify(caseEventRepository, never()).save(any());
+    }
+
+    @Test
+    void applySystemAssignment_missingReport_isNoOp() {
+        // The report was soft-deleted before the relay delivered the back-event — a benign no-op, never an error.
+        UUID missing = UUID.randomUUID();
+        when(reportRepository.findByPublicIdWithCategory(missing)).thenReturn(Optional.empty());
+
+        boolean applied = service.applySystemAssignment(missing, UUID.randomUUID());
+
+        assertThat(applied).isFalse();
+        verify(caseEventRepository, never()).save(any());
     }
 
     @Test

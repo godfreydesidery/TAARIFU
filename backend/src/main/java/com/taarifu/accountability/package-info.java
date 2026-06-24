@@ -12,15 +12,21 @@
  *
  * <p>Layered api/application/domain per the canonical layout. <b>Integrity invariants enforced here
  * (D13/D16/D18, §23):</b> rating a representative requires live T3 ({@code @RequiresTier}), is one per
- * (rater, subject, period) (DB unique), forbids self-rating ({@code ScopeGuard.isNotSelf}), and NEVER
- * reads a token balance — wealth cannot buy democratic weight; the aggregate score is computed from
- * append-only rows. Electoral-scope enforcement is a documented {@code // TODO(wiring)} pending the
- * institutions/geography electoral mapping.</p>
+ * (rater, subject, period) (DB unique), forbids self-rating ({@code ScopeGuard.isNotSelf}), enforces the
+ * two-tier electoral scope (an elector of the rep's constituency or ward, via institutions'
+ * {@code RepresentativeQueryApi} × identity's {@code ElectoralScopeApi}), and NEVER reads a token balance
+ * — wealth cannot buy democratic weight; the aggregate score is computed from append-only rows. The
+ * curated-authoring path additionally validates the referenced representative exists
+ * ({@code RepresentativeQueryApi.exists}) before persisting any contribution/attendance/promise.</p>
  *
  * <p>Module isolation: the rated/owning subjects (representative, project, rater profile) live in other
  * modules (institutions/projects/identity) and are referenced by public {@code UUID} only — never an FK
- * and never an import of those feature modules ({@code // TODO(wiring)}). Only
+ * and never an import of those feature modules. Cross-module resolution goes through the callee's
+ * published {@code ..api..} port only (ADR-0013): the representative existence/electoral seat via
+ * {@code institutions.api.RepresentativeQueryApi}, the rater's electoral scope via
+ * {@code identity.api.ElectoralScopeApi}. ({@code linkedProjectIds} on a promise are not yet validated —
+ * no projects module/port exists; that remains a documented {@code // TODO(wiring)}.) Only
  * {@code com.taarifu.common}, {@code com.taarifu.geography}, and {@code com.taarifu.identity} (the merged
- * upstream) may be imported.</p>
+ * upstream) plus published api ports may be imported.</p>
  */
 package com.taarifu.accountability;

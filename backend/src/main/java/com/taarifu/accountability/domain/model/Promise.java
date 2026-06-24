@@ -30,8 +30,10 @@ import java.util.UUID;
  *
  * <p>WHY {@code representativeId} and {@code linkedProjectIds} are opaque {@link UUID}s, not FKs: the
  * representative lives in <b>institutions</b> and projects in the <b>projects</b> module — both off-limits
- * to import here. They are referenced by public id and resolved through those modules' APIs at wiring
- * (// TODO(wiring)).</p>
+ * to import here. The {@code representativeId} existence is confirmed via institutions' published
+ * {@code RepresentativeQueryApi.exists} port in {@code CurationService} before persistence (ADR-0013).
+ * {@code linkedProjectIds} are not yet validated — there is no projects module/port to resolve them
+ * against (// TODO(wiring): resolve via the projects API once that seam exists).</p>
  */
 @Entity
 @Table(name = "promise", indexes = {
@@ -43,7 +45,8 @@ public class Promise extends BaseEntity {
 
     /**
      * Public id of the representative who made the promise (institutions module — referenced by id only,
-     * never an FK; // TODO(wiring): validate against institutions' public API).
+     * never an FK; existence validated via {@code RepresentativeQueryApi.exists} in {@code CurationService}
+     * before persistence).
      */
     @Column(name = "representative_id", nullable = false)
     private UUID representativeId;

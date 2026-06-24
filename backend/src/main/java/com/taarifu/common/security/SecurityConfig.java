@@ -119,7 +119,11 @@ public class SecurityConfig {
             // so it cannot require authentication; it is anti-automation-protected like the other open
             // login endpoints (AUTH-DESIGN §14.1, VERIFICATION-DESIGN §7.1/§9.5).
             "/auth/login/totp",
-            "/auth/refresh"
+            "/auth/refresh",
+            // USSD aggregator webhook (W3-1): permitted at the URL filter because there is no user token;
+            // UssdGatewaySecretFilter authenticates the aggregator by a fail-closed shared secret and a
+            // per-MSISDN rate-limit guards no-OTP account-creation abuse (TR-1/TR-3, wave3-review).
+            "/ussd/gateway"
     };
 
     /**

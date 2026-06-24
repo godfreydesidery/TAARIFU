@@ -45,6 +45,15 @@ spring:
     locale: sw                         # default request locale = Swahili
     locale-resolver: accept_header     # honour Accept-Language, default to sw
 
+  # --- Redis: ONLY used when taarifu.ratelimit.backend=redis (the multi-instance rate-limiters, W3-2). ---
+  # host/port come from the environment (no host/credentials in source). With the default backend=memory
+  # these are inert: the in-memory limiters need no Redis and the context boots with no Redis present.
+  # A Redis password, if the deployment uses one, comes from SPRING_DATA_REDIS_PASSWORD (env) — never source.
+  data:
+    redis:
+      host: ${TAARIFU_REDIS_HOST:localhost}
+      port: ${TAARIFU_REDIS_PORT:6379}
+
 # --- Server: versioned API root /api/v1 (ARCHITECTURE §5.4). ---
 server:
   port: ${SERVER_PORT:8081}   # 8081 by default; 8080 left free for other local services. Override via SERVER_PORT.
@@ -54,16 +63,45 @@ server:
     include-stacktrace: never          # never leak stack traces to clients (PRD §18)
     include-message: never
 
-# --- Actuator: expose only health/info publicly; everything else stays internal (ARCHITECTURE §9). ---
+# --- Actuator: expose health/info + the metrics scrape surface (ARCHITECTURE §9, deploy/README §10). ---
+# `prometheus` + `metrics` are added for the internal Prometheus scraper. These MUST stay reachable
+# from the monitoring network ONLY — never published to the public internet (deploy/README §10):
+# at the edge, allow /api/v1/actuator/health and /api/v1/actuator/info publicly and restrict
+# /api/v1/actuator/{metrics,prometheus} to the scrape subnet (reverse-proxy/network-policy job, NOT app config).
+#
+# Rendering /actuator/prometheus requires the `micrometer-registry-prometheus` runtime dependency on
+# the backend classpath (now present in backend/pom.xml). With only spring-boot-starter-actuator and no
+# Prometheus registry the `prometheus` endpoint would be unavailable even when listed here.
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       probes:
         enabled: true                  # liveness/readiness groups
+      group:
+        # Readiness includes external deps (DB/Redis); liveness stays cheap so a slow dep never kills the pod.
+        readiness:
+          include: readinessState,db
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  # Micrometer metric tuning. Percentile histograms for HTTP server timings let Prometheus compute
+  # p95/p99 latency SLOs (PRD §15: reads p95 < 500ms, writes p95 < 1s) via histogram_quantile() on
+  # the scraped buckets, rather than relying on client-side, non-aggregatable percentiles.
+  metrics:
+    tags:
+      # Stamp every metric with the app so dashboards/alerts can slice per deployment (ARCHITECTURE §9).
+      application: taarifu-backend
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      slo:
+        # Buckets aligned to the PRD §15 latency SLOs (ms) so burn can be read straight off the histogram.
+        http.server.requests: 250ms,500ms,1s
 
 # --- springdoc / OpenAPI: serve the spec + Swagger UI (paths are relative to context-path). ---
 springdoc:
@@ -76,6 +114,14 @@ springdoc:
 # Taarifu-specific configuration (all secrets via env; see application-sample.yml).
 # =============================================================================
 taarifu:
+  # --- Rate-limit backend selector (W3-2). Picks the shared anti-automation counter store. ---
+  # 'memory' (default, matchIfMissing): in-process InMemoryAuthRateLimiter + InMemoryUssdGatewayRateLimiter
+  #   — correct for dev/test/single-instance; no Redis needed; lost on restart, NOT shared across instances.
+  # 'redis': RedisAuthRateLimiter + RedisUssdGatewayRateLimiter — ONE shared, auto-expiring budget per
+  #   identity across every app instance. REQUIRED for multi-instance production correctness (TR-3 / G14);
+  #   set spring.data.redis.host/port (above) to a reachable Redis. Thresholds are identical to in-memory.
+  ratelimit:
+    backend: ${TAARIFU_RATELIMIT_BACKEND:memory}
   security:
     jwt:
       # JWT signing secret MUST come from the environment — no default in source (PRD §18).
@@ -115,3 +161,72 @@ taarifu:
   geography:
     # Active Geocoder adapter: 'postgis' (default, source of truth) or 'stub' (dev/test).
     geocoder: ${TAARIFU_GEOCODER:postgis}
+
+  # --- USSD aggregator webhook (POST /ussd/gateway) — server-to-server auth (P2-1, PRD §14/§18). ---
+  # The webhook is permitAll() (a feature-phone caller has no JWT), so the aggregator link is authenticated
+  # by a SHARED SECRET header (constant-time compare in UssdGatewaySecretFilter). The secret is env-only,
+  # NEVER committed. FAIL-CLOSED: when the secret is unset the webhook rejects every call (a disabled
+  # webhook, not an open one) — so do not expose USSD in prod until TAARIFU_USSD_GATEWAY_SECRET is set.
+  # Per-MSISDN rate-limiting (UssdGatewayRateLimiter) additionally throttles keypress + account-creation abuse.
+  ussd:
+    gateway:
+      secret: ${TAARIFU_USSD_GATEWAY_SECRET:}              # SECRET — env/secret-mount only, never committed
+      header: ${TAARIFU_USSD_GATEWAY_HEADER:X-Ussd-Secret} # header the aggregator presents the secret in
+
+  # --- Media malware-scanner verdict callback (POST /media/{id}/scan-callback) — service-principal auth ---
+  # (MF-3, wave4-review §2, PRD §18/§21 EI-8). The callback makes evidence servable (a CLEAN verdict), so it
+  # is authenticated to the SCANNER by a SHARED SECRET header (constant-time compare in
+  # MediaScannerSecretFilter) — a citizen token cannot forge a verdict. The secret is env-only, NEVER
+  # committed. FAIL-CLOSED: when the secret is unset the callback rejects every call (a disabled link, not
+  # an open one) — so do not wire a real scanner in prod until TAARIFU_MEDIA_SCANNER_SECRET is set.
+  media:
+    scan-callback:
+      secret: ${TAARIFU_MEDIA_SCANNER_SECRET:}                 # SECRET — env/secret-mount only, never committed
+      header: ${TAARIFU_MEDIA_SCANNER_HEADER:X-Scanner-Secret} # header the scanner presents the secret in
+
+  # --- Prod-safe first-admin bootstrap (threat-model E / TR-5 / G16; ProdAdminBootstrap). ---
+  # Closes the chicken-and-egg of a fresh prod DB with zero accounts WITHOUT shipping a default
+  # credential. NOT profile-gated: the bean exists ONLY when an operator explicitly opts in via
+  # `enabled=true`, for a single audited first-boot, then turns it OFF again. Idempotent (no-op if any
+  # ACTIVE ROOT exists). Fail-safe: with no/weak password it creates NOTHING (no default credential).
+  # The supplied password is BCrypt-hashed and never logged; the staff TOTP enrolment URI is written to a
+  # 0600 file (never to the log, S-4). See application-sample.yml for the env placeholders.
+  bootstrap:
+    admin:
+      enabled: ${TAARIFU_BOOTSTRAP_ADMIN_ENABLED:false}   # opt-in ONLY; keep false except a first-boot
+      phone: ${TAARIFU_BOOTSTRAP_ADMIN_PHONE:}            # required E.164 account key; no default
+      password: ${TAARIFU_BOOTSTRAP_ADMIN_PASSWORD:}      # SECRET — required + strong; no default, never logged
+      # Where the one-time otpauth:// TOTP enrolment URI is written (0600). Delete it after enrolling.
+      totp-enrollment-file: ${TAARIFU_BOOTSTRAP_ADMIN_TOTP_FILE:./taarifu-root-totp-enrollment.txt}
+
+  # --- Communications channels (SMS / push / email) — outbound adapter selectors + endpoints. ---
+  # Each channel selects exactly ONE adapter bean via @ConditionalOnProperty on the `provider` key.
+  # The default is the safe LOGGING stub (matchIfMissing=true on the stubs), so dev/test AND a
+  # no-profile production context boot with zero external calls (PRD §21 EI-3/5/6, ARCHITECTURE §7).
+  # To enable a real provider, set the provider AND its required endpoints via the environment.
+  # ALL secrets (SMS api-key, FCM service-account JSON, SMTP user/pass) come from env/secret-mounts —
+  # NONE are committed (PRD §18, CLAUDE.md §12). See application-sample.yml for the env placeholders.
+  communications:
+    sms:
+      # 'logging' (default, safe no-op) or 'http' (the HTTPS-submit aggregator adapter). When 'http',
+      # submit-url + sender-id are required (the adapter fails fast at boot if either is absent).
+      provider: ${TAARIFU_SMS_PROVIDER:logging}
+      submit-url: ${TAARIFU_SMS_SUBMIT_URL:}          # aggregator HTTPS submit endpoint (provider=http)
+      sender-id: ${TAARIFU_SMS_SENDER_ID:}            # TCRA-registered sender-id / shortcode (D-Q7)
+      api-key: ${TAARIFU_SMS_API_KEY:}                # SECRET — env/secret-mount only, never committed
+      auth-header: ${TAARIFU_SMS_AUTH_HEADER:Authorization}  # header the api-key is sent in
+      request-timeout: ${TAARIFU_SMS_REQUEST_TIMEOUT:5s}     # per-request timeout (degrade, don't crash)
+    push:
+      # 'logging' (default) or 'fcm' (FCM HTTP v1 adapter). When 'fcm', project-id + credentials-file
+      # are required (the adapter fails fast at boot if either is absent).
+      provider: ${TAARIFU_PUSH_PROVIDER:logging}
+      project-id: ${TAARIFU_FCM_PROJECT_ID:}          # Firebase/GCP project id (provider=fcm)
+      credentials-file: ${TAARIFU_FCM_CREDENTIALS_FILE:}  # path to the GCP service-account JSON (SECRET mount)
+      request-timeout: ${TAARIFU_PUSH_REQUEST_TIMEOUT:5s}
+    email:
+      # 'logging' (default) or 'smtp' (Spring Mail / SMTP adapter). When 'smtp', `from` is required and
+      # the transport (host/port/user/pass) comes from spring.mail.* (env), never from source.
+      provider: ${TAARIFU_EMAIL_PROVIDER:logging}
+      from: ${TAARIFU_EMAIL_FROM:}                    # SPF/DKIM/DMARC-aligned sender address (provider=smtp)
+      from-name: ${TAARIFU_EMAIL_FROM_NAME:Taarifu}   # optional From display name
+      reply-to: ${TAARIFU_EMAIL_REPLY_TO:}            # optional Reply-To address

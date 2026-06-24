@@ -452,3 +452,102 @@ jobs:
             ${{ steps.policy.outputs.ref }}:${{ github.sha }}
             ${{ steps.policy.outputs.ref }}:${{ github.ref_name }}
           cache-from: type=gha
+
+  # ---------------------------------------------------------------------------
+  # 5) DEPLOY → STAGING (SKELETON, GATED). Promotes the SAME scanned image
+  #    (no rebuild — deploy/README §5) to the `staging` GitHub Environment.
+  #
+  #    GUARDRAILS (Peter's rules; CLAUDE.md §12; deploy/README §2,§8):
+  #      - Runs ONLY on a push to `develop` after backend + container both pass.
+  #      - Bound to the `staging` Environment so its required reviewers / protection
+  #        rules apply (manual approval gate — configure in repo Settings).
+  #      - NO real credentials in source. Deploy creds come from the Environment's
+  #        secrets (KUBE_CONFIG / SSH_* / registry pull) injected at run time.
+  #      - The deploy step is a documented PLACEHOLDER: it must remain a no-op until
+  #        the hosting target (D-Q9) and creds are signed off (deploy/README §11).
+  #        Residency (R12) / data-controller registration (R27) gate PROD, not staging,
+  #        but staging must also avoid real PII (R10) — synthetic data only.
+  # ---------------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy → staging (gated skeleton)
+    needs: [changes, backend, container]
+    # Only promote integration builds on develop; never on PRs/forks/main from here.
+    if: >-
+      needs.changes.outputs.backend == 'true'
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Binding to an Environment activates its protection rules (required reviewers,
+    # wait timer, env-scoped secrets). Approve the deploy from the run page.
+    environment:
+      name: staging
+      # url: set to the staging health endpoint once a host exists, e.g.
+      #   https://staging.taarifu.example/api/v1/actuator/health
+    # Least privilege: this job reads code + pulls the already-pushed image only.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Decide if real deploy creds exist. Absent -> dry-run (the default everywhere
+      # until D-Q9 hosting + creds are signed off). Never invent credentials.
+      - name: Determine deploy readiness
+        id: ready
+        shell: bash
+        env:
+          DEPLOY_TARGET: ${{ vars.STAGING_DEPLOY_TARGET }}   # e.g. 'compose-ssh' | 'helm'
+          KUBE_CONFIG: ${{ secrets.STAGING_KUBE_CONFIG }}
+          DEPLOY_SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
+        run: |
+          if [ -n "$DEPLOY_TARGET" ] && { [ -n "$KUBE_CONFIG" ] || [ -n "$DEPLOY_SSH_HOST" ]; }; then
+            echo "live=true"  >> "$GITHUB_OUTPUT"
+            echo "Staging deploy creds present; target=$DEPLOY_TARGET"
+          else
+            echo "live=false" >> "$GITHUB_OUTPUT"
+            echo "No staging deploy target/creds -> DRY-RUN (expected until D-Q9 sign-off)."
+          fi
+
+      # Promote the immutable image (same artefact scanned above). Pinned by git SHA so
+      # staging runs EXACTLY what CI built — no rebuild, no drift (deploy/README §5).
+      - name: Resolve image to promote
+        id: image
+        shell: bash
+        run: echo "ref=${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy (placeholder — no-op until hosting signed off)
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.ref }}
+          LIVE: ${{ steps.ready.outputs.live }}
+        run: |
+          echo "::group::Staging deploy plan"
+          echo "Image to promote : $IMAGE"
+          echo "Live deploy       : $LIVE"
+          echo "::endgroup::"
+          if [ "$LIVE" != "true" ]; then
+            echo "DRY-RUN: skipping real deploy. Wire the helm/compose-ssh step + Environment secrets"
+            echo "         once the hosting target (D-Q9) and creds are approved (deploy/README §11)."
+            exit 0
+          fi
+          # ---- REAL DEPLOY GOES HERE (kept out until sign-off) ----
+          # helm upgrade --install taarifu deploy/helm/taarifu \
+          #   --namespace taarifu-staging --set image.tag="${GITHUB_SHA}" --atomic --wait
+          echo "Live deploy path is intentionally not yet implemented; failing closed."
+          exit 1
+
+      # Post-deploy smoke gate (deploy/README §7): only meaningful on a live deploy.
+      - name: Post-deploy smoke (health probe)
+        if: steps.ready.outputs.live == 'true'
+        shell: bash
+        env:
+          HEALTH_URL: ${{ vars.STAGING_HEALTH_URL }}
+        run: |
+          [ -n "$HEALTH_URL" ] || { echo "No STAGING_HEALTH_URL configured"; exit 1; }
+          for i in $(seq 1 10); do
+            if curl -fsS "$HEALTH_URL" | grep -q '"status":"UP"'; then
+              echo "Staging health UP"; exit 0
+            fi
+            echo "waiting for staging health... ($i/10)"; sleep 10
+          done
+          echo "Staging did not report UP — rollback (deploy/README §8)"; exit 1

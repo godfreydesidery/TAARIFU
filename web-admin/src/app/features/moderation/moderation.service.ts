@@ -5,6 +5,7 @@ import { ApiClient } from '../../core/api/api-client.service';
 import { Page } from '../../core/api/api-response.model';
 import {
   Appeal,
+  AppealSummary,
   DecideAppealRequest,
   ModerationAction,
   ModerationItem,
@@ -42,6 +43,25 @@ export class ModerationService {
    */
   takeAction(itemId: string, body: TakeActionRequest): Observable<ModerationAction> {
     return this.api.post<ModerationAction, TakeActionRequest>(`/moderation/items/${itemId}/actions`, body);
+  }
+
+  /**
+   * Lists the moderator appeals queue, paged. `GET /moderation/appeals`.
+   *
+   * <p>Method-secured `hasRole('MODERATOR')` server-side; viewing carries no conflict-of-interest (the
+   * appeal-independence fence applies only at decide time). Optionally filtered by appeal `status` (e.g.
+   * `OPEN`); default sort is newest-filed first.</p>
+   *
+   * @param params optional `status` filter plus `page`/`size`/`sort`.
+   * @returns a {@link Page} of {@link AppealSummary}.
+   */
+  listAppeals(params: {
+    status?: string;
+    page?: number;
+    size?: number;
+    sort?: string;
+  }): Observable<Page<AppealSummary>> {
+    return this.api.getPage<AppealSummary>('/moderation/appeals', params);
   }
 
   /**

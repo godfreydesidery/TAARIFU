@@ -97,12 +97,26 @@ public class TokenService {
      *   <li>otherwise mark the row used and mint exactly one new live token in the same family.</li>
      * </ol>
      *
+     * <p><b>WHY {@code noRollbackFor = RefreshTokenReuseException.class} (the S-3 kill-switch fix):</b> on
+     * reuse-detection this method must do two conflicting things in one transaction — <b>commit</b> the
+     * family revocation (the theft kill-switch) yet <b>fail</b> the request with FORBIDDEN. A normal throw
+     * would roll the transaction back and undo the revoke (the original S-3 no-op bug). The revoke cannot be
+     * pushed to a {@code REQUIRES_NEW} transaction either: this method already holds a
+     * {@code PESSIMISTIC_WRITE} lock on the family rows (via {@link RefreshTokenRepository#findByTokenHashForUpdate},
+     * step&nbsp;1), so a second independent transaction updating those same rows <b>self-deadlocks</b> on the
+     * row lock. So the revoke stays inline in this locked transaction, and marking <i>only</i>
+     * {@link RefreshTokenReuseException} as {@code noRollbackFor} lets the transaction <b>commit the revoke</b>
+     * while still propagating FORBIDDEN — the other failure paths (unknown/revoked/expired, which write
+     * nothing anyway) keep default rollback semantics.</p>
+     *
      * @param rawRefreshToken the raw refresh JWT presented by the client.
      * @return the new token pair.
-     * @throws ApiException {@link ErrorCode#UNAUTHENTICATED} for unknown/forged/revoked/expired tokens;
-     *                      {@link ErrorCode#FORBIDDEN} on reuse-detection (force re-login).
+     * @throws ApiException                {@link ErrorCode#UNAUTHENTICATED} for unknown/forged/revoked/expired
+     *                                     tokens.
+     * @throws RefreshTokenReuseException  {@link ErrorCode#FORBIDDEN} on reuse-detection (force re-login); the
+     *                                     family revocation it triggers is <b>committed</b>, not rolled back.
      */
-    @Transactional
+    @Transactional(noRollbackFor = RefreshTokenReuseException.class)
     public TokenPair rotate(String rawRefreshToken) {
         UUID subject;
         try {
@@ -132,11 +146,17 @@ public class TokenService {
         }
         if (row.isUsed()) {
             // REUSE DETECTED — a consumed token re-presented is a theft signal: revoke the whole family.
+            // The revoke runs INLINE here (this transaction already holds the PESSIMISTIC_WRITE lock on the
+            // family rows from findByTokenHashForUpdate, so the UPDATE cannot deadlock), and the throw below
+            // is a RefreshTokenReuseException — the one exception this method is told NOT to roll back
+            // (noRollbackFor on @Transactional). So the family revocation COMMITS while the caller still gets
+            // FORBIDDEN. See the method Javadoc for WHY this (not a REQUIRES_NEW bean) is the correct fix:
+            // a separate transaction updating these already-locked rows self-deadlocks (S-3).
             revokeFamily(row.getFamilyId());
             audit.record(AuditEvent.Builder
                     .of(AuditEventType.AUTH_REFRESH_REUSE_DETECTED, AuditOutcome.DENIED)
                     .actor(subject).reason("REUSE_DETECTED").build());
-            throw new ApiException(ErrorCode.FORBIDDEN);
+            throw new RefreshTokenReuseException();
         }
         if (!clock.now().isBefore(row.getExpiresAt())) {
             audit.record(AuditEvent.Builder
@@ -216,7 +236,17 @@ public class TokenService {
         return new TokenPair(access, refresh);
     }
 
-    /** Revokes all live rows in a family (reuse-detection consequence). */
+    /**
+     * Revokes all live rows in a family (reuse-detection consequence — the S-3 kill-switch).
+     *
+     * <p>Called INLINE from the {@code rotate(...)} reuse-detection branch, inside that method's own
+     * transaction which already holds the {@code PESSIMISTIC_WRITE} lock on these family rows. That is
+     * deliberate: revoking here (rather than in a separate {@code REQUIRES_NEW} transaction) avoids a
+     * self-deadlock — an independent transaction updating these already-locked rows would block forever on
+     * the lock the suspended outer transaction still holds. The committed revoke survives the FORBIDDEN
+     * throw only because that throw is a {@link RefreshTokenReuseException}, which {@code rotate(...)}'s
+     * {@code @Transactional(noRollbackFor = ...)} excludes from rollback.</p>
+     */
     private void revokeFamily(UUID familyId) {
         List<RefreshToken> family = refreshTokenRepository.findByFamilyId(familyId);
         boolean any = false;

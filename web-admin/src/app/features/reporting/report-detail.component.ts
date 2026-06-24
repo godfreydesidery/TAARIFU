@@ -6,18 +6,19 @@ import { Router, RouterLink } from '@angular/router';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 
 import { ToastService } from '../../core/notifications/toast.service';
-import { CaseEvent, PublicReport } from './reporting.models';
+import { AdminReportDetail } from './reporting.models';
 import { ReportingService } from './reporting.service';
 
 /**
- * Report case detail — header + timeline + status actions (PRD Epic M3, §12.1; UC-D11/D21).
+ * Report case detail — header + timeline + status actions (M14, Epic M3, §12.1; UC-D11/D21).
  *
- * <p>Responsibility: shows one report's public case view, its event timeline, and the responder lifecycle
- * actions a moderator/admin can take (assign a responder, start work, resolve with a note, escalate). The
- * state machine and every transition's legality are owned by the SERVER (reporting's §12.1 port); an
- * illegal transition surfaces as a CONFLICT toast from the interceptor. The reporter id and precise geo
- * are never shown here — this view reads the PII-free public projection (PDPA, PRD §25.3). Subscriptions
- * use {@link takeUntilDestroyed}.</p>
+ * <p>Responsibility: shows one report's staff case view (`GET /admin/reports/{id}`), its full event
+ * timeline (public + internal responder notes, US-3.4 — carried inline on the detail, so no separate
+ * timeline call), and the responder lifecycle actions a moderator/admin can take (assign a responder, start
+ * work, resolve with a note, escalate). The state machine and every transition's legality are owned by the
+ * SERVER (reporting's §12.1 port); an illegal transition surfaces as a CONFLICT toast from the interceptor.
+ * The reporter id and precise geo are never shown — the detail is PII-minimised (PDPA, PRD §18, D-Q1).
+ * Subscriptions use {@link takeUntilDestroyed}.</p>
  *
  * <p>WHY actions live on a detail page (not the list): a status change is a deliberate, audited act that
  * needs context (the case + its timeline) and, for resolve/escalate, a typed note — surfacing them only
@@ -39,9 +40,8 @@ export class ReportDetailComponent implements OnInit {
   /** The report public id from the route (`/reports/:reportId`). */
   @Input() reportId = '';
 
-  /** Detail + timeline UI state. */
-  readonly report = signal<PublicReport | null>(null);
-  readonly events = signal<CaseEvent[]>([]);
+  /** Detail UI state (the timeline is carried inline on the detail). */
+  readonly report = signal<AdminReportDetail | null>(null);
   readonly loading = signal(false);
   readonly errored = signal(false);
   readonly acting = signal(false);
@@ -51,39 +51,27 @@ export class ReportDetailComponent implements OnInit {
   readonly resolutionNote = signal('');
   readonly escalationReason = signal('');
 
-  /** Loads the report + timeline on init. */
+  /** Loads the case detail on init. */
   ngOnInit(): void {
     this.load();
   }
 
-  /** Loads the report header and its public timeline. */
+  /** Loads the staff case detail (header + inline timeline). */
   load(): void {
     this.loading.set(true);
     this.errored.set(false);
     this.reporting
-      .getPublic(this.reportId)
+      .getAdminDetail(this.reportId)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (report) => {
           this.report.set(report);
           this.loading.set(false);
-          this.loadTimeline();
         },
         error: () => {
           this.loading.set(false);
           this.errored.set(true);
         },
-      });
-  }
-
-  /** Loads the case timeline (best-effort; failure is non-fatal to the header). */
-  private loadTimeline(): void {
-    this.reporting
-      .getTimeline(this.reportId, { page: 0, size: 50, sort: 'createdAt,asc' })
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        next: (result) => this.events.set(result.content),
-        error: () => this.events.set([]),
       });
   }
 

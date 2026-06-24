@@ -69,9 +69,13 @@ import java.util.UUID;
  * <i>same</i> transaction as the report row, and a responders routing handler creates the OWNER
  * {@code ResponderAssignment} <b>asynchronously</b>. WHY async (not a direct call into responders): a
  * synchronous {@code reporting → responders} edge would be a dependency cycle and would couple the
- * citizen's filing to a responders outage (ADR-0013 §1; PRD §15 DI3). The notifications fan-out
- * (ack/status-change) is likewise a later increment; this service records the timeline event those
- * notifications will key off.</p>
+ * citizen's filing to a responders outage (ADR-0013 §1; PRD §15 DI3). The <b>reverse leg</b> is also wired:
+ * the responders module emits {@code RESPONDER_ASSIGNED} after creating the OWNER, the reporting
+ * {@code ResponderAssignedHandler} consumes it and calls {@link #applySystemAssignment}, which records the
+ * assignee and transitions the report {@code NEW -> ASSIGNED} idempotently — so the routing round-trip is
+ * complete on the report side, with no synchronous {@code responders -> reporting} write into the lifecycle.
+ * The notifications fan-out (ack/status-change) is likewise a later increment; this service records the
+ * timeline event those notifications will key off.</p>
  */
 @Service
 @Transactional(readOnly = true)
@@ -207,7 +211,8 @@ public class ReportService implements ReportLifecycleApi {
         // synchronous reporting → responders call here — that edge would be a dependency cycle (responders
         // already reads reporting synchronously for validation, ADR-0013 §1) and would couple the citizen's
         // filing to a responders outage. The report stays NEW until the responders side assigns an OWNER and
-        // emits ResponderAssigned back (a later reporting handler sets Report.assignedResponderId, D21).
+        // emits RESPONDER_ASSIGNED back, which the reporting ResponderAssignedHandler consumes to set
+        // Report.assignedResponderId and transition NEW -> ASSIGNED via applySystemAssignment (D21).
         outboxWriter.append(EventEnvelope.of(
                 ReportEventTypes.REPORT_ROUTED,
                 ReportEventTypes.AGGREGATE_REPORT,
@@ -395,8 +400,9 @@ public class ReportService implements ReportLifecycleApi {
     // Responder-side lifecycle (D21) — the ReportLifecycleApi published command port (ADR-0013 §4a).
     // The responders module calls these (sync responders → reporting); reporting stays the single owner of
     // the §12.1 state machine, so every transition is guarded and appends a CaseEvent. NOTE: the reverse
-    // routing-on-creation (reporting → responders OWNER assignment) is async via the outbox — see the
-    // // TODO(wiring) in fileReport — so there is no synchronous cycle between the two modules.
+    // routing-on-creation (reporting → responders OWNER assignment) is async via the outbox (REPORT_ROUTED
+    // emitted in fileReport), and its report-side back-leg is applySystemAssignment (driven by the outbox
+    // RESPONDER_ASSIGNED consumer) — so there is no synchronous cycle between the two modules.
     // ---------------------------------------------------------------------------------------------
 
     /** {@inheritDoc} */
@@ -408,6 +414,52 @@ public class ReportService implements ReportLifecycleApi {
         transition(report, ReportStatus.ASSIGNED, actorPublicId,
                 "Imepangiwa mtekelezaji (%s → %s)".formatted(report.getStatus(), ReportStatus.ASSIGNED));
         return mapper.toReportDto(report);
+    }
+
+    /**
+     * Applies the <b>report-side leg of routing</b> for a system-created OWNER assignment, closing the
+     * round-trip the responders {@code RESPONDER_ASSIGNED} back-event drives (D21; ADR-0014 §5b): records the
+     * assigned responder on the report and transitions it {@code NEW → ASSIGNED}. Invoked <b>only</b> by the
+     * reporting {@code ResponderAssignedHandler} off the outbox relay thread — never by a controller — so it
+     * carries no caller; the transition is attributed to the system ({@code actorProfileId == null}).
+     *
+     * <p>WHY this lives on {@link ReportService} (not in the handler): reporting is the single owner of the
+     * §12.1 state machine, so the guarded {@code transition} (legality check + {@code STATUS_CHANGE}
+     * {@link CaseEvent} + the status-changed analytics fact) stays in one place; the handler only decodes the
+     * event and calls this (CLAUDE.md §3 DRY).</p>
+     *
+     * <p><b>Idempotent (at-least-once relay delivery — ADR-0014 §3):</b> the assignment is applied <b>only</b>
+     * while the report is still {@code NEW}. A redelivered event, or one that arrives after an operator already
+     * moved the case past {@code NEW} via the {@link ReportLifecycleApi}, is a <b>no-op</b> — no
+     * double-transition, no duplicate timeline entry, no analytics double-count. A missing report (e.g.
+     * soft-deleted before the relay caught up) is likewise a no-op (returns {@code false}), never an error —
+     * so a benign race never pushes the event to the DLQ. WHY gated on {@code NEW} specifically (not any
+     * non-ASSIGNED state): system routing only ever fires once on a freshly-filed report; a later operator
+     * re-assign is the synchronous {@link #assign} path, not this one.</p>
+     *
+     * @param reportPublicId    the routed report's public id (from the {@code RESPONDER_ASSIGNED} payload).
+     * @param responderPublicId the assigned OWNER responder's public id (stored as a bare {@code UUID}, no FK —
+     *                          the responder is owned by the responders module, referenced across the boundary
+     *                          by public id; ARCHITECTURE §4.3).
+     * @return {@code true} if the assignment was applied ({@code NEW → ASSIGNED}); {@code false} if it was a
+     *         no-op (report absent, or already past {@code NEW}).
+     */
+    @Transactional
+    public boolean applySystemAssignment(UUID reportPublicId, UUID responderPublicId) {
+        Report report = reportRepository.findByPublicIdWithCategory(reportPublicId).orElse(null);
+        if (report == null) {
+            // The report vanished (soft-deleted) before the relay delivered the back-event — benign no-op.
+            return false;
+        }
+        if (report.getStatus() != ReportStatus.NEW) {
+            // Already routed/transitioned (redelivery, or an operator moved it past NEW) — idempotent no-op.
+            return false;
+        }
+        report.assignResponder(responderPublicId);
+        // System transition (actorProfileId == null): guarded NEW → ASSIGNED + STATUS_CHANGE event + analytics.
+        transition(report, ReportStatus.ASSIGNED, null,
+                "Imepangiwa mtekelezaji kiotomatiki (%s → %s)".formatted(ReportStatus.NEW, ReportStatus.ASSIGNED));
+        return true;
     }
 
     /** {@inheritDoc} */

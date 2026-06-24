@@ -30,12 +30,10 @@ ALTER TABLE media_object
     ADD COLUMN uploaded BOOLEAN NOT NULL DEFAULT FALSE;
 
 COMMENT ON COLUMN media_object.uploaded IS
-    'TRUE once the client confirmed the bytes were PUT and the declared content-type/size passed policy '
-    || '(confirm step, V121); a never-confirmed object is a dangling upload-intent - never bound or served.';
+    'TRUE once the client confirmed the bytes were PUT and the declared content-type/size passed policy (confirm step, V121); a never-confirmed object is a dangling upload-intent - never bound or served.';
 
 ALTER TABLE media_object
     ALTER COLUMN owner_id DROP NOT NULL;
 
 COMMENT ON COLUMN media_object.owner_id IS
-    'Host resource public id; NULL until the host module binds the object at file time (bind-later, V121). '
-    || 'Referenced BY ID only (host lives in another module - ARCHITECTURE §3.2), so deliberately NOT a real FK.';
+    'Host resource public id; NULL until the host module binds the object at file time (bind-later, V121). Referenced BY ID only (host lives in another module - ARCHITECTURE §3.2), so deliberately NOT a real FK.';

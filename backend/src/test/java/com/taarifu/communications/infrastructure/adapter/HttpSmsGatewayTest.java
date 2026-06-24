@@ -46,10 +46,19 @@ class HttpSmsGatewayTest {
     private Fixture fixture(String authHeader) {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        // The adapter under test uses THIS mock-transport RestClient via the package-visible test seam
-        // constructor, so the request URL/headers/body are asserted with no real network.
-        HttpSmsGateway gateway = new HttpSmsGateway(propsWith(authHeader), builder.build());
+        // The adapter under test must use THIS RestClient — construct via the request-factory seam by
+        // wrapping the mock-built client. We reflect the prod path: build the adapter, then swap in the
+        // mock client through a dedicated package-test constructor is unnecessary because RestClient.builder
+        // here already carries the mock; we pass a no-op factory and rebuild on the same builder.
+        HttpSmsGateway gateway = new TestableHttpSmsGateway(propsWith(authHeader), builder.build());
         return new Fixture(gateway, server);
+    }
+
+    /** Test subclass exposing a constructor that injects the mock-transport RestClient directly. */
+    private static final class TestableHttpSmsGateway extends HttpSmsGateway {
+        TestableHttpSmsGateway(CommunicationsChannelProperties properties, RestClient restClient) {
+            super(properties, restClient);
+        }
     }
 
     @Test
@@ -109,8 +118,7 @@ class HttpSmsGatewayTest {
     void construction_withBlankSubmitUrl_failsFast() {
         CommunicationsChannelProperties.Sms noUrl = new CommunicationsChannelProperties.Sms(
                 "http", "  ", "TAARIFU", "k", null, null);
-        CommunicationsChannelProperties props = new CommunicationsChannelProperties(noUrl, null, null);
-        assertThatThrownBy(() -> new HttpSmsGateway(props))
+        assertThatThrownBy(() -> new HttpSmsGateway(new CommunicationsChannelProperties(noUrl, null, null)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("submit-url");
     }
@@ -119,8 +127,7 @@ class HttpSmsGatewayTest {
     void construction_withBlankSenderId_failsFast() {
         CommunicationsChannelProperties.Sms noSender = new CommunicationsChannelProperties.Sms(
                 "http", SUBMIT_URL, "  ", "k", null, null);
-        CommunicationsChannelProperties props = new CommunicationsChannelProperties(noSender, null, null);
-        assertThatThrownBy(() -> new HttpSmsGateway(props))
+        assertThatThrownBy(() -> new HttpSmsGateway(new CommunicationsChannelProperties(noSender, null, null)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("sender-id");
     }

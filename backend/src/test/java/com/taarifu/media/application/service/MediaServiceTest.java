@@ -14,6 +14,7 @@ import com.taarifu.media.domain.model.MediaObject;
 import com.taarifu.media.domain.model.enums.ScanStatus;
 import com.taarifu.media.domain.port.ObjectStore;
 import com.taarifu.media.domain.repository.MediaObjectRepository;
+import com.taarifu.media.infrastructure.adapter.BaselineMetadataStripper;
 import com.taarifu.media.infrastructure.config.MediaPolicyProperties;
 import com.taarifu.reporting.api.ReportMediaAccessApi;
 import org.junit.jupiter.api.AfterEach;
@@ -65,6 +66,9 @@ class MediaServiceTest {
     private final MediaMapper mapper = new MediaMapper();
     // Real policy with defaults (image/* allow-list, 10 MiB cap) — exercises the actual policy logic.
     private final MediaPolicyProperties policy = new MediaPolicyProperties(null, null);
+    // Real baseline stripper — pure, dependency-free; exercising the actual scrub behaviour (and its
+    // handles()/strip() contract) is more valuable than a mock for the A6 invariants.
+    private final BaselineMetadataStripper stripper = new BaselineMetadataStripper();
 
     private MediaService service;
 
@@ -72,7 +76,7 @@ class MediaServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MediaService(repository, objectStore, mapper, policy, reportMediaAccess);
+        service = new MediaService(repository, objectStore, mapper, policy, stripper, reportMediaAccess);
     }
 
     @AfterEach
@@ -286,6 +290,25 @@ class MediaServiceTest {
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
+    @Test
+    void getDownloadUrl_cleanButNotStripped_image_isRefused_andNeverSigned() {
+        // THE A6 SERVE INVARIANT: a CLEAN image whose EXIF strip has NOT run must never yield a URL — a
+        // photo could still carry GPS EXIF. Caller is the uploader (access gate passes) and the object is
+        // CLEAN (scan gate passes), so only the strip gate can refuse it. If that gate were removed the URL
+        // would be minted — this test would then fail, which is the point.
+        authenticateAs(uploader);
+        MediaObject media = pendingUnbound("image/jpeg", 2048L);
+        media.applyScanVerdict(ScanStatus.CLEAN); // CLEAN but exifStripped stays false
+        when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
+
+        assertThatThrownBy(() -> service.getDownloadUrl(media.getPublicId()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.CONFLICT);
+
+        verify(objectStore, never()).presignDownload(anyString(), any(Duration.class));
+    }
+
     // ---------------------------------------------------------------------------------------------
     // getDownloadUrl — the MF-2 host-visibility access gate (IDOR / OWASP A01)
     // ---------------------------------------------------------------------------------------------
@@ -365,19 +388,46 @@ class MediaServiceTest {
     // ---------------------------------------------------------------------------------------------
 
     @Test
-    void applyScanVerdict_clean_promotesToServable_andFlagsExifStripped() {
+    void applyScanVerdict_clean_stripsBytes_promotesToServable_andFlagsExifStripped() {
         MediaObject media = pendingUnbound("image/jpeg", 1L);
         when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
+        // The CLEAN strip worker reads the stored bytes, scrubs, and (since EXIF was present) re-stores.
+        byte[] withExif = jpegWithExifGps();
+        when(objectStore.getBytes(media.getObjectKey())).thenReturn(withExif);
 
         MediaObjectDto dto = service.applyScanVerdict(media.getPublicId(), ScanStatus.CLEAN);
 
         assertThat(dto.scanStatus()).isEqualTo("CLEAN");
         assertThat(dto.servable()).isTrue();
         assertThat(dto.exifStripped()).isTrue();
+        // The scrubbed bytes were re-stored in place at the same key, and they no longer carry the EXIF
+        // marker — this is the byte-level A6 enforcement, not merely a flag flip.
+        ArgumentCaptor<byte[]> stored = ArgumentCaptor.forClass(byte[].class);
+        verify(objectStore).putBytes(eq(media.getObjectKey()), eq("image/jpeg"), stored.capture());
+        assertThat(containsExifApp1Marker(stored.getValue())).isFalse();
     }
 
     @Test
-    void applyScanVerdict_infected_isNotServable_andNotStripped() {
+    void applyScanVerdict_clean_missingBytes_failsClosed_notMarkedStripped() {
+        // FAIL-SAFE: if the object's bytes are not in the store, the strip cannot run, so the object must
+        // NOT be marked stripped/servable — the callback fails (409) instead. If this guard were removed the
+        // object would be flagged stripped without a scrub — this test would then fail, which is the point.
+        MediaObject media = pendingUnbound("image/jpeg", 1L);
+        when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
+        when(objectStore.getBytes(media.getObjectKey()))
+                .thenThrow(new ObjectStore.ObjectNotFoundException(media.getObjectKey()));
+
+        assertThatThrownBy(() -> service.applyScanVerdict(media.getPublicId(), ScanStatus.CLEAN))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.CONFLICT);
+
+        assertThat(media.isExifStripped()).isFalse();
+        verify(objectStore, never()).putBytes(anyString(), any(), any());
+    }
+
+    @Test
+    void applyScanVerdict_infected_isNotServable_andNotStripped_andNoByteWork() {
         MediaObject media = pendingUnbound("image/jpeg", 1L);
         when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
 
@@ -386,6 +436,9 @@ class MediaServiceTest {
         assertThat(dto.scanStatus()).isEqualTo("INFECTED");
         assertThat(dto.servable()).isFalse();
         assertThat(dto.exifStripped()).isFalse();
+        // An INFECTED object is never read or re-stored — the strip worker only runs on CLEAN.
+        verify(objectStore, never()).getBytes(anyString());
+        verify(objectStore, never()).putBytes(anyString(), any(), any());
     }
 
     @Test
@@ -409,10 +462,15 @@ class MediaServiceTest {
         return media;
     }
 
-    /** Builds a persisted-looking CLEAN media object (with a publicId, unbound) for serve-path tests. */
+    /**
+     * Builds a persisted-looking CLEAN, already-EXIF-stripped media object (with a publicId, unbound) for
+     * serve-path tests. WHY also stripped: the A6 serve invariant refuses a handled image type until its
+     * EXIF strip has run, so a servable fixture must mirror the post-strip state the worker produces.
+     */
     private MediaObject cleanMedia() {
         MediaObject media = pendingUnbound("image/jpeg", 2048L);
         media.applyScanVerdict(ScanStatus.CLEAN);
+        media.markExifStripped();
         return media;
     }
 
@@ -427,8 +485,48 @@ class MediaServiceTest {
                 "quarantine/2026/06/" + UUID.randomUUID(), "f.jpg", "image/jpeg", 2048L, uploader);
         media.bindTo(reportId);
         media.applyScanVerdict(ScanStatus.CLEAN);
+        // Mirror the post-strip state — the A6 serve invariant requires a handled image to be stripped.
+        media.markExifStripped();
         assignPublicId(media, UUID.randomUUID());
         return media;
+    }
+
+    /**
+     * Builds a minimal, structurally-valid JPEG that carries an {@code APP1}/EXIF segment (the segment a
+     * camera/phone uses to embed GPS). Layout: {@code SOI}, an {@code APP1} segment whose payload starts
+     * with the {@code "Exif\0\0"} identifier, then {@code SOS} followed by one byte of "scan data" and
+     * {@code EOI}. Enough for the baseline stripper to recognise and drop the APP1 while preserving the rest.
+     *
+     * @return JPEG bytes containing an EXIF APP1 marker segment.
+     */
+    private static byte[] jpegWithExifGps() {
+        // EXIF identifier ("Exif\0\0") plus a couple of filler bytes standing in for GPS IFD data.
+        byte[] exifPayload = {'E', 'x', 'i', 'f', 0x00, 0x00, 0x11, 0x22};
+        int segLen = exifPayload.length + 2; // length field covers itself + payload
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        out.write(0xFF); out.write(0xD8);                         // SOI
+        out.write(0xFF); out.write(0xE1);                         // APP1 marker
+        out.write((segLen >> 8) & 0xFF); out.write(segLen & 0xFF); // big-endian length
+        out.write(exifPayload, 0, exifPayload.length);
+        out.write(0xFF); out.write(0xDA);                         // SOS
+        out.write(0x00); out.write(0x00);                         // (minimal SOS-following bytes)
+        out.write(0x12);                                          // one byte of "scan data"
+        out.write(0xFF); out.write(0xD9);                         // EOI
+        return out.toByteArray();
+    }
+
+    /**
+     * @param jpeg JPEG bytes.
+     * @return {@code true} if the bytes still contain an {@code APP1} (0xFF 0xE1) marker — the segment that
+     *         carries EXIF/GPS. Used to assert the strip genuinely removed it from the re-stored bytes.
+     */
+    private static boolean containsExifApp1Marker(byte[] jpeg) {
+        for (int i = 0; i + 1 < jpeg.length; i++) {
+            if ((jpeg[i] & 0xFF) == 0xFF && (jpeg[i + 1] & 0xFF) == 0xE1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

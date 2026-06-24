@@ -58,6 +58,53 @@ public interface ObjectStore {
     void delete(String objectKey);
 
     /**
+     * Reads an object's full bytes <b>server-side</b> (the application does touch the bytes here).
+     *
+     * <p>WHY this exists despite the "bytes never stream through the app" rule: the EXIF/geo-strip worker
+     * (A6, EI-8/§18) must read a CLEAN object, scrub its metadata, and re-store it before it is ever
+     * servable. That scrub is a small, bounded, server-side pass on an already-size-capped image — it is
+     * the one place the app legitimately handles the bytes. Large-media transfer to/from <i>clients</i>
+     * still goes exclusively through pre-signed URLs; this method is used only by internal workers on
+     * keys the application already controls (never a client-supplied key).</p>
+     *
+     * @param objectKey the storage key to read.
+     * @return the object's bytes.
+     * @throws ObjectNotFoundException if no object exists at the key (the worker must fail safe, not strip
+     *                                 nothing and silently mark the object stripped).
+     */
+    byte[] getBytes(String objectKey);
+
+    /**
+     * Writes (creates or overwrites) an object's bytes <b>server-side</b> at the given key.
+     *
+     * <p>Used by the EXIF/geo-strip worker to re-store the scrubbed image in place (same key) once the
+     * metadata is removed, so the served bytes are the stripped bytes. Overwrites any existing object at
+     * the key (the quarantine→clean object is replaced by its scrubbed self).</p>
+     *
+     * @param objectKey   the storage key to write to.
+     * @param contentType the MIME type to record on the stored object (echoed on a later GET); may be {@code null}.
+     * @param bytes       the bytes to store (the already-scrubbed image).
+     */
+    void putBytes(String objectKey, String contentType, byte[] bytes);
+
+    /**
+     * Thrown by {@link #getBytes(String)} when no object exists at the requested key.
+     *
+     * <p>WHY a typed exception: the strip worker must distinguish "the bytes are genuinely missing"
+     * (fail safe — do not mark the object stripped/servable) from a successful read, so a missing object
+     * can never be silently promoted to served (EI-8 fail-safe). It is unchecked to keep the port's
+     * read signature clean; callers that care handle it explicitly.</p>
+     */
+    class ObjectNotFoundException extends RuntimeException {
+        /**
+         * @param objectKey the key that was not found (a server-controlled storage key — never PII).
+         */
+        public ObjectNotFoundException(String objectKey) {
+            super("No object stored at key: " + objectKey);
+        }
+    }
+
+    /**
      * A minted pre-signed URL and the exact request shape the client must use to honour the signature.
      *
      * <p>WHY headers are returned: a signed PUT typically binds {@code Content-Type}; the client must

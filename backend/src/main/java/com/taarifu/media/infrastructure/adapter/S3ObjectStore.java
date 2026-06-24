@@ -11,8 +11,12 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
@@ -184,6 +188,48 @@ public class S3ObjectStore implements ObjectStore, AutoCloseable {
                 .bucket(properties.bucket())
                 .key(objectKey)
                 .build());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Reads the full object via {@code GetObject} into memory. This is used only by the internal
+     * EXIF/geo-strip worker (A6) on the application's own quarantine key for an object already capped by
+     * upload policy (max ~10 MiB), so an in-memory read is bounded and safe — it is <b>not</b> a client
+     * byte path (clients always go through pre-signed URLs). A missing key surfaces as
+     * {@link ObjectNotFoundException} so the worker fails safe rather than mark a non-existent object
+     * stripped/servable.</p>
+     */
+    @Override
+    public byte[] getBytes(String objectKey) {
+        GetObjectRequest get = GetObjectRequest.builder()
+                .bucket(properties.bucket())
+                .key(objectKey)
+                .build();
+        try {
+            ResponseBytes<GetObjectResponse> response = client.getObjectAsBytes(get);
+            return response.asByteArray();
+        } catch (NoSuchKeyException e) {
+            throw new ObjectNotFoundException(objectKey);
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Writes (overwrites) the object via {@code PutObject} from an in-memory buffer — the scrubbed image
+     * the strip worker re-stores in place at the same key. Records the content type on the stored object so
+     * a later download serves the correct {@code Content-Type}.</p>
+     */
+    @Override
+    public void putBytes(String objectKey, String contentType, byte[] bytes) {
+        PutObjectRequest.Builder put = PutObjectRequest.builder()
+                .bucket(properties.bucket())
+                .key(objectKey);
+        if (contentType != null && !contentType.isBlank()) {
+            put.contentType(contentType);
+        }
+        client.putObject(put.build(), RequestBody.fromBytes(bytes));
     }
 
     /**

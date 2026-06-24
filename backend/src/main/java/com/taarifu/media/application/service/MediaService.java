@@ -12,6 +12,7 @@ import com.taarifu.media.api.dto.UploadUrlRequest;
 import com.taarifu.media.application.mapper.MediaMapper;
 import com.taarifu.media.domain.model.MediaObject;
 import com.taarifu.media.domain.model.enums.ScanStatus;
+import com.taarifu.media.domain.port.MetadataStripper;
 import com.taarifu.media.domain.port.ObjectStore;
 import com.taarifu.media.domain.repository.MediaObjectRepository;
 import com.taarifu.media.infrastructure.config.MediaPolicyProperties;
@@ -77,6 +78,14 @@ public class MediaService {
     private final MediaPolicyProperties policy;
 
     /**
+     * Removes privacy-sensitive metadata (EXIF GPS, XMP, device ids, timestamps) from an image's bytes
+     * before it may ever be served (A6 — EI-8/§18). The strip runs on a CLEAN verdict, in place, and is
+     * the precondition for {@link MediaObject#markExifStripped()}; the serve path then refuses any image
+     * that has not been proven stripped. Behind a port so the scrub strategy is swappable (SOLID).
+     */
+    private final MetadataStripper metadataStripper;
+
+    /**
      * The reporting module's host-visibility port (MF-2). Resolves "may this caller view this report's
      * evidence?" so the serve path can fail closed for private/anonymous-sensitive reports. Cross-module
      * {@code api -> api} only (ADR-0013); referenced by interface, never reaching into reporting's tables.
@@ -95,17 +104,20 @@ public class MediaService {
      * @param objectStore       S3-compatible object-store port (stub in dev/test).
      * @param mapper            entity→DTO mapper.
      * @param policy            upload allow-list / max-size policy enforced at the {@code confirm} step.
+     * @param metadataStripper  the EXIF/geo metadata scrubber run on a CLEAN verdict before serve (A6).
      * @param reportMediaAccess the reporting host-visibility port (MF-2); may be {@code null} in a
      *                          media-only context (then REPORT-owned media is uploader-only — deny-by-default).
      */
     @Autowired
     public MediaService(MediaObjectRepository repository, ObjectStore objectStore, MediaMapper mapper,
                         MediaPolicyProperties policy,
+                        MetadataStripper metadataStripper,
                         @Nullable ReportMediaAccessApi reportMediaAccess) {
         this.repository = repository;
         this.objectStore = objectStore;
         this.mapper = mapper;
         this.policy = policy;
+        this.metadataStripper = metadataStripper;
         this.reportMediaAccess = reportMediaAccess;
     }
 
@@ -259,6 +271,14 @@ public class MediaService {
                     media.getScanStatus().name());
         }
 
+        // A6 PRIVACY INVARIANT (EI-8/§18): an image this system can scrub is downloadable ONLY once its
+        // EXIF/geo strip has run. Even a CLEAN object is refused until proven stripped, so a photo carrying
+        // embedded GPS can never reach another citizen. Non-image/unhandled types are marked stripped at
+        // CLEAN time, so this gate never spuriously blocks them. Fail-safe (deny until stripped).
+        if (metadataStripper.handles(media.getContentType()) && !media.isExifStripped()) {
+            throw new ApiException(ErrorCode.CONFLICT, "media.notStripped");
+        }
+
         ObjectStore.PresignedUrl presigned =
                 objectStore.presignDownload(media.getObjectKey(), DOWNLOAD_TTL);
 
@@ -305,8 +325,8 @@ public class MediaService {
 
     /**
      * Use-case 3 — apply a scan verdict (async callback from the scanning pipeline). Transitions the
-     * object's {@link ScanStatus}; on {@code CLEAN} the object becomes servable and the EXIF/geo-strip
-     * seam is flagged.
+     * object's {@link ScanStatus}; on {@code CLEAN} the EXIF/geo-strip worker runs (A6) before the object
+     * is marked stripped — and only a stripped object is ever servable.
      *
      * <p>WHY a {@code PENDING} verdict is rejected: PENDING is a pre-scan state, never a scan result; a
      * callback claiming it is a bad request, not a state transition (input validation, ARCHITECTURE §5.2).</p>
@@ -314,6 +334,14 @@ public class MediaService {
      * <p>WHY this is idempotent on a terminal INFECTED: re-delivering a verdict (scanners deliver
      * at-least-once) must not flip an INFECTED object back to CLEAN — the entity enforces that
      * ({@link MediaObject#applyScanVerdict}). The method is therefore safe to replay (EI-8 / DI4).</p>
+     *
+     * <p><b>EXIF/geo strip (A6, EI-8/§18).</b> On a CLEAN verdict the worker runs {@link #stripMetadata}:
+     * it reads the stored bytes, scrubs metadata (EXIF GPS, XMP, device ids, timestamps), re-stores the
+     * scrubbed bytes in place, and only then calls {@link MediaObject#markExifStripped()}. The flag is set
+     * <b>after</b> the byte-level strip succeeds, never before — so an object that could not be stripped
+     * stays {@code exifStripped=false} and the serve path refuses it (fail-safe: a photo with embedded GPS
+     * never reaches another citizen). A second CLEAN delivery re-runs the strip idempotently (scrubbing
+     * already-clean bytes is a no-op).</p>
      *
      * @param mediaId the media object's public id.
      * @param verdict the scanner outcome (must not be {@code PENDING}).
@@ -329,16 +357,61 @@ public class MediaService {
 
         media.applyScanVerdict(verdict);
 
-        // EXIF/geo strip seam (EI-8, §18): on CLEAN the promote+strip pipeline step runs. Until the
-        // worker is wired, we flag the seam so the serve-path invariant ("stripped before served") is
-        // explicit and testable. The actual byte-level strip is a worker step.
+        // EXIF/geo strip worker (A6, EI-8/§18): on CLEAN, scrub the stored bytes BEFORE the object is
+        // marked stripped. markExifStripped() is reached only if the strip genuinely ran — a missing or
+        // unstrippable object stays not-stripped and is therefore not servable (fail-safe).
         if (media.isServable()) {
-            // TODO(wiring): invoke the EXIF/geo-stripping worker on the quarantine object and promote
-            // it from the quarantine location to the served location before marking it stripped.
-            media.markExifStripped();
+            stripMetadata(media);
         }
 
         return mapper.toDto(media);
+    }
+
+    /**
+     * Performs the byte-level EXIF/geo-strip for a freshly-CLEAN object and, on success, marks it stripped.
+     *
+     * <p>Reads the object's bytes via the {@link ObjectStore}, runs them through the {@link MetadataStripper},
+     * and — only if the scrubbed bytes differ in identity from a no-op — re-stores them in place at the same
+     * key before flagging {@link MediaObject#markExifStripped()}. The flag is the proof the privacy pass ran;
+     * the serve path requires it for any image type the stripper handles.</p>
+     *
+     * <p><b>Fail-safe on a missing object.</b> If the bytes are not present in the store
+     * ({@link ObjectStore.ObjectNotFoundException}), the strip cannot run, so the object is left
+     * {@code exifStripped=false} and a localised {@link ErrorCode#CONFLICT} is raised — the callback fails
+     * rather than silently mark a never-scrubbed (or never-uploaded) object servable. This cannot leak GPS
+     * because an un-stripped object is refused at serve time regardless.</p>
+     *
+     * <p><b>Non-image / unhandled types.</b> When the stripper does not handle the content type
+     * ({@link MetadataStripper#handles}) there is no embedded image metadata to leak, so the object is marked
+     * stripped without a byte rewrite — the strip is vacuously complete.</p>
+     *
+     * @param media the CLEAN object to scrub in place.
+     * @throws ApiException {@link ErrorCode#CONFLICT} if the stored bytes are absent (strip cannot run).
+     */
+    private void stripMetadata(MediaObject media) {
+        // Nothing to strip for a type the scrubber does not handle (e.g. a future non-image attachment):
+        // mark stripped so the serve-path invariant is satisfied without an unnecessary read/rewrite.
+        if (!metadataStripper.handles(media.getContentType())) {
+            media.markExifStripped();
+            return;
+        }
+
+        byte[] original;
+        try {
+            original = objectStore.getBytes(media.getObjectKey());
+        } catch (ObjectStore.ObjectNotFoundException e) {
+            // The object's bytes are not in the store (never uploaded, or already purged). We must not mark
+            // it stripped/servable — fail the callback so the serve path keeps refusing it (EI-8 fail-safe).
+            throw new ApiException(ErrorCode.CONFLICT, "media.bytesMissing");
+        }
+
+        byte[] scrubbed = metadataStripper.strip(media.getContentType(), original);
+        // Re-store in place only when the scrub actually changed the bytes (avoids a needless rewrite of an
+        // already-metadata-free image). Same key — the served bytes become the scrubbed bytes.
+        if (scrubbed != original) {
+            objectStore.putBytes(media.getObjectKey(), media.getContentType(), scrubbed);
+        }
+        media.markExifStripped();
     }
 
     /** Loads a media object by public id or throws a localised not-found. */

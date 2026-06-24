@@ -26,13 +26,16 @@ import java.util.UUID;
  * This module must not import those modules (ARCHITECTURE.md §3.2), so the host is referenced by an
  * opaque {@code (ownerType, ownerId)} pair: a string discriminator plus the host's public {@code UUID}.
  * Visibility/ownership of the host is therefore enforced <b>by the host module</b> at attach/serve time
- * — see the {@code // TODO(wiring)} guards in the download path. This row never grants access on its own.</p>
+ * — the download path delegates to the host's visibility port (MF-2, e.g. reporting's
+ * {@code ReportMediaAccessApi}). This row never grants access on its own.</p>
  *
- * <p><b>EXIF/geo stripping (privacy seam — EI-8, §18).</b> Photos routinely embed GPS coordinates and
+ * <p><b>EXIF/geo stripping (privacy — EI-8, §18, A6).</b> Photos routinely embed GPS coordinates and
  * device identifiers in EXIF; serving them would leak a reporter's exact location even when the civic
  * Report's incident geo is captured (and access-controlled) separately. {@link #exifStripped} records
- * whether the privacy-stripping pass has run for this object; the stripping itself is a pipeline step
- * (worker) wired in the scan/promote flow — this flag is the seam that proves it happened before serve.</p>
+ * whether the privacy-stripping pass has run for this object. The strip worker runs on a CLEAN verdict
+ * (see {@code MediaService.applyScanVerdict}): it scrubs the stored bytes and only then sets this flag,
+ * and the download path refuses any handled image type whose flag is still {@code false}. So this flag
+ * is the enforced proof — not merely a seam — that the scrub happened before any byte is served.</p>
  *
  * <p><b>WHY scan status gates serving, not uploading.</b> Per EI-8 the citizen's action (e.g. filing a
  * report) is never blocked by the scanner; the object is accepted into quarantine immediately and only

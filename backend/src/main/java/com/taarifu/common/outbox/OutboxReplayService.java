@@ -1,8 +1,11 @@
 package com.taarifu.common.outbox;
 
 import com.taarifu.common.domain.port.ClockPort;
+import com.taarifu.common.outbox.domain.model.OutboxEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,8 +43,14 @@ import java.util.UUID;
  * <p><b>🔒 Privacy:</b> all logging is by event id / event type / counts only — never the payload, the
  * {@code last_error} text, or any aggregate detail (PRD §18, CLAUDE.md §12).</p>
  *
- * <p><b>No controller here.</b> The admin/ops HTTP surface to trigger replay belongs to the admin module
- * (out of scope for {@code common.outbox}); this class exposes the service bean only. See CENTRAL NEEDS.</p>
+ * <p><b>Read seam (review P3-1):</b> {@link #listFailed(Pageable)} pages the DLQ as a <b>PII-free</b>
+ * {@link FailedOutboxView} projection (id / eventType / attempts / age only — no payload, no {@code last_error}
+ * text), so the admin DLQ-list surface can see what is in the queue before deciding what to replay without ever
+ * reaching into the kernel repository or touching an {@link OutboxEvent} entity.</p>
+ *
+ * <p><b>No controller here.</b> The admin/ops HTTP surface that triggers list/replay belongs to the admin
+ * module (out of scope for {@code common.outbox}); this class exposes the service bean only — the admin module
+ * consumes it as a shared-kernel collaborator (M14, review P3-1).</p>
  */
 @Service
 public class OutboxReplayService {
@@ -118,6 +127,74 @@ public class OutboxReplayService {
         log.info("Outbox DLQ bulk replay re-queued {} FAILED row(s) to PENDING [eventType={} from={} to={} cap={}]",
                 requeued, filter.eventType(), filter.processedFrom(), filter.processedTo(), cap);
         return requeued;
+    }
+
+    /**
+     * Pages the dead-letter queue (terminal {@link OutboxStatus#FAILED} rows) as a <b>PII-free</b>
+     * {@link FailedOutboxView} projection, oldest FAILED-time first — the operator's read view of the DLQ
+     * before deciding what to replay (review P3-1; backs {@code GET /api/v1/admin/outbox/failed}).
+     *
+     * <p>This is the shared-kernel seam the admin module consumes instead of reaching into
+     * {@link OutboxEventRepository} directly: it maps each managed {@link OutboxEvent} to a view that exposes
+     * only the public id, the event type, the attempt count, the FAILED-time, and a derived <i>age</i> — never
+     * the {@code payload} (an internal serialised body) nor the redacted {@code last_error} text. The entity
+     * itself never crosses the kernel boundary.</p>
+     *
+     * <p><b>🔒 Privacy (PRD §18, CLAUDE.md §12):</b> the outbox payload holds ids/codes/enums only, but it is
+     * still an internal body and is deliberately <b>excluded</b> from the projection. The {@code last_error}
+     * is redacted at write time, yet still excluded here — the operator list shows diagnostics dimensions, not
+     * any free text. Age is computed against {@code clock.now()} so the view is testable.</p>
+     *
+     * @param pageable the (bounded) page request; the admin controller caps the size via
+     *                 {@code PageRequestFactory} before calling.
+     * @return a page of PII-free FAILED views, oldest FAILED-time first; an empty page when the DLQ is empty.
+     * @throws NullPointerException if {@code pageable} is {@code null}.
+     */
+    @Transactional(readOnly = true)
+    public Page<FailedOutboxView> listFailed(Pageable pageable) {
+        if (pageable == null) {
+            throw new NullPointerException("pageable must not be null");
+        }
+        Instant now = clock.now();
+        return repository.findByStatusOrderByProcessedAtAsc(OutboxStatus.FAILED, pageable)
+                .map(e -> FailedOutboxView.of(e, now));
+    }
+
+    /**
+     * A <b>PII-free</b> read projection of one terminal {@link OutboxStatus#FAILED} outbox row for the admin
+     * DLQ list (review P3-1).
+     *
+     * <p>Responsibility: carry exactly the operator-facing diagnostics dimensions — public id, event type,
+     * attempt count, FAILED-time, and a derived age — and <b>nothing else</b>. It deliberately omits the
+     * {@code payload} (an internal serialised event body) and the redacted {@code last_error} text, so the
+     * cross-module list surface can never leak an internal body or a stack-trace fragment (PRD §18). Carries no
+     * PII by construction: an outbox row holds ids/codes/enums only, and this view drops even those that are
+     * internal-only.</p>
+     *
+     * @param eventId     the outbox row's public id (addresses a single-id replay).
+     * @param eventType   the taxonomy key (e.g. {@code REPORT_ROUTED}) — lets an operator scope a bulk replay.
+     * @param attempts    how many dispatch attempts were made before the row was terminally FAILED.
+     * @param failedAt    when the row reached the terminal FAILED state ({@code processed_at}).
+     * @param ageSeconds  age of the failure in whole seconds at read time ({@code now - failedAt}); {@code 0}
+     *                    if {@code failedAt} is somehow null/future — a non-negative diagnostics hint only.
+     */
+    public record FailedOutboxView(UUID eventId, String eventType, int attempts,
+                                   Instant failedAt, long ageSeconds) {
+
+        /**
+         * Maps a managed {@link OutboxEvent} to its PII-free view, computing the age against {@code now}.
+         *
+         * @param e   the FAILED outbox row (caller guarantees {@link OutboxStatus#FAILED}); never {@code null}.
+         * @param now the read-time instant (from the service clock) used to derive {@link #ageSeconds()}.
+         * @return the projection; never exposes the payload or {@code last_error}.
+         */
+        static FailedOutboxView of(OutboxEvent e, Instant now) {
+            Instant failedAt = e.getProcessedAt();
+            long age = (failedAt == null || failedAt.isAfter(now))
+                    ? 0L
+                    : now.getEpochSecond() - failedAt.getEpochSecond();
+            return new FailedOutboxView(e.getPublicId(), e.getEventType(), e.getAttempts(), failedAt, age);
+        }
     }
 
     /**

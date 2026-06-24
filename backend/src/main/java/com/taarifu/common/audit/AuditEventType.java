@@ -158,5 +158,15 @@ public enum AuditEventType {
      * An admin reinstated a suspended account back to {@code ACTIVE} (M14, US-14.1; actor = the acting
      * admin, subject = the reinstated account). References only — never PII.
      */
-    USER_REINSTATED
+    USER_REINSTATED,
+
+    /**
+     * An admin re-queued terminally FAILED transactional-outbox event(s) from the dead-letter queue back to
+     * PENDING for reprocessing (M14, P3-1; ADR-0014 revisit trigger (c)). Actor = the acting admin; subject =
+     * the target event public id for a single-id replay, or {@code null} for a bounded-window replay;
+     * {@code reason_code} names the mode + reference/scope and the count actually re-queued — e.g.
+     * {@code BY_ID:<uuid>:n=1}, {@code BY_WINDOW:REPORT_ROUTED:n=12}, {@code BY_WINDOW:ALL:n=0}. References +
+     * counts only — never an event payload or any PII (PRD §18, L-1). Append-only; never repurpose.
+     */
+    OUTBOX_DLQ_REPLAYED
 }

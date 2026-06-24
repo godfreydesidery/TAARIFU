@@ -1,6 +1,7 @@
 package com.taarifu.common.outbox;
 
 import com.taarifu.common.outbox.domain.model.OutboxEvent;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -192,4 +193,27 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
                            @Param("processedTo") Instant processedTo,
                            @Param("now") Instant now,
                            @Param("batchSize") int batchSize);
+
+    /**
+     * Pages the rows currently in terminal {@link OutboxStatus#FAILED} — the operator's read view of the
+     * dead-letter queue, oldest-failure first (review P3-1; the admin DLQ-list surface consumes this through
+     * {@link OutboxReplayService#listFailed(Pageable)}).
+     *
+     * <p>WHY a read here (alongside {@link #countFailed()} and the replay writes): the admin module needs to
+     * <b>see</b> what is in the DLQ before deciding what to replay, but it must never reach into this
+     * shared-kernel repository directly — it goes through the {@link OutboxReplayService} seam, which maps each
+     * row to a PII-free projection. Pinned to {@code status = FAILED} so PENDING/PROCESSED rows are never
+     * surfaced. Ordered by {@code processed_at} (the FAILED-time) ascending so the operator drains the oldest
+     * failures first, mirroring the replay batch order.</p>
+     *
+     * <p>Returns the managed {@link OutboxEvent} entities; the <b>service</b> (not any cross-module caller)
+     * projects them to a non-PII view — the entity never leaves the kernel. The {@code payload} (ids/codes
+     * only, but still an internal serialised body) and the redacted {@code last_error} are deliberately
+     * <b>not</b> exposed by the projection (review P3-1: id / eventType / attempts / age only).</p>
+     *
+     * @param status   the lifecycle state to page; callers pass {@link OutboxStatus#FAILED}.
+     * @param pageable the (bounded) page request — size capped upstream by {@code PageRequestFactory}.
+     * @return a page of FAILED outbox rows, oldest FAILED-time first; empty when the DLQ is empty.
+     */
+    Page<OutboxEvent> findByStatusOrderByProcessedAtAsc(OutboxStatus status, Pageable pageable);
 }

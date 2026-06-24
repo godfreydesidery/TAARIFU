@@ -1,5 +1,7 @@
 package com.taarifu.responders.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.audit.AuditOutcome;
@@ -8,6 +10,8 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.reporting.api.IssueCategoryQueryApi;
 import com.taarifu.reporting.api.ReportLifecycleApi;
@@ -76,6 +80,7 @@ public class ResponderAdminService {
     private final AuditEventService audit;
     private final ResponderMapper mapper;
     private final ClockPort clock;
+    private final OutboxWriter outboxWriter;
 
     /**
      * @param organisationRepository organisation persistence.
@@ -92,6 +97,9 @@ public class ResponderAdminService {
      * @param audit                  append-only audit writer (out-of-scope-denial evidence; refs only, R-1/L-1).
      * @param mapper                 entity→DTO mapper.
      * @param clock                  injectable time (assignment timestamps; testability).
+     * @param outboxWriter           the transactional-outbox port; {@link #assignResponder} appends an
+     *                               assignment-created analytics fact in the assignment transaction so the
+     *                               analytics sink records it asynchronously, off the admin path (Appendix E, M15).
      */
     public ResponderAdminService(OrganisationRepository organisationRepository,
                                  ResponderRepository responderRepository,
@@ -103,7 +111,8 @@ public class ResponderAdminService {
                                  ScopeGuard scopeGuard,
                                  AuditEventService audit,
                                  ResponderMapper mapper,
-                                 ClockPort clock) {
+                                 ClockPort clock,
+                                 OutboxWriter outboxWriter) {
         this.organisationRepository = organisationRepository;
         this.responderRepository = responderRepository;
         this.routingRuleRepository = routingRuleRepository;
@@ -115,6 +124,7 @@ public class ResponderAdminService {
         this.audit = audit;
         this.mapper = mapper;
         this.clock = clock;
+        this.outboxWriter = outboxWriter;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -332,8 +342,30 @@ public class ResponderAdminService {
         ResponderAssignment assignment = ResponderAssignment.create(
                 reportId, responder, request.role(), assignedByUserPublicId, clock.now());
         assignment.setSlaPolicy(request.slaPolicy());
+        ResponderAssignment saved = assignmentRepository.save(assignment);
+        // ANALYTICS (Appendix E, M15): a responder assignment was created — a routing/ops fact. Emitted on the
+        // outbox in THIS transaction; recorded ASYNCHRONOUSLY by the analytics sink, off the admin path. Carries
+        // the assignment role as the controlled `outcome` code and RESPONDER as the active role; ids/codes ONLY
+        // (no responder name, no report PII; PRD §18, ADR-0014 §1). The aggregate is the assignment public id.
+        outboxWriter.append(EventEnvelope.of(
+                AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED,
+                AnalyticsEventTypes.AGGREGATE_CIVIC_ACTIVITY,
+                saved.getPublicId(),
+                new CivicActivityRecorded(
+                        AnalyticsEventTypes.REPORT_ROUTED,
+                        clock.now(),
+                        null,                       // actorRef: no pseudonymous actor hash resolved here
+                        null,                       // geoAreaId: not resolved on the admin path
+                        null,                       // categoryId: not resolved on the admin path
+                        null,                       // tier: n/a
+                        null,                       // channel: n/a
+                        "RESPONDER",                // activeRole name (string — NOT the analytics enum; ADR-0013 §3)
+                        null,                       // latencySeconds: n/a
+                        null,                       // breachType: n/a
+                        request.role().name()),     // outcome = OWNER / COLLABORATOR (controlled vocab)
+                clock.now()));
         // TODO(wiring): publish ResponderAssignedEvent via the transactional outbox once the bus lands.
-        return mapper.toAssignmentDto(assignmentRepository.save(assignment));
+        return mapper.toAssignmentDto(saved);
     }
 
     /**

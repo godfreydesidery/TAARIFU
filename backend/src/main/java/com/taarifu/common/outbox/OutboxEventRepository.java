@@ -1,11 +1,13 @@
 package com.taarifu.common.outbox;
 
 import com.taarifu.common.outbox.domain.model.OutboxEvent;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -66,10 +68,23 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
      * <p>{@code @Modifying(clearAutomatically=true)} flushes the persistence context after the bulk delete
      * so subsequent reads in the same transaction do not see stale managed copies of purged rows.</p>
      *
+     * <p><b>WHY {@code @Transactional} on the repository method (not the caller):</b> a {@code @Modifying}
+     * JPQL/native write requires an active transaction, and — unlike Spring Data's generated CRUD methods —
+     * a custom {@code @Query} method is <b>not</b> wrapped in one by default; without this annotation the
+     * bulk delete throws {@link org.springframework.dao.InvalidDataAccessApiUsageException
+     * InvalidDataAccessApiUsageException} ("Executing an update/delete query"). The maintenance job
+     * ({@link OutboxMaintenance#purgeProcessed}) calls this in a loop with no surrounding transaction, so the
+     * boundary lives here. Placing it on the repository method (which the caller reaches through the Spring
+     * Data proxy) gives <b>one transaction per batch</b>: each delete commits before the next iteration, so
+     * the row locks are short-lived and a large backlog drains incrementally — never one fat, long-lock
+     * transaction over the whole loop. (Putting {@code @Transactional} on the loop method instead would wrap
+     * every batch in a single long transaction — the regression this design avoids.)</p>
+     *
      * @param cutoff    rows with {@code processed_at < cutoff} are eligible (i.e. {@code now - retention}).
      * @param batchSize the maximum number of rows to delete in this statement.
      * @return the number of rows deleted (0 when nothing is eligible; {@code < batchSize} ends the loop).
      */
+    @Transactional
     @Modifying(clearAutomatically = true)
     @Query(value = """
             DELETE FROM outbox_event
@@ -178,4 +193,27 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
                            @Param("processedTo") Instant processedTo,
                            @Param("now") Instant now,
                            @Param("batchSize") int batchSize);
+
+    /**
+     * Pages the rows currently in terminal {@link OutboxStatus#FAILED} — the operator's read view of the
+     * dead-letter queue, oldest-failure first (review P3-1; the admin DLQ-list surface consumes this through
+     * {@link OutboxReplayService#listFailed(Pageable)}).
+     *
+     * <p>WHY a read here (alongside {@link #countFailed()} and the replay writes): the admin module needs to
+     * <b>see</b> what is in the DLQ before deciding what to replay, but it must never reach into this
+     * shared-kernel repository directly — it goes through the {@link OutboxReplayService} seam, which maps each
+     * row to a PII-free projection. Pinned to {@code status = FAILED} so PENDING/PROCESSED rows are never
+     * surfaced. Ordered by {@code processed_at} (the FAILED-time) ascending so the operator drains the oldest
+     * failures first, mirroring the replay batch order.</p>
+     *
+     * <p>Returns the managed {@link OutboxEvent} entities; the <b>service</b> (not any cross-module caller)
+     * projects them to a non-PII view — the entity never leaves the kernel. The {@code payload} (ids/codes
+     * only, but still an internal serialised body) and the redacted {@code last_error} are deliberately
+     * <b>not</b> exposed by the projection (review P3-1: id / eventType / attempts / age only).</p>
+     *
+     * @param status   the lifecycle state to page; callers pass {@link OutboxStatus#FAILED}.
+     * @param pageable the (bounded) page request — size capped upstream by {@code PageRequestFactory}.
+     * @return a page of FAILED outbox rows, oldest FAILED-time first; empty when the DLQ is empty.
+     */
+    Page<OutboxEvent> findByStatusOrderByProcessedAtAsc(OutboxStatus status, Pageable pageable);
 }

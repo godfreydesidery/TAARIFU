@@ -115,21 +115,37 @@ class ReportServiceTest {
 
         ReportDto dto = service.fileReport(reporter, request);
 
+        // Filing now appends TWO outbox events in the same transaction: (1) REPORT_ROUTED (D21 routing) and
+        // (2) the analytics CIVIC_ACTIVITY_RECORDED report_filed fact (M15). Capture both.
         @SuppressWarnings({"unchecked", "rawtypes"})
         ArgumentCaptor<EventEnvelope<?>> captor =
                 (ArgumentCaptor<EventEnvelope<?>>) (ArgumentCaptor) ArgumentCaptor.forClass(EventEnvelope.class);
-        verify(outboxWriter).append(captor.capture());
-        EventEnvelope<?> envelope = captor.getValue();
-        assertThat(envelope.eventType()).isEqualTo(ReportEventTypes.REPORT_ROUTED);
-        assertThat(envelope.aggregateType()).isEqualTo(ReportEventTypes.AGGREGATE_REPORT);
-        assertThat(envelope.aggregateId()).isEqualTo(dto.id());
+        verify(outboxWriter, org.mockito.Mockito.times(2)).append(captor.capture());
 
+        EventEnvelope<?> routed = captor.getAllValues().stream()
+                .filter(e -> e.eventType().equals(ReportEventTypes.REPORT_ROUTED)).findFirst().orElseThrow();
+        assertThat(routed.aggregateType()).isEqualTo(ReportEventTypes.AGGREGATE_REPORT);
+        assertThat(routed.aggregateId()).isEqualTo(dto.id());
         // Payload is IDS ONLY (report/category/ward) — no reporter, title, description, or geo (PRD §18).
-        assertThat(envelope.payload()).isInstanceOf(ReportRouted.class);
-        ReportRouted payload = (ReportRouted) envelope.payload();
+        assertThat(routed.payload()).isInstanceOf(ReportRouted.class);
+        ReportRouted payload = (ReportRouted) routed.payload();
         assertThat(payload.reportId()).isEqualTo(dto.id());
         assertThat(payload.categoryId()).isEqualTo(category.getPublicId());
         assertThat(payload.wardId()).isEqualTo(wardId);
+
+        // ANALYTICS (M15): the report_filed civic-activity fact carries the right dimensions (ids/codes ONLY —
+        // ward + category, NO reporter/title/description). This assertion fails if the analytics emit is removed.
+        EventEnvelope<?> analytics = captor.getAllValues().stream()
+                .filter(e -> e.eventType().equals(com.taarifu.analytics.api.event.AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED))
+                .findFirst().orElseThrow();
+        assertThat(analytics.payload())
+                .isInstanceOf(com.taarifu.analytics.api.event.CivicActivityRecorded.class);
+        var fact = (com.taarifu.analytics.api.event.CivicActivityRecorded) analytics.payload();
+        assertThat(fact.analyticsEventType())
+                .isEqualTo(com.taarifu.analytics.api.event.AnalyticsEventTypes.REPORT_FILED);
+        assertThat(fact.geoAreaId()).isEqualTo(wardId);
+        assertThat(fact.categoryId()).isEqualTo(category.getPublicId());
+        assertThat(fact.actorRef()).isNull(); // no PII on the analytics fact
     }
 
     @Test

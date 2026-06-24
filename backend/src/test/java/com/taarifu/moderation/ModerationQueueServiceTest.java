@@ -5,8 +5,12 @@ import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.audit.AuditOutcome;
 import com.taarifu.common.audit.domain.model.AuditEvent;
 import com.taarifu.common.domain.port.ClockPort;
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.moderation.api.dto.TakeActionRequest;
 import com.taarifu.moderation.application.service.ModerationQueueService;
@@ -22,6 +26,7 @@ import com.taarifu.moderation.domain.repository.ModerationItemRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -55,6 +60,7 @@ class ModerationQueueServiceTest {
     @Mock private ScopeGuard scopeGuard;
     @Mock private AuditEventService audit;
     @Mock private ClockPort clock;
+    @Mock private OutboxWriter outboxWriter;
 
     private ModerationQueueService service;
 
@@ -64,7 +70,7 @@ class ModerationQueueServiceTest {
     @BeforeEach
     void setUp() {
         service = new ModerationQueueService(itemRepository, actionRepository, flagRepository,
-                scopeGuard, audit, clock);
+                scopeGuard, audit, clock, outboxWriter);
     }
 
     /** Builds a PENDING item authored by {@code authorId}, with a stamped publicId for DTO mapping. */
@@ -120,6 +126,20 @@ class ModerationQueueServiceTest {
         // REMOVE is a sanctioning action → item ACTIONED.
         assertThat(item.getStatus()).isEqualTo(ModerationItemStatus.ACTIONED);
         verify(actionRepository).save(any(ModerationAction.class));
+
+        // ANALYTICS (Appendix E, M15): a moderation_action_taken civic-activity fact is appended to the outbox
+        // with the correct dimensions — eventType=MODERATION_ACTION_TAKEN, activeRole=MODERATOR, outcome=the
+        // action taken (REMOVE), and NO PII (no author id, no content). This assertion fails if the emit is
+        // dropped or carries the wrong dimensions.
+        ArgumentCaptor<EventEnvelope<?>> envelope = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(outboxWriter).append(envelope.capture());
+        assertThat(envelope.getValue().eventType()).isEqualTo(AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED);
+        assertThat(envelope.getValue().payload()).isInstanceOf(CivicActivityRecorded.class);
+        CivicActivityRecorded fact = (CivicActivityRecorded) envelope.getValue().payload();
+        assertThat(fact.analyticsEventType()).isEqualTo(AnalyticsEventTypes.MODERATION_ACTION_TAKEN);
+        assertThat(fact.activeRole()).isEqualTo("MODERATOR");
+        assertThat(fact.outcome()).isEqualTo(ModerationActionType.REMOVE.name());
+        assertThat(fact.actorRef()).isNull(); // no PII on the analytics fact
     }
 
     @Test

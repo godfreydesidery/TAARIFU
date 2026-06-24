@@ -8,6 +8,10 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.access.expression.method.DefaultMethodSecurityExpressionHandler;
+import org.springframework.security.access.expression.method.MethodSecurityExpressionHandler;
+import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
+import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -178,6 +182,33 @@ public class SecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
+    }
+
+    /**
+     * The staff role hierarchy: a higher role inherits the authorities of the lower ones, so a
+     * <b>ROOT</b> super-admin reaches ADMIN and MODERATOR surfaces and an <b>ADMIN</b> reaches MODERATOR
+     * ones — {@code ROLE_ROOT > ROLE_ADMIN > ROLE_MODERATOR}.
+     *
+     * <p>WHY (real RBAC bug surfaced by E2E): without a hierarchy, a holder of ROOT alone is DENIED
+     * endpoints guarded by {@code hasRole('MODERATOR')} or {@code hasAnyRole('ADMIN','MODERATOR')}
+     * (e.g. the moderation queue and the admin report queue), because Spring's {@code hasRole} matches
+     * the literal authority. The hierarchy makes ROOT/ADMIN imply the lower staff roles platform-wide,
+     * so endpoints need not enumerate every superior role.</p>
+     */
+    @Bean
+    static RoleHierarchy roleHierarchy() {
+        return RoleHierarchyImpl.fromHierarchy("ROLE_ROOT > ROLE_ADMIN\nROLE_ADMIN > ROLE_MODERATOR");
+    }
+
+    /**
+     * Wires {@link #roleHierarchy()} into method-security so {@code @PreAuthorize("hasRole(...)"} /
+     * {@code hasAnyRole(...)} on controllers honour the hierarchy (deny-by-default is unchanged).
+     */
+    @Bean
+    static MethodSecurityExpressionHandler methodSecurityExpressionHandler(RoleHierarchy roleHierarchy) {
+        DefaultMethodSecurityExpressionHandler handler = new DefaultMethodSecurityExpressionHandler();
+        handler.setRoleHierarchy(roleHierarchy);
+        return handler;
     }
 
     /**

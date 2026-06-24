@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpBackend, HttpClient } from '@angular/common/http';
 import { TranslateHttpLoader } from '@ngx-translate/http-loader';
 
 /**
@@ -12,6 +12,10 @@ import { TranslateHttpLoader } from '@ngx-translate/http-loader';
  * @param http the Angular HTTP client.
  * @returns a configured {@link TranslateHttpLoader}.
  */
-export function createTranslateLoader(http: HttpClient): TranslateHttpLoader {
-  return new TranslateHttpLoader(http, './i18n/', '.json');
+export function createTranslateLoader(handler: HttpBackend): TranslateHttpLoader {
+  // Build a bare HttpClient from HttpBackend so the i18n fetch BYPASSES the interceptor chain.
+  // Going through the interceptors pulls authInterceptor → LocaleService → TranslateService →
+  // this loader → HttpClient — a DI cycle (NG0200) that prevents translations from ever loading.
+  // Absolute '/i18n/' (not './i18n/') so deep routes resolve to public/i18n/, not /<route>/i18n/.
+  return new TranslateHttpLoader(new HttpClient(handler), '/i18n/', '.json');
 }

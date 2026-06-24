@@ -101,12 +101,13 @@ public class OutboxMaintenance {
      * One maintenance cycle: purge expired PROCESSED rows, then refresh the DLQ gauge and warn if the DLQ
      * is non-empty. Runs on its own schedule, independent of the relay poll loop.
      *
-     * <p>Not annotated {@code @Transactional}: each batched purge delete and the DLQ count are individual
-     * repository calls, so each runs in its OWN repository-managed transaction (a {@code @Modifying} bulk
-     * delete with no surrounding transaction commits per call). That is exactly the desired per-batch
-     * commit — a large backlog drains incrementally rather than in one fat transaction — and it avoids the
-     * Spring self-invocation pitfall where a {@code @Transactional} method called from within the same
-     * bean would not be proxied.</p>
+     * <p><b>Deliberately NOT {@code @Transactional} on this method.</b> The per-batch transaction boundary
+     * lives on {@link OutboxEventRepository#deleteProcessedOlderThan} (annotated {@code @Transactional}
+     * there), reached through the Spring Data proxy on every loop iteration — so each batch delete commits in
+     * its own short transaction and the row locks are never held across the whole loop. Annotating
+     * <i>this</i> method instead would wrap every batch in one long transaction (a long-lock regression), and
+     * a {@code @Transactional} method invoked from within this same bean would not even be proxied
+     * (self-invocation pitfall). The DLQ count is a read and needs no transaction.</p>
      */
     @Scheduled(fixedDelayString = "${taarifu.outbox.maintenance-interval-ms:3600000}")
     public void runMaintenance() {
@@ -117,8 +118,10 @@ public class OutboxMaintenance {
     /**
      * Hard-purges PROCESSED rows older than the retention window, looping over bounded batches until a
      * batch comes back short (fewer rows than the batch size means the eligible set is exhausted). Each
-     * batch is a separate repository delete and so commits in its own transaction. FAILED rows are
-     * untouched (the purge query pins {@code status = 'PROCESSED'}).
+     * batch is a separate {@code @Transactional} repository delete
+     * ({@link OutboxEventRepository#deleteProcessedOlderThan}) reached through the Spring Data proxy, so it
+     * commits in its own short transaction before the next iteration — bounded locks, incremental drain.
+     * FAILED rows are untouched (the purge query pins {@code status = 'PROCESSED'}).
      *
      * @return the total number of rows deleted across all batches this run (useful for tests/metrics).
      */

@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -66,10 +67,23 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
      * <p>{@code @Modifying(clearAutomatically=true)} flushes the persistence context after the bulk delete
      * so subsequent reads in the same transaction do not see stale managed copies of purged rows.</p>
      *
+     * <p><b>WHY {@code @Transactional} on the repository method (not the caller):</b> a {@code @Modifying}
+     * JPQL/native write requires an active transaction, and — unlike Spring Data's generated CRUD methods —
+     * a custom {@code @Query} method is <b>not</b> wrapped in one by default; without this annotation the
+     * bulk delete throws {@link org.springframework.dao.InvalidDataAccessApiUsageException
+     * InvalidDataAccessApiUsageException} ("Executing an update/delete query"). The maintenance job
+     * ({@link OutboxMaintenance#purgeProcessed}) calls this in a loop with no surrounding transaction, so the
+     * boundary lives here. Placing it on the repository method (which the caller reaches through the Spring
+     * Data proxy) gives <b>one transaction per batch</b>: each delete commits before the next iteration, so
+     * the row locks are short-lived and a large backlog drains incrementally — never one fat, long-lock
+     * transaction over the whole loop. (Putting {@code @Transactional} on the loop method instead would wrap
+     * every batch in a single long transaction — the regression this design avoids.)</p>
+     *
      * @param cutoff    rows with {@code processed_at < cutoff} are eligible (i.e. {@code now - retention}).
      * @param batchSize the maximum number of rows to delete in this statement.
      * @return the number of rows deleted (0 when nothing is eligible; {@code < batchSize} ends the loop).
      */
+    @Transactional
     @Modifying(clearAutomatically = true)
     @Query(value = """
             DELETE FROM outbox_event

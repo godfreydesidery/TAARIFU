@@ -57,7 +57,7 @@ export function sessionFromToken(token: string): Session | null {
     userId: asString(claims['sub']) ?? '',
     name: asString(claims['name']) ?? asString(claims['preferred_username']),
     roles: extractRoles(claims),
-    tier: asString(claims['tier']),
+    tier: asString(claims['trustTier']) ?? asString(claims['tier']),
     exp: typeof claims['exp'] === 'number' ? (claims['exp'] as number) : undefined,
   };
 }

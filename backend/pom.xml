@@ -143,6 +143,23 @@
             <version>${springdoc.version}</version>
         </dependency>
 
+        <!-- ============================ Email / SMTP ======================== -->
+        <!--
+          Spring Mail (JavaMail/Jakarta Mail) backs the communications module's SMTP
+          EmailSender adapter (PRD §21 EI-6): transactional OTP-fallback / staff notices /
+          digests over a deliverability-aligned ESP (SPF/DKIM/DMARC at the ESP, not here).
+          The host/port/credentials come from spring.mail.* env placeholders — NEVER source
+          (CLAUDE.md §12, PRD §18). The dev/test/prod-default EmailSender stays the logging
+          no-op (taarifu.communications.email.provider unset → matchIfMissing), so this
+          dependency is dormant on the boot path unless the SMTP adapter is explicitly selected
+          (taarifu.communications.email.provider=smtp). JavaMailSender is auto-configured by
+          Spring Boot only when spring.mail.host is set, so an unconfigured prod still boots.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
         <!-- ============================ Object storage (S3) ================= -->
         <!--
           AWS SDK v2 S3 + presigner for the media module's optional S3ObjectStore adapter

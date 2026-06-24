@@ -1,0 +1,13 @@
+{
+  "name": "taarifu-web-admin-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Playwright browser E2E for the Taarifu admin console.",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "install:browser": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0"
+  }
+}

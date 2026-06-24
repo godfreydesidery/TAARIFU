@@ -11,8 +11,12 @@ export const environment = {
   /** Dev build flag — leaves verbose dev diagnostics enabled. */
   production: false,
 
-  /** Local backend base URL including the `/api/v1` context-path. */
-  apiUrl: 'http://localhost:8081/api/v1',
+  /**
+   * Backend base URL — RELATIVE so the bundled dev proxy (`proxy.conf.json` → :8081) serves it
+   * same-origin, avoiding browser CORS regardless of which port `ng serve` runs on (4200/4300/etc.).
+   * Production builds replace this via `fileReplacements` with the absolute in-country host URL.
+   */
+  apiUrl: '/api/v1',
 
   /** Default UI locale — admin console is English-first (Swahili is for the mobile app; toggle available). */
   defaultLocale: 'en',

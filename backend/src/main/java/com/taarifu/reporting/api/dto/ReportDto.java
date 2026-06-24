@@ -1,6 +1,7 @@
 package com.taarifu.reporting.api.dto;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -34,6 +35,9 @@ import java.util.UUID;
  * @param upvotes         discovery-reach upvote count.
  * @param followers       discovery-reach follower count.
  * @param anonymous       {@code true} if filed without identity linkage.
+ * @param attachmentRefs  the report's media attachment public ids (the bytes are fetched, access-controlled,
+ *                        from the media module); never PII, never the storage key. Empty if none. Surfaced
+ *                        only on this owner/reporter view — never on the public projection (PRD §25.3).
  * @param createdAt       filed instant (UTC).
  */
 public record ReportDto(
@@ -57,6 +61,7 @@ public record ReportDto(
         long upvotes,
         long followers,
         boolean anonymous,
+        List<UUID> attachmentRefs,
         Instant createdAt
 ) {
 }

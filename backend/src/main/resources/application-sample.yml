@@ -55,12 +55,28 @@
 # 'postgis' (default; requires seeded ward boundaries) or 'stub' (dev/test, no geometry needed).
 # TAARIFU_GEOCODER=postgis
 
+# --- Rate-limit backend (W3-2: multi-instance anti-automation) ---
+# 'memory' (default): in-process limiters — fine for dev/test/single-instance; NOT shared across instances.
+# 'redis': shared, auto-expiring counters across every app instance — REQUIRED in multi-instance production
+# (TR-3 / G14). When set to 'redis', point spring.data.redis.* at a reachable Redis (host/port via env below).
+# TAARIFU_RATELIMIT_BACKEND=redis
+# TAARIFU_REDIS_HOST=redis.internal           # Redis host (only used when backend=redis)
+# TAARIFU_REDIS_PORT=6379
+# SPRING_DATA_REDIS_PASSWORD=<set-in-env>      # SECRET — only if the Redis deployment requires auth; never committed
+
 # --- USSD aggregator webhook auth (P2-1, PRD §14/§18) ---
 # Shared secret the aggregator presents on POST /ussd/gateway (constant-time header compare). FAIL-CLOSED:
 # if unset, the webhook rejects EVERY call — do not expose USSD in prod until this is set. Env only, never
 # committed. Generate: openssl rand -base64 48
 # TAARIFU_USSD_GATEWAY_SECRET=<set-in-env>     # SECRET — shared with the aggregator out-of-band
 # TAARIFU_USSD_GATEWAY_HEADER=X-Ussd-Secret    # header the aggregator presents the secret in
+
+# --- Media malware-scanner verdict callback auth (MF-3, PRD §18/§21 EI-8) ---
+# Shared secret the scanner presents on POST /media/{id}/scan-callback (constant-time header compare).
+# FAIL-CLOSED: if unset, the callback rejects EVERY call — do not wire a real scanner in prod until this is
+# set, so a citizen token cannot forge a CLEAN/INFECTED verdict. Env only, never committed.
+# TAARIFU_MEDIA_SCANNER_SECRET=<set-in-env>    # SECRET — shared with the scanner service out-of-band
+# TAARIFU_MEDIA_SCANNER_HEADER=X-Scanner-Secret # header the scanner presents the secret in
 
 # --- Communications channels (PRD §21 EI-3/5/6) ---
 # Each channel defaults to the safe LOGGING stub (no external calls). Set the provider AND its

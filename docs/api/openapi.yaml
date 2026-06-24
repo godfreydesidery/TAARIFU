@@ -1,0 +1,2138 @@
+openapi: 3.1.0
+
+# =============================================================================
+# Taarifu API — OpenAPI 3.1 contract (DOCS).
+#
+# Hand-authored, human-readable description of the Taarifu backend REST surface.
+# It is the contract documentation companion to the springdoc-generated spec
+# served live at /api/v1/openapi.json (+ Swagger UI at /api/v1/swagger-ui.html).
+# Source of truth is the code; this file is curated for onboarding and review.
+#
+# Grounding:
+#   - ARCHITECTURE.md §5 (single ApiResponse envelope, error model, pagination,
+#     versioning/idempotency/concurrency), §6 (security: JWT, tiers, scopes).
+#   - PRD §17 (API), §18 (security/privacy), §7 (RBAC + trust tiers).
+#   - ADR-0007 (JWT auth), ADR-0008 (envelope + outbox), ADR-0010 (i18n),
+#     ADR-0011 (auth/MFA), ADR-0013/0014 (cross-module + outbox).
+#   - The @RestController classes across all 16 modules (read June 2026).
+#
+# Conventions captured here:
+#   - EVERY response (success and error) is wrapped in the single ApiResponse
+#     envelope. Schemas named *Dto are the SHAPE OF `data`, never the raw body.
+#   - All paths are relative to the server root `/api/v1` (servlet context-path).
+#   - Public UUIDs in path params; internal Long PKs are never exposed.
+#   - Swahili is the default response language; Accept-Language: en switches.
+# =============================================================================
+
+info:
+  title: Taarifu API
+  version: v1
+  description: >
+    Tanzania civic-engagement platform — backend API (Spring Boot modular monolith,
+    16 modules under `com.taarifu.*`). Swahili-first, mobile-first, inclusive of
+    feature phones (USSD/SMS).
+
+
+    **One envelope.** Every response — success or error — is the
+    [`ApiResponse`](#/components/schemas/ApiResponse) shape: `{ success, statusCode,
+    message, data, meta, timestamp }`. The schemas suffixed `*Dto` below describe the
+    shape carried in `data`; they are never returned bare.
+
+
+    **Tiered identity.** Trust tiers gate actions: phone/OTP → **T1**; complete
+    profile + verified email/phone → **T2**; NIDA/voter-ID verified (operator-assisted)
+    → **T3**. The live tier is resolved server-side per request (never trusted from the
+    JWT claim) and high-stakes actions carry `x-required-tier`.
+
+
+    **Public vs authenticated.** Civic reference data (geography, representatives,
+    issue categories, the public reports near-me list, responder directory, published
+    announcements, and the engagement read surface) is readable without a token. Filing
+    reports, following, signing petitions, rating representatives, all `/me/*` resources,
+    and every admin/moderation surface require authentication plus the relevant role/tier.
+
+
+    **Integrity fence (D18).** Binding civic actions (file report, sign petition, rate a
+    representative, vote in a binding poll) are gated on **tier + electoral scope +
+    one-per-person only** — never on a token balance. Tokens never buy democratic weight.
+  contact:
+    name: Taarifu Engineering
+    email: engineering@taarifu.example
+  license:
+    name: Proprietary
+
+servers:
+  - url: /api/v1
+    description: Versioned API root (servlet context-path). Local dev http://localhost:8081/api/v1
+
+externalDocs:
+  description: Developer onboarding guide
+  url: ../DEVELOPER-GUIDE.md
+
+# -----------------------------------------------------------------------------
+# Tags — one per endpoint group / module.
+# -----------------------------------------------------------------------------
+tags:
+  - name: Auth
+    description: >
+      Signup (OTP → T1), login (password or OTP), staff TOTP MFA second factor,
+      refresh-token rotation, logout. Token-minting endpoints are public; logout
+      requires authentication. ADR-0011 / AUTH-DESIGN §14.1.
+  - name: Profile & Identity
+    description: >
+      The caller's own profile (`/profiles/me/*`), tier progression (T1→T2),
+      email-OTP verification, pinned locations (primary + electoral), and
+      government-ID verification submission (T2→T3, operator-assisted).
+  - name: Geography
+    description: >
+      Public civic geography reference — Mkoa→Wilaya→Halmashauri→Kata→Kijiji/Mtaa,
+      constituencies (Jimbo), GPS→ward resolution. Read-only, no token required.
+  - name: Institutions
+    description: >
+      Representatives directory (Mbunge/Diwani via find-my-rep by ward), parties,
+      parliaments. Public reads; admin authoring under `/admin/institutions`.
+  - name: Reporting
+    description: >
+      File and track citizen issue reports (the M-MVP core loop), report timeline,
+      comments, resolution confirm/dispute. Issue-category catalogue.
+  - name: Public Reports
+    description: >
+      Public near-me reports list/map — PUBLIC reports only, projected to a PII-free
+      DTO (no reporter id, no precise geo-point). Unauthenticated.
+  - name: Responders
+    description: >
+      Government/parastatal/private responder + organisation directory (public), and
+      the responder workspace (assign / start / resolve / escalate) + routing-rule and
+      organisation administration.
+  - name: Engagement
+    description: >
+      Petitions (sign = T3 binding act), surveys/polls (respond = T3), Q&A questions
+      (ask = T2). Public read surface; binding writes are tier-gated + electorally scoped.
+  - name: Accountability
+    description: >
+      Public representative accountability reads (contributions, attendance, promises,
+      rating summary), rating submission (T3, electoral scope), and admin curation.
+  - name: Communications
+    description: >
+      Personal feed, announcements (publish by representatives/responders/admin),
+      follow/subscriptions, notifications, notification preferences.
+  - name: Tokens
+    description: >
+      The caller's wallet + ledger (free-quota economy; no money movement in MVP) and
+      admin token-economy config (action costs, rewards). Tokens never gate binding actions.
+  - name: Moderation
+    description: >
+      Flag content (T1), moderator queue + actions, appeals + appeal decisions, and the
+      operator-assisted ID-verification review queue.
+  - name: Media
+    description: >
+      Pre-signed object-store upload tickets, download URLs, and the malware-scan callback.
+  - name: USSD
+    description: >
+      Feature-phone aggregator webhook (server-to-server, shared-secret authenticated;
+      returns text/plain USSD menus, not the JSON envelope).
+  - name: Admin
+    description: >
+      Admin console surface — user management + additive role grants, reports oversight,
+      dashboards, app/feature-flag config, outbox DLQ replay. Role-gated (ADMIN/ROOT/MODERATOR).
+  - name: Analytics
+    description: >
+      Admin KPI/SLA/funnel dashboards (report volume, TTFR, TTR, SLA breaches,
+      verification funnel, channel mix). ADMIN-only.
+
+# -----------------------------------------------------------------------------
+# Default security: bearer JWT. Public operations override with `security: []`.
+# -----------------------------------------------------------------------------
+security:
+  - bearerAuth: []
+
+paths:
+
+  # ===========================================================================
+  # AUTH
+  # ===========================================================================
+  /auth/otp/request:
+    post:
+      tags: [Auth]
+      summary: Request a signup OTP
+      description: >
+        Sends a one-time code to the supplied phone for signup. Always responds `202`
+        with a challenge id (anti-enumeration — never reveals whether the phone exists).
+        The code is delivered out-of-band (SMS, with email fallback) and never appears in
+        the response (S-4). Rate-limited / lockout-protected (S-2).
+      operationId: requestSignupOtp
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OtpRequestDto' }
+      responses:
+        '202':
+          description: Challenge accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+                # data: OtpChallengeDto
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/signup:
+    post:
+      tags: [Auth]
+      summary: Complete signup (verify OTP → create T1 account)
+      description: Verifies the signup OTP, creates/activates a T1 account, and issues the first token pair.
+      operationId: completeSignup
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerifyOtpDto' }
+      responses:
+        '201':
+          description: Account created; tier + token pair returned (data = AuthResultDto).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/login/otp/request:
+    post:
+      tags: [Auth]
+      summary: Request a login OTP (passwordless / recovery)
+      operationId: requestLoginOtp
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OtpRequestDto' }
+      responses:
+        '202':
+          description: Challenge accepted (data = OtpChallengeDto).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+
+  /auth/login/password:
+    post:
+      tags: [Auth]
+      summary: Login with phone/email + password
+      description: >
+        For a citizen account, returns a token pair. For a **staff account**
+        (MODERATOR/ADMIN/ROOT) returns `mfaRequired=true` + an `mfaToken` — no token pair
+        is issued here; the second factor must be completed at `/auth/login/totp` (N-4).
+      operationId: loginWithPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordLoginDto' }
+      responses:
+        '200':
+          description: Login outcome (data = LoginResultDto — a token pair, or an MFA challenge).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/login/otp:
+    post:
+      tags: [Auth]
+      summary: Login by verifying an OTP
+      operationId: loginWithOtp
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerifyOtpDto' }
+      responses:
+        '200':
+          description: Login outcome (data = LoginResultDto).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+
+  /auth/login/totp:
+    post:
+      tags: [Auth]
+      summary: Staff MFA second factor (exchange MFA challenge + TOTP for tokens)
+      description: >
+        Exchanges the `MFA_CHALLENGE` token (from `/auth/login/password`) plus a 6-digit
+        TOTP code for the real token pair. Public — it carries the challenge token, not a
+        prior access token (N-4).
+      operationId: loginWithTotp
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TotpLoginDto' }
+      responses:
+        '200':
+          description: Token pair (data = TokenPairDto).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate the refresh token
+      description: >
+        Single-use rotation. Reuse of a consumed refresh token revokes the whole token
+        family (reuse-detection, S-3).
+      operationId: refresh
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequestDto' }
+      responses:
+        '200':
+          description: New token pair (data = TokenPairDto).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout this session (revoke one refresh token)
+      operationId: logout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequestDto' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /auth/logout/all:
+    post:
+      tags: [Auth]
+      summary: Logout everywhere (revoke all refresh families for the caller)
+      operationId: logoutAll
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /auth/mfa/totp/setup:
+    post:
+      tags: [Auth]
+      summary: Provision a TOTP secret (staff enrolment)
+      description: Returns the `otpauth://` URI + raw secret **once** (shown once; never logged).
+      operationId: setupTotp
+      responses:
+        '200':
+          description: Enrolment material (data = TotpSetupDto).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /auth/mfa/totp/activate:
+    post:
+      tags: [Auth]
+      summary: Activate MFA (verify a TOTP code against the pending secret)
+      operationId: activateTotp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TotpCodeDto' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  # ===========================================================================
+  # PROFILE & IDENTITY
+  # ===========================================================================
+  /profiles/me:
+    get:
+      tags: [Profile & Identity]
+      summary: Get my profile snapshot
+      description: Returns the caller's own profile. Never returns another user's PII.
+      operationId: getMe
+      responses:
+        '200':
+          description: data = MeDto.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    patch:
+      tags: [Profile & Identity]
+      summary: Complete my profile (may promote T1→T2)
+      operationId: updateMe
+      parameters: [ { $ref: '#/components/parameters/RequiredTierT1' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProfileDto' }
+      responses:
+        '200':
+          description: Recomputed tier (data = { tier }).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '403': { $ref: '#/components/responses/TierTooLow' }
+
+  /profiles/me/tier:
+    get:
+      tags: [Profile & Identity]
+      summary: Get my live trust tier (UI hint; same resolver used for gating)
+      operationId: getMyTier
+      responses:
+        '200':
+          description: data = { tier }.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+
+  /profiles/me/email/otp:
+    post:
+      tags: [Profile & Identity]
+      summary: Request an email-verification OTP (T2 path)
+      operationId: requestEmailOtp
+      parameters: [ { $ref: '#/components/parameters/RequiredTierT1' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailOtpRequestDto' }
+      responses:
+        '202':
+          description: data = OtpChallengeDto.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+
+  /profiles/me/email/verify:
+    post:
+      tags: [Profile & Identity]
+      summary: Verify the email OTP (may promote to T2)
+      operationId: verifyEmailOtp
+      parameters: [ { $ref: '#/components/parameters/RequiredTierT1' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerifyOtpDto' }
+      responses:
+        '200':
+          description: Recomputed tier (data = { tier }).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+
+  /profiles/me/verification:
+    post:
+      tags: [Profile & Identity]
+      summary: Submit a government ID for verification (T2→T3)
+      description: >
+        Submits a NIDA/voter ID for operator-assisted verification (NIDA API is a
+        pluggable adapter; operator-assisted is the launch default). The `idNo` is
+        field-encrypted and never echoed; dedup-guarded (one person = one account, D15).
+        Creates a `PENDING` request reviewed in the moderation verification queue.
+      operationId: submitVerification
+      parameters: [ { $ref: '#/components/parameters/RequiredTierT2' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmitVerificationDto' }
+      responses:
+        '202':
+          description: data = VerificationStatusDto (reference + PENDING).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '403': { $ref: '#/components/responses/TierTooLow' }
+        '409': { $ref: '#/components/responses/DuplicateIdentity' }
+
+  /profiles/me/locations:
+    post:
+      tags: [Profile & Identity]
+      summary: Pin a residence location (derives admin + electoral chains)
+      description: >
+        A citizen pins ONE physical place; the system derives both the administrative and
+        the electoral chain — citizens never type a Jimbo. Respects `isPrimary` (one) and
+        `isElectoral` (one, voter-ID-authoritative).
+      operationId: addMyLocation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddLocationDto' }
+      responses:
+        '201':
+          description: data = ProfileLocationDto.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+    get:
+      tags: [Profile & Identity]
+      summary: List my pinned locations
+      operationId: listMyLocations
+      responses:
+        '200':
+          description: data = ProfileLocationDto[].
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+
+  /profiles/me/locations/{publicId}:
+    delete:
+      tags: [Profile & Identity]
+      summary: Remove a pinned location
+      operationId: deleteMyLocation
+      parameters: [ { $ref: '#/components/parameters/PublicId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /profiles/me/locations/{publicId}/primary:
+    patch:
+      tags: [Profile & Identity]
+      summary: Set a location as primary (exactly one)
+      operationId: setPrimaryLocation
+      parameters: [ { $ref: '#/components/parameters/PublicId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /profiles/me/locations/{publicId}/electoral:
+    patch:
+      tags: [Profile & Identity]
+      summary: Set a location as electoral (rate-limited + audited)
+      description: >
+        Manual change of the electoral location is rate-limited (≈6-month cooldown) and
+        audited; a voter-ID-set electoral location bypasses the cooldown. Binding civic
+        actions scope to this electoral location (D13).
+      operationId: setElectoralLocation
+      parameters: [ { $ref: '#/components/parameters/PublicId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  # ===========================================================================
+  # GEOGRAPHY  (all public reads)
+  # ===========================================================================
+  /regions:
+    get:
+      tags: [Geography]
+      summary: List regions (Mikoa)
+      operationId: listRegions
+      security: []
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' }, { $ref: '#/components/parameters/Sort' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /regions/{regionId}:
+    get:
+      tags: [Geography]
+      summary: Get one region
+      operationId: getRegion
+      security: []
+      parameters: [ { $ref: '#/components/parameters/RegionId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /regions/{regionId}/districts:
+    get:
+      tags: [Geography]
+      summary: List a region's districts (Wilaya)
+      operationId: listDistrictsOfRegion
+      security: []
+      parameters: [ { $ref: '#/components/parameters/RegionId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /districts/{districtId}/wards:
+    get:
+      tags: [Geography]
+      summary: List a district's wards (Kata)
+      operationId: listWardsOfDistrict
+      security: []
+      parameters:
+        - name: districtId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /wards:
+    get:
+      tags: [Geography]
+      summary: Search wards (Kata)
+      operationId: searchWards
+      security: []
+      parameters: [ { $ref: '#/components/parameters/Query' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /constituencies/{constituencyId}:
+    get:
+      tags: [Geography]
+      summary: Get a constituency (Jimbo)
+      operationId: getConstituency
+      security: []
+      parameters:
+        - name: constituencyId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /locations/{locationId}:
+    get:
+      tags: [Geography]
+      summary: Get any location node by id
+      operationId: getLocation
+      security: []
+      parameters:
+        - name: locationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /locations/resolve:
+    get:
+      tags: [Geography]
+      summary: Resolve GPS to a ward (PostGIS point-in-polygon)
+      description: >
+        In-house PostGIS resolution against seeded ward boundaries (the source of truth,
+        vendor-independent). Absence of boundary geometry degrades to manual ward drill-down.
+      operationId: resolveLocation
+      security: []
+      parameters:
+        - { name: lat, in: query, required: true, schema: { type: number, format: double } }
+        - { name: lng, in: query, required: true, schema: { type: number, format: double } }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  # ===========================================================================
+  # INSTITUTIONS
+  # ===========================================================================
+  /representatives/by-ward/{wardId}:
+    get:
+      tags: [Institutions]
+      summary: Find-my-rep — representatives for a ward (Mbunge + Diwani)
+      operationId: representativesByWard
+      security: []
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /representatives/{representativeId}:
+    get:
+      tags: [Institutions]
+      summary: Get a representative profile (shown factually, not endorsed)
+      operationId: getRepresentative
+      security: []
+      parameters: [ { $ref: '#/components/parameters/RepresentativeId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /parties/{partyId}:
+    get:
+      tags: [Institutions]
+      summary: Get a political party
+      operationId: getParty
+      security: []
+      parameters:
+        - name: partyId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /parliaments/{parliamentId}:
+    get:
+      tags: [Institutions]
+      summary: Get a parliament/legislature
+      operationId: getParliament
+      security: []
+      parameters:
+        - name: parliamentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /parliaments/roles:
+    get:
+      tags: [Institutions]
+      summary: List parliament roles
+      operationId: listParliamentRoles
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  # ===========================================================================
+  # REPORTING
+  # ===========================================================================
+  /issue-categories:
+    get:
+      tags: [Reporting]
+      summary: List issue categories (taxonomy)
+      operationId: listIssueCategories
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /issue-categories/{categoryId}:
+    get:
+      tags: [Reporting]
+      summary: Get an issue category
+      operationId: getIssueCategory
+      security: []
+      parameters:
+        - name: categoryId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /reports:
+    post:
+      tags: [Reporting]
+      summary: File an issue report (T2; sensitive categories allow anonymous)
+      description: >
+        The M-MVP core action (UC-D01). Requires **T2**; on a sensitive category the
+        service relaxes to T1 and suppresses reporter linkage (anonymity, D-Q1). Gated on
+        tier only — never on a token balance (integrity fence, D18). Accepts an
+        `Idempotency-Key` to make retries safe.
+      operationId: fileReport
+      parameters:
+        - { $ref: '#/components/parameters/RequiredTierT2' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FileReportDto' }
+      responses:
+        '201':
+          description: data = ReportDto.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/TierTooLow' }
+    get:
+      tags: [Reporting]
+      summary: List my reports
+      operationId: listMyReports
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' }, { $ref: '#/components/parameters/Sort' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /reports/{reportId}:
+    get:
+      tags: [Reporting]
+      summary: Get one of my reports
+      description: Ownership is enforced as not-found — another citizen's report is never leaked.
+      operationId: getMyReport
+      parameters: [ { $ref: '#/components/parameters/ReportId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /reports/{reportId}/timeline:
+    get:
+      tags: [Reporting]
+      summary: Get my report's timeline (case events)
+      operationId: getMyReportTimeline
+      parameters: [ { $ref: '#/components/parameters/ReportId' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /reports/{reportId}/comments:
+    post:
+      tags: [Reporting]
+      summary: Add info/comment to my report
+      operationId: addReportComment
+      parameters: [ { $ref: '#/components/parameters/ReportId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddCommentDto' }
+      responses:
+        '201':
+          description: data = CaseEventDto.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+
+  /reports/{reportId}/confirmation:
+    post:
+      tags: [Reporting]
+      summary: Confirm or dispute a resolution
+      description: Drives RESOLVED→CONFIRMED/DISPUTED in the report state machine (UC-D11/12/13).
+      operationId: confirmResolution
+      parameters: [ { $ref: '#/components/parameters/ReportId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfirmResolutionDto' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  # ===========================================================================
+  # PUBLIC REPORTS  (unauthenticated; PUBLIC + PII-free only)
+  # ===========================================================================
+  /public/reports:
+    get:
+      tags: [Public Reports]
+      summary: List public reports (near-me)
+      description: PUBLIC reports only, projected to a PII-free DTO (no reporter id, no precise geo-point).
+      operationId: listPublicReports
+      security: []
+      parameters:
+        - { name: wardId, in: query, required: false, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+        - { $ref: '#/components/parameters/Sort' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /public/reports/{reportId}:
+    get:
+      tags: [Public Reports]
+      summary: Get a public report (private → 404)
+      operationId: getPublicReport
+      security: []
+      parameters: [ { $ref: '#/components/parameters/ReportId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /public/reports/{reportId}/timeline:
+    get:
+      tags: [Public Reports]
+      summary: Get a public report's public timeline (internal notes excluded)
+      operationId: getPublicReportTimeline
+      security: []
+      parameters: [ { $ref: '#/components/parameters/ReportId' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  # ===========================================================================
+  # RESPONDERS
+  # ===========================================================================
+  /responders:
+    get:
+      tags: [Responders]
+      summary: List the responder directory (govt/parastatal/private)
+      operationId: listResponders
+      security: []
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /responders/{responderId}:
+    get:
+      tags: [Responders]
+      summary: Get a responder
+      operationId: getResponder
+      security: []
+      parameters:
+        - name: responderId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /organisations:
+    get:
+      tags: [Responders]
+      summary: List responder organisations
+      operationId: listOrganisations
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /responders/admin/reports/{reportId}/assign:
+    post:
+      tags: [Responders]
+      summary: Assign a report to a responder (workspace)
+      description: >
+        Responder-workspace action. The OWNER assignment is normally created
+        asynchronously by the routing worker from the `REPORT_ROUTED` outbox event (D21,
+        ADR-0014); this endpoint is the manual/operator path. RESPONDER_AGENT/_ADMIN
+        scoped to assigned areas/categories.
+      operationId: assignReport
+      parameters: [ { $ref: '#/components/parameters/ReportId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/OutOfScope' }
+
+  /responders/admin/reports/{reportId}/start:
+    post:
+      tags: [Responders]
+      summary: Start work on a report (→ IN_PROGRESS)
+      operationId: startReport
+      parameters: [ { $ref: '#/components/parameters/ReportId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /responders/admin/reports/{reportId}/resolve:
+    post:
+      tags: [Responders]
+      summary: Resolve a report (→ RESOLVED)
+      operationId: resolveReport
+      parameters: [ { $ref: '#/components/parameters/ReportId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /responders/admin/reports/{reportId}/escalate:
+    post:
+      tags: [Responders]
+      summary: Escalate a report
+      operationId: escalateReport
+      parameters: [ { $ref: '#/components/parameters/ReportId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /responders/admin/routing-rules:
+    get:
+      tags: [Responders]
+      summary: List routing rules (category × area → responder)
+      operationId: listRoutingRules
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Responders]
+      summary: Create a routing rule
+      operationId: createRoutingRule
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+
+  /responders/admin/organisations:
+    get:
+      tags: [Responders]
+      summary: List organisations (admin)
+      operationId: adminListOrganisations
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Responders]
+      summary: Register a responder organisation
+      operationId: createOrganisation
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+
+  # ===========================================================================
+  # ENGAGEMENT  (binding writes tier-gated + electorally scoped)
+  # ===========================================================================
+  /petitions:
+    get:
+      tags: [Engagement]
+      summary: List petitions
+      operationId: listPetitions
+      security: []
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Engagement]
+      summary: Create a petition
+      operationId: createPetition
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreatePetitionRequest' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /petitions/{petitionId}:
+    get:
+      tags: [Engagement]
+      summary: Get a petition
+      operationId: getPetition
+      security: []
+      parameters:
+        - name: petitionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /petitions/{petitionId}/signatures:
+    post:
+      tags: [Engagement]
+      summary: Sign a petition (binding act — T3 + electoral scope + one-per-person)
+      description: >
+        A binding civic act. Requires **live T3**, scopes to the signer's electoral
+        constituency (D13), and is one-per-person (DB-unique). Never reads a token balance
+        (integrity fence, D18).
+      operationId: signPetition
+      parameters:
+        - name: petitionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - { $ref: '#/components/parameters/RequiredTierT3' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/OutOfScope' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /surveys:
+    get:
+      tags: [Engagement]
+      summary: List surveys/polls
+      operationId: listSurveys
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Engagement]
+      summary: Create a survey/poll
+      operationId: createSurvey
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /surveys/{surveyId}:
+    get:
+      tags: [Engagement]
+      summary: Get a survey/poll
+      operationId: getSurvey
+      security: []
+      parameters:
+        - name: surveyId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /surveys/{surveyId}/responses:
+    post:
+      tags: [Engagement]
+      summary: Respond to a binding poll (T3)
+      operationId: respondSurvey
+      parameters:
+        - name: surveyId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - { $ref: '#/components/parameters/RequiredTierT3' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/TierTooLow' }
+
+  /questions:
+    get:
+      tags: [Engagement]
+      summary: List Q&A questions
+      operationId: listQuestions
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Engagement]
+      summary: Ask a question (T2)
+      operationId: askQuestion
+      parameters: [ { $ref: '#/components/parameters/RequiredTierT2' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /questions/{questionId}:
+    get:
+      tags: [Engagement]
+      summary: Get a question
+      operationId: getQuestion
+      security: []
+      parameters:
+        - name: questionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  # ===========================================================================
+  # ACCOUNTABILITY
+  # ===========================================================================
+  /representatives/{representativeId}/contributions:
+    get:
+      tags: [Accountability]
+      summary: List a representative's contributions
+      operationId: listContributions
+      security: []
+      parameters: [ { $ref: '#/components/parameters/RepresentativeId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /representatives/{representativeId}/attendance/summary:
+    get:
+      tags: [Accountability]
+      summary: Attendance summary
+      operationId: attendanceSummary
+      security: []
+      parameters: [ { $ref: '#/components/parameters/RepresentativeId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /representatives/{representativeId}/promises:
+    get:
+      tags: [Accountability]
+      summary: List a representative's promises
+      operationId: listPromises
+      security: []
+      parameters: [ { $ref: '#/components/parameters/RepresentativeId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /representatives/{representativeId}/rating/summary:
+    get:
+      tags: [Accountability]
+      summary: Aggregate rating summary
+      operationId: ratingSummary
+      security: []
+      parameters: [ { $ref: '#/components/parameters/RepresentativeId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /ratings:
+    post:
+      tags: [Accountability]
+      summary: Rate a representative (binding — T3 + electoral scope + not-self)
+      description: >
+        Requires **live T3**, scopes to the rater's electoral constituency (D13), blocks
+        self-rating (D16), is one-per-person, and never reads a token balance (D18).
+      operationId: submitRating
+      parameters: [ { $ref: '#/components/parameters/RequiredTierT3' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateRatingDto' } } } }
+      responses:
+        '201':
+          description: data = RatingDto.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '403': { $ref: '#/components/responses/ConflictOfInterest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /accountability/contributions:
+    post:
+      tags: [Accountability]
+      summary: Curate a contribution (admin/authorised author)
+      operationId: createContribution
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+
+  # ===========================================================================
+  # COMMUNICATIONS
+  # ===========================================================================
+  /feed:
+    get:
+      tags: [Communications]
+      summary: My personal feed (T1)
+      operationId: myFeed
+      parameters: [ { $ref: '#/components/parameters/RequiredTierT1' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /announcements:
+    post:
+      tags: [Communications]
+      summary: Publish an announcement (rep / responder / admin)
+      description: >
+        Publishing emits `ANNOUNCEMENT_PUBLISHED` to the outbox; the fan-out workers
+        create feed items + notifications idempotently (ADR-0014). Role-gated to
+        REPRESENTATIVE / RESPONDER_AGENT / RESPONDER_ADMIN / AREA_OFFICIAL / ADMIN.
+      operationId: publishAnnouncement
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PublishAnnouncementRequest' } } } }
+      responses:
+        '201':
+          description: data = AnnouncementDto.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /announcements/mine:
+    get:
+      tags: [Communications]
+      summary: List announcements I authored
+      operationId: listMyAnnouncements
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /announcements/{publicId}:
+    get:
+      tags: [Communications]
+      summary: Get a published announcement (in-window only)
+      operationId: getAnnouncement
+      security: []
+      parameters: [ { $ref: '#/components/parameters/PublicId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /subscriptions:
+    post:
+      tags: [Communications]
+      summary: Follow a source (T1)
+      operationId: follow
+      parameters: [ { $ref: '#/components/parameters/RequiredTierT1' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/FollowRequest' } } } }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+
+  /subscriptions/mine:
+    get:
+      tags: [Communications]
+      summary: List my subscriptions
+      operationId: listMySubscriptions
+      parameters: [ { $ref: '#/components/parameters/RequiredTierT1' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /subscriptions/{subscriptionId}:
+    delete:
+      tags: [Communications]
+      summary: Unfollow
+      operationId: unfollow
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - { $ref: '#/components/parameters/RequiredTierT1' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /notifications/mine:
+    get:
+      tags: [Communications]
+      summary: List my notifications
+      operationId: listMyNotifications
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /notifications/{notificationId}/read:
+    post:
+      tags: [Communications]
+      summary: Mark a notification read
+      operationId: markNotificationRead
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /notification-preferences/mine:
+    get:
+      tags: [Communications]
+      summary: Get my notification preferences
+      operationId: getMyNotificationPreferences
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /notification-preferences:
+    put:
+      tags: [Communications]
+      summary: Upsert a notification preference (always-on types cannot be disabled)
+      operationId: upsertNotificationPreference
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  # ===========================================================================
+  # TOKENS
+  # ===========================================================================
+  /me/wallet:
+    get:
+      tags: [Tokens]
+      summary: Get my wallet balance
+      description: >
+        The token economy meters actions but civic-core actions have free recurring
+        quotas; no money movement in MVP. A balance NEVER gates a binding action (D18).
+      operationId: getMyWallet
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /me/wallet/ledger:
+    get:
+      tags: [Tokens]
+      summary: Get my token ledger
+      operationId: getMyLedger
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/tokens/policies:
+    get:
+      tags: [Tokens]
+      summary: List action-cost / free-quota policies (ADMIN)
+      operationId: listTokenPolicies
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Tokens]
+      summary: Upsert an action-cost policy (ADMIN)
+      operationId: upsertTokenPolicy
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/tokens/rewards:
+    get:
+      tags: [Tokens]
+      summary: List token rewards (ADMIN)
+      operationId: listTokenRewards
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  # ===========================================================================
+  # MODERATION
+  # ===========================================================================
+  /flags:
+    post:
+      tags: [Moderation]
+      summary: Flag content (T1)
+      operationId: flagContent
+      parameters: [ { $ref: '#/components/parameters/RequiredTierT1' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/FlagContentRequest' } } } }
+      responses:
+        '201':
+          description: data = FlagDto.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+
+  /moderation/items:
+    get:
+      tags: [Moderation]
+      summary: Moderator queue (MODERATOR)
+      operationId: moderationQueue
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /moderation/items/{itemId}/actions:
+    post:
+      tags: [Moderation]
+      summary: Take a moderation action (MODERATOR; not-self guarded)
+      operationId: takeModerationAction
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/ConflictOfInterest' }
+
+  /moderation/appeals:
+    get:
+      tags: [Moderation]
+      summary: List appeals (MODERATOR)
+      operationId: listAppeals
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /moderation/actions/{actionId}/appeals:
+    post:
+      tags: [Moderation]
+      summary: File an appeal against a moderation action
+      operationId: fileAppeal
+      parameters:
+        - name: actionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+
+  /moderation/appeals/{appealId}/decision:
+    post:
+      tags: [Moderation]
+      summary: Decide an appeal (MODERATOR)
+      operationId: decideAppeal
+      parameters:
+        - name: appealId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /moderation/verifications/{publicId}/approve:
+    post:
+      tags: [Moderation]
+      summary: Approve an ID-verification request (operator-assisted; → T3)
+      description: >
+        The operator-assisted NIDA/voter-ID review fallback (NIDA API unreliable). Approving
+        promotes the subject to T3. MODERATOR-gated, audited, not-self guarded.
+      operationId: approveVerification
+      parameters: [ { $ref: '#/components/parameters/PublicId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /moderation/verifications/{publicId}/reject:
+    post:
+      tags: [Moderation]
+      summary: Reject an ID-verification request
+      operationId: rejectVerification
+      parameters: [ { $ref: '#/components/parameters/PublicId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  # ===========================================================================
+  # MEDIA
+  # ===========================================================================
+  /media/uploads:
+    post:
+      tags: [Media]
+      summary: Request a pre-signed upload ticket
+      description: Returns an S3 pre-signed PUT; the object is quarantined until the malware scan passes.
+      operationId: requestUpload
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UploadRequest' } } } }
+      responses:
+        '200':
+          description: data = UploadTicketDto.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+
+  /media/{mediaId}/download-url:
+    get:
+      tags: [Media]
+      summary: Get a pre-signed download URL
+      operationId: getDownloadUrl
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /media/{mediaId}/scan-callback:
+    post:
+      tags: [Media]
+      summary: Malware-scan result callback
+      operationId: scanCallback
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  # ===========================================================================
+  # USSD  (text/plain, shared-secret server-to-server)
+  # ===========================================================================
+  /ussd/gateway:
+    post:
+      tags: [USSD]
+      summary: USSD aggregator webhook (feature phones)
+      description: >
+        Server-to-server webhook from the USSD aggregator. Authenticated by a fail-closed
+        shared-secret header (`X-Ussd-Secret`), NOT a JWT — a feature-phone caller has no
+        token. Per-MSISDN rate-limited. Returns a `text/plain` USSD menu string (CON/END),
+        not the JSON envelope. Session state is short-lived in Redis (keyed by MSISDN+sessionId).
+      operationId: ussdGateway
+      security:
+        - ussdSharedSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UssdGatewayRequest' }
+      responses:
+        '200':
+          description: A USSD menu string.
+          content:
+            text/plain:
+              schema: { type: string, example: "CON Karibu Taarifu\n1. Ripoti tatizo\n2. Mwakilishi wangu" }
+
+  # ===========================================================================
+  # ADMIN
+  # ===========================================================================
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: List users (ADMIN/ROOT)
+      operationId: adminListUsers
+      parameters: [ { $ref: '#/components/parameters/Query' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/users/{userPublicId}:
+    get:
+      tags: [Admin]
+      summary: Get a user (ADMIN/ROOT)
+      operationId: adminGetUser
+      parameters: [ { $ref: '#/components/parameters/UserPublicId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/users/{userPublicId}/roles:
+    post:
+      tags: [Admin]
+      summary: Grant a role (additive; not-self)
+      description: >
+        Roles are additive on the one account (a citizen who becomes an MP keeps the same
+        login + verified identity and gains REPRESENTATIVE). Cannot grant to self
+        (`@taarifuAuthz.isNotSelf`). ADMIN/ROOT.
+      operationId: grantRole
+      parameters: [ { $ref: '#/components/parameters/UserPublicId' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GrantRoleRequest' } } } }
+      responses:
+        '200':
+          description: data = RoleGrantedDto.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '403': { $ref: '#/components/responses/ConflictOfInterest' }
+
+  /admin/users/{userPublicId}/roles/{assignmentId}:
+    delete:
+      tags: [Admin]
+      summary: Revoke a role assignment (not-self)
+      operationId: revokeRole
+      parameters:
+        - { $ref: '#/components/parameters/UserPublicId' }
+        - name: assignmentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/users/{userPublicId}/suspend:
+    post:
+      tags: [Admin]
+      summary: Suspend a user (not-self)
+      operationId: suspendUser
+      parameters: [ { $ref: '#/components/parameters/UserPublicId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/users/{userPublicId}/reinstate:
+    post:
+      tags: [Admin]
+      summary: Reinstate a user (not-self)
+      operationId: reinstateUser
+      parameters: [ { $ref: '#/components/parameters/UserPublicId' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/reports:
+    get:
+      tags: [Admin]
+      summary: List all reports (ADMIN/MODERATOR oversight)
+      operationId: adminListReports
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/stats:
+    get:
+      tags: [Admin]
+      summary: Report oversight stats (ADMIN/MODERATOR)
+      operationId: adminReportStats
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/dashboard/stats:
+    get:
+      tags: [Admin]
+      summary: Admin dashboard stats (ADMIN/ROOT)
+      operationId: dashboardStats
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/config/app:
+    get:
+      tags: [Admin]
+      summary: List app configs (ADMIN/ROOT)
+      operationId: listAppConfigs
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    put:
+      tags: [Admin]
+      summary: Upsert an app config (force-update / min-version)
+      operationId: upsertAppConfig
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/config/flags:
+    get:
+      tags: [Admin]
+      summary: List feature flags (ADMIN/ROOT)
+      operationId: listFeatureFlags
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Admin]
+      summary: Upsert a feature flag (ADMIN/ROOT)
+      operationId: upsertFeatureFlag
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/outbox/failed:
+    get:
+      tags: [Admin]
+      summary: List FAILED outbox events (the DLQ; ADMIN/ROOT)
+      operationId: listFailedOutbox
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/outbox/replay:
+    post:
+      tags: [Admin]
+      summary: Replay FAILED outbox events (reset to PENDING; ADMIN/ROOT)
+      operationId: replayOutbox
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /app-config/{platform}:
+    get:
+      tags: [Admin]
+      summary: Client app config for a platform (force-update / min-version)
+      operationId: getAppConfigForPlatform
+      security: []
+      parameters:
+        - name: platform
+          in: path
+          required: true
+          schema: { type: string, enum: [ANDROID, IOS, WEB] }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  # ===========================================================================
+  # ANALYTICS  (ADMIN dashboards)
+  # ===========================================================================
+  /admin/analytics/reports/volume:
+    get:
+      tags: [Analytics]
+      summary: Report volume (ADMIN)
+      operationId: analyticsReportVolume
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/analytics/reports/ttfr:
+    get:
+      tags: [Analytics]
+      summary: Time-to-first-response KPI (ADMIN)
+      operationId: analyticsTtfr
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/analytics/reports/ttr:
+    get:
+      tags: [Analytics]
+      summary: Time-to-resolution KPI (ADMIN)
+      operationId: analyticsTtr
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/analytics/reports/sla-breaches:
+    get:
+      tags: [Analytics]
+      summary: SLA breaches (ADMIN)
+      operationId: analyticsSlaBreaches
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /admin/analytics/verification/funnel:
+    get:
+      tags: [Analytics]
+      summary: Verification funnel (T1→T2→T3) (ADMIN)
+      operationId: analyticsVerificationFunnel
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+# =============================================================================
+# COMPONENTS
+# =============================================================================
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Stateless JWT access token (ADR-0007/0011), ~15 min TTL. Obtain via `/auth/signup`
+        or `/auth/login/*` and rotate via `/auth/refresh`. The token carries a tier claim,
+        but the **live tier is re-resolved server-side** per request — never trusted from the
+        claim (MF-2). Public reference reads require no token.
+    ussdSharedSecret:
+      type: apiKey
+      in: header
+      name: X-Ussd-Secret
+      description: >
+        Fail-closed shared secret authenticating the USSD aggregator on `/ussd/gateway`
+        (server-to-server; not a user credential). Header name is configurable.
+
+  # ---------------------------------------------------------------------------
+  # Reusable parameters
+  # ---------------------------------------------------------------------------
+  parameters:
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Zero-based page index.
+      schema: { type: integer, minimum: 0, default: 0 }
+    Size:
+      name: size
+      in: query
+      required: false
+      description: Page size (default 20, capped at 100).
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Sort:
+      name: sort
+      in: query
+      required: false
+      description: Sort expression `field,asc|desc`.
+      schema: { type: string, example: createdAt,desc }
+    Query:
+      name: q
+      in: query
+      required: false
+      description: Free-text search.
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >
+        Client-supplied key making create/submit retries safe (reports, signatures, OTP,
+        payments). Stored in Redis with a TTL; a replay returns the original result.
+      schema: { type: string }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: Optimistic-concurrency version for updates; a stale version yields `409 CONFLICT`.
+      schema: { type: string }
+    AcceptLanguage:
+      name: Accept-Language
+      in: header
+      required: false
+      description: Response language. Default `sw` (Swahili); `en` for English.
+      schema: { type: string, enum: [sw, en], default: sw }
+    PublicId:
+      name: publicId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RegionId:
+      name: regionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RepresentativeId:
+      name: representativeId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ReportId:
+      name: reportId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    UserPublicId:
+      name: userPublicId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    # The following are documentation-only markers: the actual gate is the server-side
+    # @RequiresTier aspect, not a request header. They make the required tier visible in
+    # the operation. Clients do NOT send them.
+    RequiredTierT1:
+      name: x-required-tier
+      in: header
+      required: false
+      description: "Documentation marker — this action requires live tier T1 (enforced server-side)."
+      schema: { type: string, enum: [T1], default: T1 }
+    RequiredTierT2:
+      name: x-required-tier
+      in: header
+      required: false
+      description: "Documentation marker — this action requires live tier T2 (enforced server-side)."
+      schema: { type: string, enum: [T2], default: T2 }
+    RequiredTierT3:
+      name: x-required-tier
+      in: header
+      required: false
+      description: "Documentation marker — this binding action requires live tier T3 (enforced server-side)."
+      schema: { type: string, enum: [T3], default: T3 }
+
+  # ---------------------------------------------------------------------------
+  # Reusable responses (all carry the ApiResponse envelope)
+  # ---------------------------------------------------------------------------
+  responses:
+    Success:
+      description: Successful response (data shape varies by endpoint; see the *Dto schemas).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiResponse' }
+    ValidationError:
+      description: Bean-validation failure — data = ApiError with `code=VALIDATION_FAILED` + field `errors[]`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            success: false
+            statusCode: 400
+            message: "Uthibitishaji umeshindikana."
+            data: { code: VALIDATION_FAILED, errors: [ { field: phone, code: NotBlank, message: "Namba ya simu inahitajika." } ] }
+            timestamp: "2026-06-24T09:00:00Z"
+    Unauthenticated:
+      description: No / invalid token — data.code = UNAUTHENTICATED.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Authenticated but not permitted (RBAC) — data.code = FORBIDDEN.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    TierTooLow:
+      description: Live trust tier below the action's floor — data.code = TIER_TOO_LOW (HTTP 403).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    OutOfScope:
+      description: Action outside the caller's electoral/area/category scope — data.code = OUT_OF_SCOPE (403).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ConflictOfInterest:
+      description: Self-action blocked (rate/answer/resolve/moderate self or own work) — data.code = CONFLICT_OF_INTEREST (403).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Resource absent / not in the caller's view — data.code = NOT_FOUND (404).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Optimistic-lock / uniqueness / state conflict — data.code = CONFLICT (409).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    DuplicateIdentity:
+      description: National/voter-ID dedup violation (one person = one account) — data.code = DUPLICATE_IDENTITY (409).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    RateLimited:
+      description: Rate / velocity / quota exceeded — data.code = RATE_LIMITED (429).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ---------------------------------------------------------------------------
+  # Schemas — the envelope, error model, enums, and representative request DTOs.
+  # The `data` payload shape (the *Dto returned) is endpoint-specific; the live
+  # springdoc spec carries the exhaustive generated payload schemas.
+  # ---------------------------------------------------------------------------
+  schemas:
+
+    ApiResponse:
+      type: object
+      description: >
+        The single envelope wrapping EVERY response (success and error). `data` holds the
+        endpoint payload on success, or an ApiError on failure. ARCHITECTURE.md §5.1.
+      required: [success, statusCode, message, timestamp]
+      properties:
+        success:
+          type: boolean
+        statusCode:
+          type: integer
+          description: Integer HTTP status (200, 201, 400, 403, 404, 409, 429, 500…).
+          example: 200
+        message:
+          type: string
+          description: Localised human text (Swahili default, English via Accept-Language).
+          example: Imefaulu
+        data:
+          description: On success the payload; on error an ApiError. Omitted when null.
+        meta:
+          oneOf:
+            - { $ref: '#/components/schemas/PageMeta' }
+            - { type: 'null' }
+          description: Pagination metadata; null/omitted when not paginated.
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-06-24T09:00:00Z"
+
+    ErrorResponse:
+      type: object
+      description: The ApiResponse shape on an error — `data` is an ApiError and `success=false`.
+      required: [success, statusCode, message, data, timestamp]
+      properties:
+        success: { type: boolean, example: false }
+        statusCode: { type: integer, example: 403 }
+        message: { type: string, example: "Kiwango chako cha uthibitisho ni cha chini." }
+        data: { $ref: '#/components/schemas/ApiError' }
+        timestamp: { type: string, format: date-time }
+
+    ApiError:
+      type: object
+      description: Structured error payload carried in `data` on every error response.
+      required: [code]
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        errors:
+          type: array
+          description: Field-level validation failures; present only for VALIDATION_FAILED.
+          items: { $ref: '#/components/schemas/ErrorDetail' }
+
+    ErrorDetail:
+      type: object
+      properties:
+        field: { type: string, nullable: true, description: Rejected field path, or null for object-level errors. }
+        code: { type: string, description: Stable machine code for the violated constraint (e.g. NotBlank). }
+        message: { type: string, description: Localised description of the violation. }
+
+    ErrorCode:
+      type: string
+      description: >
+        Stable, language-independent machine error code clients branch on (never on
+        `message`). Several codes share an HTTP status — that is why this code lives at
+        `data.code`. ARCHITECTURE.md §5.2 / common.error.ErrorCode.
+      enum:
+        - VALIDATION_FAILED
+        - BAD_REQUEST
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - TIER_TOO_LOW
+        - OUT_OF_SCOPE
+        - CONFLICT_OF_INTEREST
+        - NOT_FOUND
+        - CONFLICT
+        - DUPLICATE_IDENTITY
+        - MFA_REQUIRED
+        - RATE_LIMITED
+        - INTERNAL_ERROR
+        - SERVICE_UNAVAILABLE
+
+    PageMeta:
+      type: object
+      properties:
+        page: { type: integer, example: 0 }
+        size: { type: integer, example: 20 }
+        total: { type: integer, format: int64, example: 137 }
+        totalPages: { type: integer, example: 7 }
+
+    TrustTier:
+      type: string
+      enum: [T0, T1, T2, T3]
+      description: >
+        T0 guest; T1 phone/OTP; T2 complete profile + verified contact; T3 NIDA/voter-ID
+        verified (operator-assisted). Resolved live server-side.
+
+    # --- Auth request DTOs ---
+    OtpRequestDto:
+      type: object
+      required: [phone]
+      properties:
+        phone: { type: string, description: E.164 phone, e.g. +255700000001., example: "+255700000001" }
+    VerifyOtpDto:
+      type: object
+      required: [challengeId, code]
+      properties:
+        challengeId: { type: string, format: uuid }
+        code: { type: string, description: One-time code; never returned by any endpoint., example: "123456" }
+    PasswordLoginDto:
+      type: object
+      required: [accountKey, password]
+      properties:
+        accountKey: { type: string, description: Phone (E.164) or email. }
+        password: { type: string, format: password }
+    TotpLoginDto:
+      type: object
+      required: [mfaToken, totp]
+      properties:
+        mfaToken: { type: string, description: The MFA_CHALLENGE token from /auth/login/password. }
+        totp: { type: string, description: 6-digit TOTP code., example: "012345" }
+    RefreshRequestDto:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+    TotpCodeDto:
+      type: object
+      required: [totp]
+      properties:
+        totp: { type: string, example: "012345" }
+    EmailOtpRequestDto:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+
+    # --- Profile/identity request DTOs ---
+    UpdateProfileDto:
+      type: object
+      properties:
+        firstName: { type: string }
+        lastName: { type: string }
+        dateOfBirth: { type: string, format: date }
+        gender: { type: string }
+        nationality: { type: string }
+    SubmitVerificationDto:
+      type: object
+      required: [idType, idNo, fullName]
+      properties:
+        idType: { type: string, enum: [NATIONAL_ID, VOTER_ID], description: NIDA national ID or NEC voter ID. }
+        idNo: { type: string, description: "PII — field-encrypted at rest, never echoed, never logged or in analytics." }
+        fullName: { type: string }
+        evidenceRef: { type: string, nullable: true, description: Optional uploaded-evidence media reference. }
+    AddLocationDto:
+      type: object
+      required: [wardId]
+      properties:
+        wardId: { type: string, format: uuid, description: The pinned ward; admin + electoral chains are derived server-side. }
+        lat: { type: number, format: double, nullable: true }
+        lng: { type: number, format: double, nullable: true }
+        isPrimary: { type: boolean, default: false }
+        label: { type: string, nullable: true }
+
+    # --- Reporting request DTOs ---
+    FileReportDto:
+      type: object
+      required: [categoryId, description]
+      properties:
+        categoryId: { type: string, format: uuid }
+        description: { type: string }
+        wardId: { type: string, format: uuid, nullable: true }
+        lat: { type: number, format: double, nullable: true }
+        lng: { type: number, format: double, nullable: true }
+        visibility: { type: string, enum: [PUBLIC, PRIVATE], default: PUBLIC }
+        anonymous: { type: boolean, default: false, description: Honoured only for sensitive categories. }
+        mediaRefs:
+          type: array
+          items: { type: string, format: uuid }
+    AddCommentDto:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
+    ConfirmResolutionDto:
+      type: object
+      required: [confirmed]
+      properties:
+        confirmed: { type: boolean, description: true = CONFIRMED, false = DISPUTED. }
+        reason: { type: string, nullable: true }
+
+    # --- Engagement / accountability request DTOs ---
+    CreatePetitionRequest:
+      type: object
+      required: [title, body]
+      properties:
+        title: { type: string }
+        body: { type: string }
+        constituencyId: { type: string, format: uuid, nullable: true, description: Scope; binding to a constituency requires electoral match to sign. }
+    CreateRatingDto:
+      type: object
+      required: [representativeId, score]
+      properties:
+        representativeId: { type: string, format: uuid }
+        score: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string, nullable: true }
+
+    # --- Communications request DTOs ---
+    PublishAnnouncementRequest:
+      type: object
+      required: [title, body]
+      properties:
+        title: { type: string }
+        body: { type: string }
+        audienceAreaIds:
+          type: array
+          items: { type: string, format: uuid }
+        audienceRole: { type: string, nullable: true }
+        categoryId: { type: string, format: uuid, nullable: true }
+    FollowRequest:
+      type: object
+      required: [sourceType, sourceId]
+      properties:
+        sourceType: { type: string, description: e.g. REPRESENTATIVE, RESPONDER, CATEGORY, AREA. }
+        sourceId: { type: string, format: uuid }
+
+    # --- Moderation / media / admin / ussd request DTOs ---
+    FlagContentRequest:
+      type: object
+      required: [subjectType, subjectId, reason]
+      properties:
+        subjectType: { type: string, description: e.g. REPORT, COMMENT, ANNOUNCEMENT, QUESTION. }
+        subjectId: { type: string, format: uuid }
+        reason: { type: string }
+    UploadRequest:
+      type: object
+      required: [contentType, sizeBytes]
+      properties:
+        contentType: { type: string, example: image/jpeg }
+        sizeBytes: { type: integer, format: int64 }
+        filename: { type: string, nullable: true }
+    GrantRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [CITIZEN, ORGANIZATION_MEMBER, ORGANIZATION_ADMIN, REPRESENTATIVE, RESPONDER_AGENT, RESPONDER_ADMIN, MODERATOR, ADMIN, ROOT]
+        areaIds:
+          type: array
+          description: Scope restriction for scoped roles (responder/area-official).
+          items: { type: string, format: uuid }
+        categoryIds:
+          type: array
+          items: { type: string, format: uuid }
+        constituencyId: { type: string, format: uuid, nullable: true }
+    UssdGatewayRequest:
+      type: object
+      description: Aggregator-shaped USSD session payload (field names vary by aggregator).
+      required: [sessionId, msisdn]
+      properties:
+        sessionId: { type: string }
+        msisdn: { type: string, description: Caller MSISDN (E.164). }
+        text: { type: string, description: Accumulated keypress string for the session. }
+        serviceCode: { type: string, nullable: true }

@@ -1,7 +1,7 @@
 package com.taarifu.common.security;
 
 import com.taarifu.common.domain.port.ClockPort;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -29,12 +29,15 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>WHY this is acceptable as the default (and what production changes): in-memory counters are lost on
  * restart and are not shared across instances, so they are not a hardened multi-instance control on their
- * own — a Redis-backed adapter is required for production (TR-3) and swaps in behind
- * {@link UssdGatewayRateLimiter} via {@link ConditionalOnMissingBean}. This adapter makes the seam real
- * and unit-testable now. Bounded memory: idle MSISDN entries are dropped once their windows fully drain.</p>
+ * own — a Redis-backed adapter ({@code RedisUssdGatewayRateLimiter}) is required for production (TR-3) and
+ * swaps in behind {@link UssdGatewayRateLimiter}. The two are mutually exclusive on
+ * {@code taarifu.ratelimit.backend}: this adapter is the {@code matchIfMissing}/{@code =memory} default,
+ * the Redis adapter is selected only by {@code =redis}, so exactly one bean resolves in every environment
+ * and a context with no Redis still boots (W3-2). This adapter makes the seam real and unit-testable now.
+ * Bounded memory: idle MSISDN entries are dropped once their windows fully drain.</p>
  */
 @Component
-@ConditionalOnMissingBean(name = "redisUssdGatewayRateLimiter")
+@ConditionalOnProperty(name = "taarifu.ratelimit.backend", havingValue = "memory", matchIfMissing = true)
 public class InMemoryUssdGatewayRateLimiter implements UssdGatewayRateLimiter {
 
     /** Per-MSISDN keypress cap: at most {@value} turns within {@link #TURN_WINDOW}. */

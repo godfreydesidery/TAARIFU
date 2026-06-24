@@ -174,6 +174,23 @@
             <artifactId>spring-boot-starter-mail</artifactId>
         </dependency>
 
+        <!-- ============================ Redis (rate-limiters) =============== -->
+        <!--
+          Spring Data Redis (Lettuce client) backs the OPTIONAL multi-instance rate-limiters
+          (W3-2): RedisAuthRateLimiter + RedisUssdGatewayRateLimiter. The in-memory adapters
+          remain the dev/test/single-instance default (taarifu.ratelimit.backend=memory, the
+          match-if-missing value), so this dependency is DORMANT on the default boot path — a
+          context with no Redis still starts. The Redis adapters are selected ONLY by
+          taarifu.ratelimit.backend=redis, and the StringRedisTemplate auto-configuration is
+          driven by spring.data.redis.host/port (env, never source — no Redis credentials live
+          in this repo). This is the shared, auto-expiring counter store the security review
+          requires for production correctness across instances (TR-3 / G14, AUTH-DESIGN §9).
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- ============================ Object storage (S3) ================= -->
         <!--
           AWS SDK v2 S3 + presigner for the media module's optional S3ObjectStore adapter

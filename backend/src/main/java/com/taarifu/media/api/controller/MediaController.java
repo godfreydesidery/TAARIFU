@@ -7,6 +7,7 @@ import com.taarifu.media.api.dto.MediaObjectDto;
 import com.taarifu.media.api.dto.ScanCallbackRequest;
 import com.taarifu.media.api.dto.UploadRequest;
 import com.taarifu.media.api.dto.UploadTicketDto;
+import com.taarifu.media.api.dto.UploadUrlRequest;
 import com.taarifu.media.application.service.MediaService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -31,16 +32,20 @@ import java.util.UUID;
  * the single {@link ApiResponse} envelope; no business logic, no {@code @Transactional} (CLAUDE.md §8).</p>
  *
  * <p><b>Authorization.</b> Every endpoint is method-secured (deny-by-default — ARCHITECTURE.md §6.2).
- * Upload and download require an authenticated caller; <b>host-level</b> ownership/visibility checks
- * ("may this caller attach to / view this Report?") belong to the host module and are marked
- * {@code // TODO(wiring)} in the service, since the host lives in another module this one must not import
- * (ARCHITECTURE.md §3.2).</p>
+ * Upload requires an authenticated caller. <b>Download is host-visibility-scoped</b> (MF-2): the service
+ * permits a pre-signed GET only for the media's uploader or, for {@code REPORT}-owned evidence, a caller
+ * the reporting module's {@code ReportMediaAccessApi} authorizes (the reporter, or an in-scope
+ * responder/moderator) — so a PRIVATE / anonymous-sensitive report's evidence is never mintable by an
+ * arbitrary account. The host-visibility decision lives with the host module (ADR-0013 {@code api -> api}),
+ * not here (ARCHITECTURE.md §3.2).</p>
  *
- * <p><b>Scan callback.</b> The verdict callback is authenticated like every non-public endpoint. WHY it
- * is not {@code permitAll()}: it mutates servability and must not be open to the internet. A dedicated
- * scanner <i>service principal</i> (machine credential) and/or an HMAC webhook-signature check is the
- * correct production guard — both are CENTRAL INTEGRATION NEEDS (a new role/principal and a public-path
- * decision are outside this module's allowed edits). Until then it requires authentication.</p>
+ * <p><b>Scan callback.</b> The verdict callback mutates servability, so it is authenticated to the
+ * <i>scanner service principal</i> by a fail-closed shared-secret header (MF-3,
+ * {@code MediaScannerSecretFilter}, {@code taarifu.media.scan-callback.*}) in addition to staying
+ * method-secured and out of the public allow-list — a citizen token alone cannot forge a {@code CLEAN}/
+ * {@code INFECTED} verdict. WHY belt-and-braces: the secret is the decisive machine factor; the method gate
+ * keeps the endpoint deny-by-default at the URL layer. A future HMAC-over-the-request scheme can replace the
+ * shared secret behind the same property surface.</p>
  */
 @RestController
 @RequestMapping(path = "/media")
@@ -76,6 +81,57 @@ public class MediaController {
     }
 
     /**
+     * Requests a pre-signed upload URL in the citizen evidence-attachment pipeline ({@code upload-url}).
+     * Persists a {@code PENDING}, <b>unbound</b>, not-yet-confirmed record and returns the PUT URL; the
+     * media object is bound to its host report at file time by the reporting module.
+     *
+     * @param request the validated upload-url intent (host type + declared metadata; no host id yet).
+     * @return an envelope carrying the {@link UploadTicketDto}.
+     */
+    @PostMapping("/upload-url")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Request a pre-signed upload URL (attachment pipeline)",
+            description = "Creates a PENDING/unbound media record and returns a pre-signed PUT. Content-type "
+                    + "allow-list + max size are checked here (fail fast) and authoritatively at confirm.")
+    public ApiResponse<UploadTicketDto> requestUploadUrl(@Valid @RequestBody UploadUrlRequest request) {
+        return responses.ok(mediaService.requestUploadUrl(request));
+    }
+
+    /**
+     * Confirms a completed upload ({@code confirm}). Validates the declared content-type allow-list + max
+     * size, marks the object uploaded, and makes it scan-eligible. Only the uploader may confirm.
+     *
+     * @param publicId the media object's public id.
+     * @return an envelope carrying the resulting {@link MediaObjectDto} (now {@code uploaded=true}).
+     */
+    @PostMapping("/{publicId}/confirm")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Confirm an upload (validate content-type + size)",
+            description = "Marks the object uploaded after the pre-signed PUT; enforces the content-type "
+                    + "allow-list and max size; rejects a non-owner (403). Idempotent on retry.")
+    public ApiResponse<MediaObjectDto> confirm(@PathVariable UUID publicId) {
+        return responses.ok(mediaService.confirm(publicId));
+    }
+
+    /**
+     * Fetches an access-controlled pre-signed GET for a media object ({@code GET /media/{publicId}}).
+     * Succeeds only for a scanned-CLEAN object; a non-servable object yields a {@code 409 CONFLICT}
+     * envelope (EI-8 serving rule). This is the canonical read endpoint for the attachment pipeline.
+     *
+     * @param publicId the media object's public id.
+     * @return an envelope carrying the {@link DownloadUrlDto}.
+     */
+    @GetMapping("/{publicId}")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Get an access-controlled pre-signed GET",
+            description = "Authorizes the caller (uploader, or a reporting-authorized viewer for REPORT evidence; "
+                    + "403 otherwise), then issues a short-lived GET only for a CLEAN object; "
+                    + "PENDING/INFECTED/FAILED are refused (EI-8).")
+    public ApiResponse<DownloadUrlDto> getMedia(@PathVariable UUID publicId) {
+        return responses.ok(mediaService.getDownloadUrl(publicId));
+    }
+
+    /**
      * Fetches a pre-signed download URL for a media object. Succeeds only for a scanned-CLEAN object;
      * a non-servable object yields a {@code 409 CONFLICT} envelope (EI-8 serving rule).
      *
@@ -85,8 +141,9 @@ public class MediaController {
     @GetMapping("/{mediaId}/download-url")
     @PreAuthorize("isAuthenticated()")
     @Operation(summary = "Get a pre-signed download URL",
-            description = "Issues a short-lived GET only for a CLEAN object; PENDING/INFECTED/FAILED are refused (EI-8). "
-                    + "Host-level visibility is enforced by the host module (wiring).")
+            description = "Authorizes the caller (uploader, or a reporting-authorized viewer for REPORT evidence; "
+                    + "403 otherwise), then issues a short-lived GET only for a CLEAN object; "
+                    + "PENDING/INFECTED/FAILED are refused (EI-8).")
     public ApiResponse<DownloadUrlDto> getDownloadUrl(@PathVariable UUID mediaId) {
         return responses.ok(mediaService.getDownloadUrl(mediaId));
     }
@@ -102,8 +159,8 @@ public class MediaController {
     @PostMapping("/{mediaId}/scan-callback")
     @PreAuthorize("isAuthenticated()")
     @Operation(summary = "Apply a scan verdict (callback)",
-            description = "Transitions PENDING → CLEAN/INFECTED/FAILED. Authenticated; production should additionally "
-                    + "require a scanner service principal and/or HMAC signature (central need).")
+            description = "Transitions PENDING → CLEAN/INFECTED/FAILED. Authenticated to the scanner service "
+                    + "principal by a fail-closed shared-secret header (MF-3); a citizen token cannot forge a verdict.")
     public ApiResponse<MediaObjectDto> scanCallback(@PathVariable UUID mediaId,
                                                     @Valid @RequestBody ScanCallbackRequest request) {
         return responses.ok(mediaService.applyScanVerdict(mediaId, request.verdict()));

@@ -55,6 +55,7 @@ class ReportServiceTest {
     private CodeGenerator codeGenerator;
     private ClockPort clock;
     private OutboxWriter outboxWriter;
+    private com.taarifu.reporting.domain.port.AttachmentValidator attachmentValidator;
     private ReportService service;
 
     private final UUID reporter = UUID.randomUUID();
@@ -71,9 +72,10 @@ class ReportServiceTest {
         codeGenerator = mock(CodeGenerator.class);
         clock = mock(ClockPort.class);
         outboxWriter = mock(OutboxWriter.class);
+        attachmentValidator = mock(com.taarifu.reporting.domain.port.AttachmentValidator.class);
         ReportingMapper mapper = new ReportingMapper();
         service = new ReportService(reportRepository, categoryRepository, caseEventRepository,
-                wardResolver, codeGenerator, mapper, clock, outboxWriter);
+                wardResolver, codeGenerator, mapper, clock, outboxWriter, attachmentValidator);
 
         when(clock.now()).thenReturn(now);
         when(codeGenerator.nextCode(any(), any(), org.mockito.ArgumentMatchers.anyInt()))

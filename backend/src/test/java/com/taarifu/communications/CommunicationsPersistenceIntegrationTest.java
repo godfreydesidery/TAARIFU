@@ -2,14 +2,17 @@ package com.taarifu.communications;
 
 import com.taarifu.AbstractPostgisIntegrationTest;
 import com.taarifu.communications.domain.model.Announcement;
+import com.taarifu.communications.domain.model.DeviceToken;
 import com.taarifu.communications.domain.model.Notification;
 import com.taarifu.communications.domain.model.NotificationPreference;
 import com.taarifu.communications.domain.model.Subscription;
 import com.taarifu.communications.domain.model.enums.Channel;
+import com.taarifu.communications.domain.model.enums.DevicePlatform;
 import com.taarifu.communications.domain.model.enums.NotificationStatus;
 import com.taarifu.communications.domain.model.enums.NotificationType;
 import com.taarifu.communications.domain.model.enums.SubscriptionTargetType;
 import com.taarifu.communications.domain.repository.AnnouncementRepository;
+import com.taarifu.communications.domain.repository.DeviceTokenRepository;
 import com.taarifu.communications.domain.repository.NotificationPreferenceRepository;
 import com.taarifu.communications.domain.repository.NotificationRepository;
 import com.taarifu.communications.domain.repository.SubscriptionRepository;
@@ -52,6 +55,8 @@ class CommunicationsPersistenceIntegrationTest extends AbstractPostgisIntegratio
     private NotificationRepository notificationRepository;
     @Autowired
     private NotificationPreferenceRepository preferenceRepository;
+    @Autowired
+    private DeviceTokenRepository deviceTokenRepository;
 
     @Test
     void announcement_withChildCollections_roundTrips() {
@@ -130,6 +135,24 @@ class CommunicationsPersistenceIntegrationTest extends AbstractPostgisIntegratio
 
         assertThatThrownBy(() -> preferenceRepository.saveAndFlush(NotificationPreference.of(profile,
                 NotificationType.NEW_ANNOUNCEMENT, Channel.PUSH, false)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void deviceTokenUnique_blocksDuplicateLiveToken() {
+        // One registration per token value: a second row for the same token is blocked (no double-deliver).
+        // WHY this asserts only the duplicate-block (not re-register-after-prune): this slice runs under
+        // ddl-auto=create-drop (Flyway off), so the schema comes from the entity's table-level
+        // @UniqueConstraint — a FULL unique on token — not the migration's live-scoped PARTIAL index (V122).
+        // The re-register-after-soft-delete path (which the prod V122 partial index allows) is proven at the
+        // unit level in DeviceTokenServiceTest (findByToken excludes soft-deleted rows → fresh insert) — the
+        // same precedent the Subscription persistence test follows (it too asserts only the duplicate-block).
+        UUID profile = UUID.randomUUID();
+        deviceTokenRepository.saveAndFlush(
+                DeviceToken.register(profile, "fcm-token-1", DevicePlatform.ANDROID, Instant.now()));
+
+        assertThatThrownBy(() -> deviceTokenRepository.saveAndFlush(
+                DeviceToken.register(profile, "fcm-token-1", DevicePlatform.IOS, Instant.now())))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 

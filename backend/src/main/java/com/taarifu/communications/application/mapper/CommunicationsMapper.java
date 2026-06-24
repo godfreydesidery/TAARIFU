@@ -1,11 +1,13 @@
 package com.taarifu.communications.application.mapper;
 
 import com.taarifu.communications.api.dto.AnnouncementDto;
+import com.taarifu.communications.api.dto.DeviceTokenDto;
 import com.taarifu.communications.api.dto.FeedItemDto;
 import com.taarifu.communications.api.dto.NotificationDto;
 import com.taarifu.communications.api.dto.NotificationPreferenceDto;
 import com.taarifu.communications.api.dto.SubscriptionDto;
 import com.taarifu.communications.domain.model.Announcement;
+import com.taarifu.communications.domain.model.DeviceToken;
 import com.taarifu.communications.domain.model.Notification;
 import com.taarifu.communications.domain.model.NotificationPreference;
 import com.taarifu.communications.domain.model.Subscription;
@@ -100,6 +102,19 @@ public class CommunicationsMapper {
                 n.getPayloadRef(),
                 n.getCreatedAt(),
                 n.getReadAt());
+    }
+
+    /**
+     * Maps a registered device token to its boundary DTO.
+     *
+     * <p><b>Secret handling (PRD §18)</b>: the {@link DeviceTokenDto} omits the token string by design —
+     * the FCM token never travels back over the wire, so it cannot leak through a response log.</p>
+     *
+     * @param d the device token.
+     * @return the {@link DeviceTokenDto} (public id, platform, last-seen — no token value).
+     */
+    public DeviceTokenDto toDeviceTokenDto(DeviceToken d) {
+        return new DeviceTokenDto(d.getPublicId(), d.getPlatform().name(), d.getLastSeenAt());
     }
 
     /**

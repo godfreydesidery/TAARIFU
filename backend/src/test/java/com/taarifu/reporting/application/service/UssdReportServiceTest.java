@@ -154,7 +154,7 @@ class UssdReportServiceTest {
     private static ReportDto reportDtoWithCode(String code) {
         return new ReportDto(UUID.randomUUID(), code, UUID.randomUUID(), "Maji", "t", "d",
                 UUID.randomUUID(), null, null, null, "PUBLIC", "NEW", "NORMAL", Instant.now(),
-                null, null, null, 0L, 0L, false, Instant.now());
+                null, null, null, 0L, 0L, false, java.util.List.of(), Instant.now());
     }
 
     /** Builds a NEW report with the given ticket code (status defaults to NEW on construction). */

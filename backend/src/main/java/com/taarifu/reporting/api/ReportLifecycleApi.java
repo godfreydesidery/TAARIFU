@@ -19,8 +19,10 @@ import java.util.UUID;
  * the responder acts on a case it owns and needs the transition applied in its own request; reporting is the
  * authority for the lifecycle. The reverse routing-on-creation direction
  * ({@code reporting → responders}: route a NEW report to an OWNER assignment) is deliberately
- * <b>asynchronous via the outbox</b> and stays {@code // TODO(wiring)} until the bus lands (ADR-0013 §2/§4a)
- * — so there is no synchronous cycle between the two modules.</p>
+ * <b>asynchronous via the outbox</b> ({@code REPORT_ROUTED}), and its report-side back-leg — applying the
+ * OWNER pointer + {@code NEW → ASSIGNED} when {@code RESPONDER_ASSIGNED} returns — is the reporting
+ * {@code ResponderAssignedHandler} (also async, via {@code ReportService.applySystemAssignment}), so there
+ * is no synchronous cycle between the two modules (ADR-0013 §2/§4a; ADR-0014 §5b).</p>
  */
 public interface ReportLifecycleApi {
 

@@ -143,6 +143,66 @@ class ModerationQueueServiceTest {
     }
 
     @Test
+    void suspendActionEmitsSanctionOutboxEvent_idsAndEnumsOnly_noPii() {
+        // A5-emit: a SUSPEND action sanctions the author's ACCOUNT — moderation must emit a
+        // MODERATION_SANCTION_APPLIED outbox event (identity consumes it) rather than reach into identity.
+        UUID author = UUID.randomUUID();
+        ModerationItem item = itemAuthoredBy(author);
+        UUID itemId = item.getPublicId();
+        when(itemRepository.findByPublicId(itemId)).thenReturn(Optional.of(item));
+        when(scopeGuard.isNotSelf(author)).thenReturn(true);
+        when(clock.now()).thenReturn(NOW);
+        when(flagRepository.findBySubjectTypeAndSubjectId(any(), any())).thenReturn(List.of());
+        when(actionRepository.save(any(ModerationAction.class))).thenAnswer(inv -> {
+            ModerationAction a = inv.getArgument(0);
+            setPublicId(a, UUID.randomUUID());
+            return a;
+        });
+
+        TakeActionRequest req = new TakeActionRequest(ModerationActionType.SUSPEND, "RULE_HARASSMENT", null);
+        service.takeAction(moderator, itemId, req);
+
+        // Two outbox appends: [0] the analytics fact (MODERATION_ACTION_TAKEN), [1] the sanction event.
+        ArgumentCaptor<EventEnvelope<?>> envelopes = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(outboxWriter, org.mockito.Mockito.times(2)).append(envelopes.capture());
+        EventEnvelope<?> sanction = envelopes.getAllValues().stream()
+                .filter(e -> com.taarifu.moderation.api.event.ModerationEventTypes.MODERATION_SANCTION_APPLIED
+                        .equals(e.eventType()))
+                .findFirst().orElseThrow();
+        assertThat(sanction.payload())
+                .isInstanceOf(com.taarifu.moderation.api.event.ModerationSanctionApplied.class);
+        var payload = (com.taarifu.moderation.api.event.ModerationSanctionApplied) sanction.payload();
+        // subjectAccountId = the author's ACCOUNT public id (same grain as the JWT subject); sanctionType=SUSPEND.
+        assertThat(payload.subjectAccountId()).isEqualTo(author);
+        assertThat(payload.sanctionType())
+                .isEqualTo(com.taarifu.moderation.api.event.SanctionType.SUSPEND);
+    }
+
+    @Test
+    void removeActionEmitsNoSanctionEvent_onlyTheAnalyticsFact() {
+        // A content-only action (REMOVE) sanctions no account → exactly ONE outbox append (the analytics fact).
+        UUID author = UUID.randomUUID();
+        ModerationItem item = itemAuthoredBy(author);
+        UUID itemId = item.getPublicId();
+        when(itemRepository.findByPublicId(itemId)).thenReturn(Optional.of(item));
+        when(scopeGuard.isNotSelf(author)).thenReturn(true);
+        when(clock.now()).thenReturn(NOW);
+        when(flagRepository.findBySubjectTypeAndSubjectId(any(), any())).thenReturn(List.of());
+        when(actionRepository.save(any(ModerationAction.class))).thenAnswer(inv -> {
+            ModerationAction a = inv.getArgument(0);
+            setPublicId(a, UUID.randomUUID());
+            return a;
+        });
+
+        TakeActionRequest req = new TakeActionRequest(ModerationActionType.REMOVE, "RULE_ABUSE", null);
+        service.takeAction(moderator, itemId, req);
+
+        ArgumentCaptor<EventEnvelope<?>> envelopes = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(outboxWriter, org.mockito.Mockito.times(1)).append(envelopes.capture());
+        assertThat(envelopes.getValue().eventType()).isEqualTo(AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED);
+    }
+
+    @Test
     void approveDismissesTheItem() {
         UUID author = UUID.randomUUID();
         ModerationItem item = itemAuthoredBy(author);

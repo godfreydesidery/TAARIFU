@@ -1,5 +1,6 @@
 package com.taarifu.identity.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
@@ -7,6 +8,7 @@ import com.taarifu.geography.domain.model.Location;
 import com.taarifu.identity.domain.model.Profile;
 import com.taarifu.identity.domain.model.ProfileLocation;
 import com.taarifu.identity.domain.model.User;
+import com.taarifu.identity.domain.model.enums.TrustTier;
 import com.taarifu.identity.domain.repository.ProfileLocationRepository;
 import com.taarifu.identity.domain.repository.ProfileRepository;
 import com.taarifu.identity.domain.repository.UserRepository;
@@ -44,6 +46,7 @@ class AccountProvisioningServiceTest {
     private ProfileRepository profileRepository;
     private ProfileLocationRepository profileLocationRepository;
     private AuditEventService audit;
+    private IdentityFunnelAnalytics funnel;
     private AccountProvisioningService service;
 
     @BeforeEach
@@ -53,8 +56,9 @@ class AccountProvisioningServiceTest {
         profileRepository = mock(ProfileRepository.class);
         profileLocationRepository = mock(ProfileLocationRepository.class);
         audit = mock(AuditEventService.class);
+        funnel = mock(IdentityFunnelAnalytics.class);
         service = new AccountProvisioningService(accountCreator, userRepository, profileRepository,
-                profileLocationRepository, audit);
+                profileLocationRepository, audit, funnel);
     }
 
     /** A known MSISDN returns its existing account and never creates a second one (one-per-phone, D11/D15). */
@@ -69,20 +73,29 @@ class AccountProvisioningServiceTest {
         assertThat(result).isEqualTo(existingId);
         verify(accountCreator, never()).createCitizenAtT1(any());
         verify(audit, never()).record(any());
+        // A1: a known phone is not a new signup — no verification-funnel fact is emitted.
+        verify(funnel, never()).emit(any(), any(), any());
     }
 
     /** An unknown MSISDN creates exactly one T1 account via the shared creator and audits the provisioning. */
     @Test
     void ensureAccountByMsisdn_unknownPhone_createsT1Account_andAudits() {
         UUID newId = UUID.randomUUID();
+        User created = userWithPublicId(newId);
+        // The real AccountCreator computes + caches T1 on the new account; mirror that so the funnel fact's
+        // tier dimension matches production.
+        created.setTrustTier(TrustTier.T1);
         when(userRepository.findByPhone(MSISDN)).thenReturn(Optional.empty());
-        when(accountCreator.createCitizenAtT1(MSISDN)).thenReturn(userWithPublicId(newId));
+        when(accountCreator.createCitizenAtT1(MSISDN)).thenReturn(created);
 
         UUID result = service.ensureAccountByMsisdn(MSISDN);
 
         assertThat(result).isEqualTo(newId);
         verify(accountCreator).createCitizenAtT1(MSISDN);
         verify(audit).record(any());
+        // A1: a fresh USSD-provisioned account emits the T0→T1 funnel-entry fact, tagged channel USSD.
+        verify(funnel).emit(AnalyticsEventTypes.ACCOUNT_SIGNED_UP, TrustTier.T1.name(),
+                IdentityFunnelAnalytics.CHANNEL_USSD);
     }
 
     /** A leading/trailing space on the MSISDN is trimmed before the idempotency lookup. */

@@ -1,5 +1,6 @@
 package com.taarifu.identity.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
 import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.audit.AuditOutcome;
@@ -51,6 +52,7 @@ public class VerificationReviewService {
     private final ScopeGuard scopeGuard;
     private final AuditEventService audit;
     private final ClockPort clock;
+    private final IdentityFunnelAnalytics funnel;
 
     /**
      * @param verificationRequestRepository the queue store.
@@ -61,6 +63,8 @@ public class VerificationReviewService {
      * @param scopeGuard                    area-scope filter for the queue (MF-3).
      * @param audit                         append-only audit writer (decision + tier + electoral — L-1).
      * @param clock                         time source for decision/verify stamps (testable).
+     * @param funnel                        emits the {@code identity_verified}/{@code _failed} funnel facts on a
+     *                                      moderator decision (A1; channel ADMIN).
      */
     public VerificationReviewService(VerificationRequestRepository verificationRequestRepository,
                                      ProfileRepository profileRepository,
@@ -69,7 +73,8 @@ public class VerificationReviewService {
                                      LocationService locationService,
                                      ScopeGuard scopeGuard,
                                      AuditEventService audit,
-                                     ClockPort clock) {
+                                     ClockPort clock,
+                                     IdentityFunnelAnalytics funnel) {
         this.verificationRequestRepository = verificationRequestRepository;
         this.profileRepository = profileRepository;
         this.profileLocationRepository = profileLocationRepository;
@@ -78,6 +83,7 @@ public class VerificationReviewService {
         this.scopeGuard = scopeGuard;
         this.audit = audit;
         this.clock = clock;
+        this.funnel = funnel;
     }
 
     /**
@@ -135,6 +141,12 @@ public class VerificationReviewService {
                 .actor(reviewerPublicId).subject(subjectPublicId)
                 .roles("MODERATOR").reason(profile.getIdType() == null ? "ID" : profile.getIdType().name())
                 .build());
+        // ANALYTICS (A1, §3.3 funnel): the funnel exit/success — the subject reached T3. Emitted on the outbox
+        // in THIS transaction (atomic with the approval), recorded asynchronously off the moderator's path.
+        // Channel ADMIN — this is a moderator-driven decision (not the citizen's own action). The resulting
+        // live tier is carried; coarse tier+channel only — no subject id, no idNo, no name (PRD §18).
+        funnel.emit(AnalyticsEventTypes.IDENTITY_VERIFIED, liveTier.name(),
+                IdentityFunnelAnalytics.CHANNEL_ADMIN);
         return new DecisionResult(VerificationStatus.APPROVED, liveTier);
     }
 
@@ -161,6 +173,12 @@ public class VerificationReviewService {
         // Tier unchanged on rejection; recompute only to keep the cached hint consistent (no-op if same).
         Profile profile = profileRepository.findByUser(request.getSubject()).orElse(null);
         TrustTier tier = profile == null ? request.getSubject().getTrustTier() : recacheTier(profile);
+        // ANALYTICS (A1, §3.3 funnel): a rejection is a funnel drop-off (the subject did not reach T3). Emitted
+        // on the outbox in THIS transaction, recorded asynchronously off the moderator's path. Channel ADMIN
+        // (moderator decision). The subject's unchanged tier is carried; coarse tier+channel only — no PII,
+        // no reason text (the rejection reason code is in the audit row, not on the public analytics event).
+        funnel.emit(AnalyticsEventTypes.IDENTITY_VERIFICATION_FAILED, tier.name(),
+                IdentityFunnelAnalytics.CHANNEL_ADMIN);
         return new DecisionResult(VerificationStatus.REJECTED, tier);
     }
 

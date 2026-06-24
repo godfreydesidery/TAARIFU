@@ -16,10 +16,13 @@
  * resolution via the {@code WardResolver} port → {@code GeographyQueryService}) only through their public
  * APIs — never their tables (ARCHITECTURE.md §4.3).</p>
  *
- * <p>DEFERRED to later integration (marked {@code // TODO(wiring)}): routing to the responders module
- * ({@code assignedResponderId} is a stub; reports stay {@code NEW}), SLA-breach escalation scheduling,
- * transactional-outbox emission of report domain events (ack/status-change notifications, search
- * indexing, analytics), and the attachment virus-scan hook. Those cross-module seams reference other
- * modules by id (UUID) only.</p>
+ * <p>Cross-module routing is <b>wired both ways</b> over the transactional outbox (ADR-0014 §5b, D21):
+ * filing emits {@code REPORT_ROUTED} (consumed by the responders {@code RoutingHandler}, which creates the
+ * OWNER assignment and emits {@code RESPONDER_ASSIGNED} back), and the reporting
+ * {@code ResponderAssignedHandler} consumes that back-event to set {@code Report.assignedResponderId} and
+ * transition {@code NEW -> ASSIGNED} idempotently — closing the round-trip on the report side. Report
+ * lifecycle/analytics facts are emitted on the same outbox. STILL DEFERRED to later increments: SLA-breach
+ * escalation scheduling and the attachment virus-scan hook. All cross-module seams reference other modules
+ * by id (UUID) only and carry no PII (PRD §18).</p>
  */
 package com.taarifu.reporting;

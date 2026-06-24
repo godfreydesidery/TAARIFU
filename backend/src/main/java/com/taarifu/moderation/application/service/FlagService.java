@@ -1,8 +1,12 @@
 package com.taarifu.moderation.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.moderation.api.dto.FlagContentRequest;
 import com.taarifu.moderation.api.dto.FlagDto;
 import com.taarifu.moderation.domain.model.Flag;
@@ -45,6 +49,7 @@ public class FlagService {
     private final SeverityPolicy severityPolicy;
     private final SubjectAuthorResolver subjectAuthorResolver;
     private final ClockPort clock;
+    private final OutboxWriter outboxWriter;
 
     /**
      * @param flagRepository        flag store (dedup + persistence).
@@ -53,17 +58,23 @@ public class FlagService {
      * @param subjectAuthorResolver resolves the subject's author via the owning module's published port
      *                              (ADR-0013 §4c) so the D16 self-action guard has the author to compare.
      * @param clock                 time source for SLA stamping (testable).
+     * @param outboxWriter          the transactional-outbox port; {@link #flag} appends a
+     *                              {@code content_flagged} analytics fact in the flag transaction so the
+     *                              analytics sink records it asynchronously, off the citizen's path — the
+     *                              numerator of the abuse-report-rate KPI (Appendix E, M15; ADR-0013 §2).
      */
     public FlagService(FlagRepository flagRepository,
                        ModerationItemRepository itemRepository,
                        SeverityPolicy severityPolicy,
                        SubjectAuthorResolver subjectAuthorResolver,
-                       ClockPort clock) {
+                       ClockPort clock,
+                       OutboxWriter outboxWriter) {
         this.flagRepository = flagRepository;
         this.itemRepository = itemRepository;
         this.severityPolicy = severityPolicy;
         this.subjectAuthorResolver = subjectAuthorResolver;
         this.clock = clock;
+        this.outboxWriter = outboxWriter;
     }
 
     /**
@@ -113,8 +124,29 @@ public class FlagService {
 
         try {
             Flag saved = flagRepository.save(flag);
-            // TODO(wiring): emit `content_flagged` {host_type, host_ref, flag_reason} via the transactional
-            // outbox once the outbox/event bus is available (ARCHITECTURE.md §8; PRD Appendix M12 events).
+            // ANALYTICS (Appendix E, M15; ADR-0013 §2): append a content_flagged civic-activity fact to the
+            // outbox in THIS transaction — the analytics sink records it ASYNCHRONOUSLY, off the citizen's
+            // path, as the numerator of the abuse-report-rate KPI. The flag reason rides as the
+            // controlled-vocabulary `outcome` code (e.g. ABUSE/HARASSMENT); the active role is CITIZEN. Ids/
+            // codes ONLY — NO flagger identity, NO content body, NO free-text detail (PRD §18, PDPA,
+            // ADR-0014 §1). The aggregate is the queue item's public id (the live item this flag attached to).
+            outboxWriter.append(EventEnvelope.of(
+                    AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED,
+                    AnalyticsEventTypes.AGGREGATE_CIVIC_ACTIVITY,
+                    savedItem.getPublicId(),
+                    new CivicActivityRecorded(
+                            AnalyticsEventTypes.CONTENT_FLAGGED,
+                            clock.now(),
+                            null,                       // actorRef: no pseudonymous flagger hash resolved here
+                            null,                       // geoAreaId: moderation is not geo-scoped
+                            null,                       // categoryId: n/a for a flag
+                            null,                       // tier: n/a
+                            null,                       // channel: n/a (server-side action)
+                            "CITIZEN",                  // activeRole name (string — NOT the analytics enum; ADR-0013 §3)
+                            null,                       // latencySeconds: n/a
+                            null,                       // breachType: n/a
+                            request.reason().name()),   // outcome = the flag reason (controlled vocab)
+                    clock.now()));
             return FlagDto.from(saved);
         } catch (DataIntegrityViolationException dup) {
             // Lost the race against a concurrent identical flag — surface the same clean CONFLICT.

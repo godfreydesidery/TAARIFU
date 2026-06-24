@@ -280,6 +280,57 @@ class ReportServiceTest {
     }
 
     @Test
+    void applySystemAssignment_setsOwner_andTransitionsNewToAssigned() {
+        // The report-side leg of routing (A2): the RESPONDER_ASSIGNED back-event lands → assignee set +
+        // NEW → ASSIGNED through the §12.1 state machine, appending a timeline event. FAILS if the leg breaks.
+        IssueCategory category = ReportingTestFixtures.publicCategory("WATER");
+        Report report = ReportingTestFixtures.report(reporter, category, ReportVisibility.PUBLIC);
+        assertThat(report.getStatus()).isEqualTo(ReportStatus.NEW);
+        when(reportRepository.findByPublicIdWithCategory(report.getPublicId()))
+                .thenReturn(Optional.of(report));
+        UUID responderId = UUID.randomUUID();
+
+        boolean applied = service.applySystemAssignment(report.getPublicId(), responderId);
+
+        assertThat(applied).isTrue();
+        assertThat(report.getStatus()).isEqualTo(ReportStatus.ASSIGNED);
+        assertThat(report.getAssignedResponderId()).isEqualTo(responderId);
+        verify(caseEventRepository).save(any());
+    }
+
+    @Test
+    void applySystemAssignment_isIdempotent_whenAlreadyPastNew() {
+        // At-least-once relay redelivery (or a prior operator transition): the report is no longer NEW, so the
+        // back-event is a NO-OP — no second transition, no duplicate timeline entry, assignee untouched.
+        IssueCategory category = ReportingTestFixtures.publicCategory("WATER");
+        Report report = ReportingTestFixtures.report(reporter, category, ReportVisibility.PUBLIC);
+        UUID firstResponder = UUID.randomUUID();
+        report.assignResponder(firstResponder);
+        report.setStatus(ReportStatus.ASSIGNED);
+        when(reportRepository.findByPublicIdWithCategory(report.getPublicId()))
+                .thenReturn(Optional.of(report));
+
+        boolean applied = service.applySystemAssignment(report.getPublicId(), UUID.randomUUID());
+
+        assertThat(applied).isFalse();
+        assertThat(report.getStatus()).isEqualTo(ReportStatus.ASSIGNED);
+        assertThat(report.getAssignedResponderId()).isEqualTo(firstResponder); // not overwritten
+        verify(caseEventRepository, never()).save(any());
+    }
+
+    @Test
+    void applySystemAssignment_missingReport_isNoOp() {
+        // The report was soft-deleted before the relay delivered the back-event — a benign no-op, never an error.
+        UUID missing = UUID.randomUUID();
+        when(reportRepository.findByPublicIdWithCategory(missing)).thenReturn(Optional.empty());
+
+        boolean applied = service.applySystemAssignment(missing, UUID.randomUUID());
+
+        assertThat(applied).isFalse();
+        verify(caseEventRepository, never()).save(any());
+    }
+
+    @Test
     void start_transitionsAssignedToInProgress() {
         IssueCategory category = ReportingTestFixtures.publicCategory("WATER");
         Report report = ReportingTestFixtures.report(reporter, category, ReportVisibility.PUBLIC);

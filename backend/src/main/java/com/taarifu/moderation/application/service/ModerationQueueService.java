@@ -15,6 +15,9 @@ import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.moderation.api.dto.ModerationActionDto;
 import com.taarifu.moderation.api.dto.ModerationItemDto;
 import com.taarifu.moderation.api.dto.TakeActionRequest;
+import com.taarifu.moderation.api.event.ModerationEventTypes;
+import com.taarifu.moderation.api.event.ModerationSanctionApplied;
+import com.taarifu.moderation.api.event.SanctionType;
 import com.taarifu.moderation.domain.model.Flag;
 import com.taarifu.moderation.domain.model.ModerationAction;
 import com.taarifu.moderation.domain.model.ModerationItem;
@@ -183,9 +186,45 @@ public class ModerationQueueService {
                         null,                       // breachType: n/a
                         request.type().name()),     // outcome = the moderation action taken (controlled vocab)
                 clock.now()));
-        // TODO(wiring): for SUSPEND/VERIFY_REQUEST, also emit an identity-module sanction event — never by
-        // reaching into identity from here (ARCHITECTURE.md §3.2, §8).
+
+        // ACCOUNT SANCTION (A5; ADR-0013 §2, ADR-0014 §1): a SUSPEND/VERIFY_REQUEST action sanctions the
+        // author's ACCOUNT. Moderation does NOT own account state and must NOT reach into identity
+        // (ARCHITECTURE.md §3.2). Instead it appends a MODERATION_SANCTION_APPLIED event to the outbox in
+        // THIS transaction; the identity module's handler consumes it asynchronously and applies the
+        // account-state change (suspend / verify-request gate). Skipped when the author is not surfaced
+        // (null) — there is no account to sanction. Payload = {subjectAccountId, sanctionType} only — ids/
+        // enums, NO PII (PRD §18, PDPA). Idempotency key = the outbox public_id (the identity transition is
+        // naturally idempotent — re-suspending an already-suspended account is a no-op, ADR-0014 §3).
+        SanctionType sanction = sanctionFor(request.type());
+        if (sanction != null && authorProfileId != null) {
+            outboxWriter.append(EventEnvelope.of(
+                    ModerationEventTypes.MODERATION_SANCTION_APPLIED,
+                    ModerationEventTypes.AGGREGATE_MODERATION_ITEM,
+                    item.getPublicId(),
+                    new ModerationSanctionApplied(authorProfileId, sanction, clock.now()),
+                    clock.now()));
+        }
         return ModerationActionDto.from(saved);
+    }
+
+    /**
+     * Maps a moderation action to the account sanction it implies, or {@code null} for content-only actions.
+     *
+     * <p>Only {@link ModerationActionType#SUSPEND} and {@link ModerationActionType#VERIFY_REQUEST} sanction
+     * the <i>account</i>; APPROVE/HIDE/REMOVE/WARN act on the <i>content</i> and raise no sanction event
+     * (the content-hide effect is a separate, also event-driven, takedown — ADR-0013 §2). Returning a
+     * dedicated {@link SanctionType} (an {@code api.event} enum, not the domain {@code ModerationActionType})
+     * keeps the cross-module contract to identity minimal and free of any moderation domain type.</p>
+     *
+     * @param type the action just recorded.
+     * @return the implied {@link SanctionType}, or {@code null} if the action is content-only.
+     */
+    private static SanctionType sanctionFor(ModerationActionType type) {
+        return switch (type) {
+            case SUSPEND -> SanctionType.SUSPEND;
+            case VERIFY_REQUEST -> SanctionType.VERIFY_REQUEST;
+            case APPROVE, HIDE, REMOVE, WARN -> null;
+        };
     }
 
     /**

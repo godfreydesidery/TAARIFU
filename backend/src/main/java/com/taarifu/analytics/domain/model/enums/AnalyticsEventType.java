@@ -97,5 +97,9 @@ public enum AnalyticsEventType {
     CONTENT_FLAGGED,
 
     /** Moderator acted on content (Appendix E: {@code moderation_action_taken}). Moderation-actions metric. */
-    MODERATION_ACTION_TAKEN
+    MODERATION_ACTION_TAKEN,
+
+    /** Moderation appeal decided — UPHELD/OVERTURNED (Appendix E: {@code moderation_appeal_resolved}). Closes
+     * the trust-and-safety funnel and powers the appeal-overturn-rate (moderation-quality) signal. */
+    MODERATION_APPEAL_RESOLVED
 }

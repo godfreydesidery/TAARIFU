@@ -1,6 +1,7 @@
 package com.taarifu.responders;
 
 import com.taarifu.AbstractPostgisIntegrationTest;
+import com.taarifu.FlywayCleanMigrateTestConfig;
 import com.taarifu.responders.domain.model.enums.OrganisationStatus;
 import com.taarifu.responders.domain.repository.OrganisationRepository;
 import com.taarifu.responders.domain.repository.ResponderRepository;
@@ -9,6 +10,7 @@ import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -34,13 +36,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@Import(FlywayCleanMigrateTestConfig.class)   // clean-then-migrate so create-drop leftovers in the shared container never block Flyway
 @TestPropertySource(properties = {
         // Override the test profile's create-drop with the production schema path: Flyway owns the
         // schema and Hibernate only validates — so this test exercises the REAL migrations, not a
         // schema generated from entities.
         "spring.flyway.enabled=true",
         "spring.flyway.locations=classpath:db/migration",
-        "spring.jpa.hibernate.ddl-auto=validate"
+        "spring.jpa.hibernate.ddl-auto=validate",
+        // Allow Flyway.clean() in tests ONLY (production keeps clean disabled): the shared static container
+        // is reused across create-drop and Flyway tests, so this test cleans first to start from an empty
+        // schema and avoid Flyway's "non-empty schema, no history table" fail-safe (FlywayCleanMigrateTestConfig).
+        "spring.flyway.clean-disabled=false"
 })
 class ResponderMigrationIntegrationTest extends AbstractPostgisIntegrationTest {
 

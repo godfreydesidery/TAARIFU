@@ -22,6 +22,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.Set;
@@ -58,6 +59,9 @@ class CommunicationsPersistenceIntegrationTest extends AbstractPostgisIntegratio
     @Autowired
     private DeviceTokenRepository deviceTokenRepository;
 
+    @Autowired
+    private TransactionTemplate txTemplate;
+
     @Test
     void announcement_withChildCollections_roundTrips() {
         UUID area = UUID.randomUUID();
@@ -69,10 +73,17 @@ class CommunicationsPersistenceIntegrationTest extends AbstractPostgisIntegratio
         a.publish(Instant.now());
         Announcement saved = announcementRepository.saveAndFlush(a);
 
-        Announcement reloaded = announcementRepository.findByPublicId(saved.getPublicId()).orElseThrow();
-        assertThat(reloaded.getAudienceAreaIds()).containsExactly(area);
-        assertThat(reloaded.getChannels()).containsExactlyInAnyOrder(Channel.FEED, Channel.SMS);
-        assertThat(reloaded.getAttachmentRefs()).containsExactly("s3://bucket/key1");
+        // WHY a transaction around the reload + assertions: audienceAreaIds/channels/attachmentRefs are
+        // LAZY @ElementCollection sets; reading them on a freshly-reloaded (detached) entity outside any
+        // session raises LazyInitializationException. Keeping the read inside the TransactionTemplate holds
+        // the session open so the collections initialise — a test concern only, not a production access
+        // pattern (the service layer reads these within its own @Transactional boundary).
+        txTemplate.executeWithoutResult(s -> {
+            Announcement reloaded = announcementRepository.findByPublicId(saved.getPublicId()).orElseThrow();
+            assertThat(reloaded.getAudienceAreaIds()).containsExactly(area);
+            assertThat(reloaded.getChannels()).containsExactlyInAnyOrder(Channel.FEED, Channel.SMS);
+            assertThat(reloaded.getAttachmentRefs()).containsExactly("s3://bucket/key1");
+        });
     }
 
     @Test

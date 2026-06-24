@@ -1,6 +1,7 @@
 package com.taarifu.e2e;
 
 import com.taarifu.AbstractPostgisIntegrationTest;
+import com.taarifu.FlywayCleanMigrateTestConfig;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.outbox.OutboxRelay;
@@ -44,8 +45,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
@@ -83,11 +86,37 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * (claim → dispatch → mark), just on the test's thread.</p>
  *
  * <p>TEST-ONLY: this class and its {@code @TestConfiguration} add no production code. It runs on the
- * {@code test} profile (Docker required; CI-gated) with the schema generated from the entities, matching every
- * other integration test in the suite.</p>
+ * {@code test} profile (Docker required; CI-gated).</p>
+ *
+ * <p><b>WHY Flyway-owned schema + {@code ddl-auto=validate}</b> (the test-harness fix, wave4-review §4):
+ * the citizen happy path files a report, which mints its {@code TAR-} ticket from the Postgres sequence
+ * {@code report_code_seq} created by Flyway (V23) and never by Hibernate's entity-derived create-drop —
+ * so under the shared profile's create-drop this E2E failed with {@code relation "report_code_seq" does
+ * not exist}. Booting the real migrated schema (the production configuration) is the faithful fix. The
+ * {@link #seedAndReset()} fixture deletes the Flyway-seeded reference rows it re-creates (issue category,
+ * role catalogue) and wipes the seeded geography before re-seeding its own, so the fixture is independent
+ * of the national seed and each method starts from a known slate. No production behaviour is changed.</p>
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@Import(FlywayCleanMigrateTestConfig.class)   // clean-then-migrate so create-drop leftovers in the shared container never block Flyway
+@TestPropertySource(properties = {
+        // Override the shared test profile's create-drop with the production schema path: Flyway owns the
+        // schema (so report_code_seq exists, V23) and Hibernate only validates the entities against it.
+        "spring.flyway.enabled=true",
+        "spring.flyway.locations=classpath:db/migration",
+        "spring.jpa.hibernate.ddl-auto=validate",
+        // Allow Flyway.clean() in tests ONLY (production keeps clean disabled) so the Flyway tests start from
+        // an empty schema regardless of create-drop residue in the shared container (FlywayCleanMigrateTestConfig).
+        "spring.flyway.clean-disabled=false",
+        // Park the @Scheduled background outbox relay far out so it never fires during a test method. This
+        // class drives the relay DETERMINISTICALLY via drainOutbox()/drainOutboxUntil() (see class Javadoc);
+        // a concurrent 1s background poll would race the explicit drain — claiming a method's REPORT_ROUTED
+        // row on another thread (so the explicit drain sees nothing land for filed.id()) and producing the
+        // intermittent "no OWNER assignment" failure. The relay logic is still fully exercised by the
+        // explicit poll() calls — only the background timer is silenced (TEST-ONLY).
+        "taarifu.outbox.poll-interval-ms=3600000"
+})
 class CivicFlowE2ETest extends AbstractPostgisIntegrationTest {
 
     private static final Pattern OTP_CODE = Pattern.compile("(\\d{6})");

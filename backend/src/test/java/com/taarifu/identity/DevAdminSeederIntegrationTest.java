@@ -12,7 +12,11 @@ import com.taarifu.identity.domain.repository.RoleAssignmentRepository;
 import com.taarifu.identity.domain.repository.UserRepository;
 import com.taarifu.identity.infrastructure.bootstrap.DevAdminSeeder;
 import com.taarifu.identity.infrastructure.totp.TotpGenerator;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -51,6 +55,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest
 @ActiveProfiles({"test", "dev"})
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)   // so the non-static @AfterAll cleanup can use the autowired beans
 class DevAdminSeederIntegrationTest extends AbstractPostgisIntegrationTest {
 
     /** The fixed dev identifier the seeder uses (kept in sync with the seeder's package-private constant). */
@@ -64,6 +69,55 @@ class DevAdminSeederIntegrationTest extends AbstractPostgisIntegrationTest {
     @Autowired private LoginService loginService;
     @Autowired private ClockPort clock;
     @Autowired private TransactionTemplate txTemplate;
+
+    @PersistenceContext private EntityManager em;
+
+    /**
+     * Removes the rows the {@link DevAdminSeeder} <b>commits</b> at context start so they do not leak into
+     * other integration tests that share the static PostGIS container.
+     *
+     * <p>WHY this is needed (the cross-test leak it closes): the seeder is an {@code ApplicationRunner} that
+     * permanently commits the dev-admin account ({@value #DEV_PHONE}), its profile and its role grants. Most
+     * other ITs run the {@code test} profile with {@code create-drop} and a <b>cached</b> Spring context, so
+     * their schema is built once and they never re-drop these tables between classes — a committed dev-admin
+     * therefore survives and, for example, makes {@code IdentityConstraintsIntegrationTest}'s
+     * "insert {@value #DEV_PHONE}" fail with a duplicate-phone violation. Deleting the seeded rows here (in FK
+     * order, in a committed transaction) leaves the shared database as this class found it. TEST-ONLY cleanup;
+     * no production behaviour is involved.</p>
+     */
+    @AfterAll
+    void removeSeededDevAdmin() {
+        txTemplate.executeWithoutResult(s -> {
+            // Child rows first, in FK order, before the owning app_user row. The login tests mint refresh
+            // tokens (user_id); the grant carries optional area/category child rows (role_assignment_id); the
+            // account has a profile (user_id) which may carry profile_locations (profile_id). Each DELETE is a
+            // no-op when its table has no matching rows, so this stays correct whichever tests actually ran.
+            String userSub = "(SELECT id FROM app_user WHERE phone = :phone)";
+            String raSub = "(SELECT id FROM role_assignment WHERE user_id IN " + userSub + ")";
+            String profileSub = "(SELECT id FROM profile WHERE user_id IN " + userSub + ")";
+            em.createNativeQuery("DELETE FROM role_assignment_area WHERE role_assignment_id IN " + raSub)
+                    .setParameter("phone", DEV_PHONE).executeUpdate();
+            em.createNativeQuery("DELETE FROM role_assignment_category WHERE role_assignment_id IN " + raSub)
+                    .setParameter("phone", DEV_PHONE).executeUpdate();
+            em.createNativeQuery("DELETE FROM refresh_token WHERE user_id IN " + userSub)
+                    .setParameter("phone", DEV_PHONE).executeUpdate();
+            em.createNativeQuery("DELETE FROM role_assignment WHERE user_id IN " + userSub)
+                    .setParameter("phone", DEV_PHONE).executeUpdate();
+            em.createNativeQuery("DELETE FROM profile_location WHERE profile_id IN " + profileSub)
+                    .setParameter("phone", DEV_PHONE).executeUpdate();
+            em.createNativeQuery("DELETE FROM profile WHERE user_id IN " + userSub)
+                    .setParameter("phone", DEV_PHONE).executeUpdate();
+            em.createNativeQuery("DELETE FROM app_user WHERE phone = :phone")
+                    .setParameter("phone", DEV_PHONE).executeUpdate();
+            // Remove the CITIZEN/ROOT catalogue rows the seeder created if no grant references them anymore,
+            // so the role table is left as found (idempotent — a no-op when the rows are absent or still in use).
+            em.createNativeQuery("""
+                    DELETE FROM role
+                    WHERE name IN ('CITIZEN','ROOT')
+                      AND id NOT IN (SELECT role_id FROM role_assignment WHERE role_id IS NOT NULL)
+                    """).executeUpdate();
+        });
+    }
 
     @Test
     void seederCreatesActiveRootAdmin() {

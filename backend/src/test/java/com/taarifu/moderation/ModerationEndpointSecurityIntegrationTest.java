@@ -41,6 +41,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * the {@code /api/v1} servlet context-path faithfully and exercises the full security filter chain. Tokens
  * are minted directly via {@link JwtService} so the test targets <b>authorization</b>, not authentication.
  * Requires Docker; runs in CI.</p>
+ *
+ * <p><b>WHY context-relative paths (e.g. {@code "/moderation/items"}, not {@code "/api/v1/moderation/items"}).</b>
+ * Under {@code RANDOM_PORT}, Spring Boot's {@code LocalHostUriTemplateHandler} bakes the
+ * {@code server.servlet.context-path=/api/v1} into the {@link TestRestTemplate} root URI (the same reason
+ * {@code InstitutionsReadIntegrationTest} uses bare paths). A {@code /api/v1/...} argument therefore
+ * double-prefixes to {@code /api/v1/api/v1/...}, matches no controller, falls through to the static-resource
+ * handler and 500s — which is exactly how every call here previously failed. Each request below is written
+ * context-relative so the handler resolves as it does behind the real container.</p>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -64,7 +72,7 @@ class ModerationEndpointSecurityIntegrationTest extends AbstractPostgisIntegrati
     @Test
     void queue_isForbidden_withoutModeratorRole() {
         ResponseEntity<Map> res = restTemplate.exchange(
-                "/api/v1/moderation/items", HttpMethod.GET,
+                "/moderation/items", HttpMethod.GET,
                 new HttpEntity<>(bearer(UUID.randomUUID(), "CITIZEN")), Map.class);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
@@ -74,7 +82,7 @@ class ModerationEndpointSecurityIntegrationTest extends AbstractPostgisIntegrati
     @Test
     void queue_isAllowed_forModerator() {
         ResponseEntity<Map> res = restTemplate.exchange(
-                "/api/v1/moderation/items", HttpMethod.GET,
+                "/moderation/items", HttpMethod.GET,
                 new HttpEntity<>(bearer(UUID.randomUUID(), ROLE_MODERATOR)), Map.class);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -86,7 +94,7 @@ class ModerationEndpointSecurityIntegrationTest extends AbstractPostgisIntegrati
         // The appeals queue is staff-only: a plain citizen token must 403 over the live filter chain
         // (the @PreAuthorize("hasRole('MODERATOR')") guard + the upstream staff-MFA token gate).
         ResponseEntity<Map> res = restTemplate.exchange(
-                "/api/v1/moderation/appeals", HttpMethod.GET,
+                "/moderation/appeals", HttpMethod.GET,
                 new HttpEntity<>(bearer(UUID.randomUUID(), "CITIZEN")), Map.class);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
@@ -96,7 +104,7 @@ class ModerationEndpointSecurityIntegrationTest extends AbstractPostgisIntegrati
     @Test
     void appealsQueue_isAllowed_forModerator() {
         ResponseEntity<Map> res = restTemplate.exchange(
-                "/api/v1/moderation/appeals?status=OPEN", HttpMethod.GET,
+                "/moderation/appeals?status=OPEN", HttpMethod.GET,
                 new HttpEntity<>(bearer(UUID.randomUUID(), ROLE_MODERATOR)), Map.class);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -109,7 +117,7 @@ class ModerationEndpointSecurityIntegrationTest extends AbstractPostgisIntegrati
         UUID itemPublicId = insertItem(moderator); // subject author IS this moderator (D16 set-up)
 
         ResponseEntity<Map> res = restTemplate.exchange(
-                "/api/v1/moderation/items/" + itemPublicId + "/actions", HttpMethod.POST,
+                "/moderation/items/" + itemPublicId + "/actions", HttpMethod.POST,
                 new HttpEntity<>(Map.of("type", "REMOVE", "reasonCode", "RULE_ABUSE"),
                         bearer(moderator, ROLE_MODERATOR)),
                 Map.class);
@@ -124,7 +132,7 @@ class ModerationEndpointSecurityIntegrationTest extends AbstractPostgisIntegrati
         UUID itemPublicId = insertItem(UUID.randomUUID()); // someone else's content
 
         ResponseEntity<Map> res = restTemplate.exchange(
-                "/api/v1/moderation/items/" + itemPublicId + "/actions", HttpMethod.POST,
+                "/moderation/items/" + itemPublicId + "/actions", HttpMethod.POST,
                 new HttpEntity<>(Map.of("type", "HIDE", "reasonCode", "RULE_SPAM"),
                         bearer(moderator, ROLE_MODERATOR)),
                 Map.class);

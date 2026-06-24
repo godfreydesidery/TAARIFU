@@ -1,11 +1,13 @@
 package com.taarifu.admin;
 
 import com.taarifu.AbstractHttpIntegrationTest;
+import com.taarifu.common.security.JwtService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.List;
 import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -33,6 +35,9 @@ class AdminOutboxSecurityIntegrationTest extends AbstractHttpIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private JwtService jwtService;
 
     // ---- DLQ list ----------------------------------------------------------------------------------
 
@@ -96,11 +101,19 @@ class AdminOutboxSecurityIntegrationTest extends AbstractHttpIntegrationTest {
     }
 
     @Test
-    @WithMockUser(roles = "ADMIN")
     void replay_unknownId_asAdmin_is2xx_zeroRequeued_idempotent() throws Exception {
         // No such FAILED row → idempotent no-op: 0 re-queued, mode BY_ID. Proves the path is reachable and
         // the kernel's FAILED-pinned requeue is safe for an unknown id.
+        //
+        // WHY a real JWT here (not @WithMockUser like the 401/403/list tests): unlike listing, the replay
+        // path AUDITS the acting admin via CurrentUser.requirePublicId(), which reads the UUID public-id
+        // from the rich CurrentUser principal that only the real JwtAuthenticationFilter installs as the
+        // authentication details. @WithMockUser installs a plain username principal with no CurrentUser
+        // detail, so requirePublicId() threw IllegalStateException → 500. Minting a real ADMIN access token
+        // with a UUID subject exercises the genuine audited replay path end-to-end.
+        String adminToken = jwtService.issueAccessToken(UUID.randomUUID(), List.of("ADMIN"), "T2");
         mockMvc.perform(post("/api/v1/admin/outbox/replay")
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType("application/json")
                         .content("{\"eventId\":\"" + UUID.randomUUID() + "\"}"))
                 .andExpect(status().isOk())

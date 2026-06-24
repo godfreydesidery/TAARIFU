@@ -12,12 +12,12 @@ import java.util.UUID;
  * <b>T1</b> account directly (no OTP round-trip) or returns the existing one — "one person, one account"
  * still holds via identity's unique-phone guard (D11/D15).</p>
  *
- * <p>WHY this interface lives in the <b>consumer</b> module (not imported from identity): identity does not
- * yet publish a {@code com.taarifu.identity.api} command port for MSISDN signup — only an OTP-driven signup
- * service exists. Per the isolation rule this module must not import identity's {@code application}/
- * {@code domain}. So we define the seam here and bind it to a dev stub now; the production adapter delegates
- * to identity's published port once it lands ({@code // TODO(wiring)}; see CENTRAL INTEGRATION NEEDS). The
- * port speaks only public {@code UUID}s — never an identity entity (ARCHITECTURE §3.2).</p>
+ * <p>WHY this interface lives in the <b>consumer</b> module (not imported from identity): per the isolation
+ * rule this module must not import identity's {@code application}/{@code domain}. The seam is defined here and
+ * bound (by {@code UssdIdentityAdapter}) to identity's published {@code AccountProvisioningApi} command port
+ * — the sanctioned synchronous {@code ussd → identity} contract (ADR-0013 §4d), which idempotently
+ * ensures/links the T1 account by MSISDN and reads its registered (primary) ward. The port speaks only public
+ * {@code UUID}s — never an identity entity (ARCHITECTURE §3.2).</p>
  */
 public interface UssdIdentityPort {
 

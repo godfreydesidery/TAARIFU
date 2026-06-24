@@ -1,6 +1,7 @@
 /// The root application widget: wires localization (Swahili default, English
-/// secondary), the theme, the app-wide [AuthBloc], and routes between
-/// onboarding and the signed-in shell based on [AuthStatus].
+/// secondary, switchable at runtime via [SettingsCubit]), the theme, the
+/// app-wide [AuthBloc], and routes between onboarding and the signed-in shell
+/// based on [AuthStatus].
 library;
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/di/app_dependencies.dart';
+import 'core/settings/app_settings.dart';
+import 'core/settings/settings_cubit.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/bloc/auth_event.dart';
@@ -26,23 +29,39 @@ class TaarifuApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider<AuthBloc>(
-      create: (_) =>
-          AuthBloc(repository: dependencies.authRepository)
-            ..add(const AuthStarted()),
-      child: MaterialApp(
-        onGenerateTitle: (context) => AppLocalizations.of(context).appTitle,
-        theme: AppTheme.light(),
-        // Swahili first; English is the secondary/fallback (PRD §14, ADR-0010).
-        locale: const Locale('sw'),
-        supportedLocales: AppLocalizations.supportedLocales,
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-          GlobalCupertinoLocalizations.delegate,
-        ],
-        home: _Root(dependencies: dependencies),
+    return MultiBlocProvider(
+      providers: [
+        // The settings cubit sits above MaterialApp so a language change rebuilds
+        // the whole app's locale immediately (and persists across restarts).
+        BlocProvider<SettingsCubit>(
+          create: (_) => SettingsCubit(
+            store: dependencies.settingsStore,
+            initial: dependencies.settingsInitial,
+          ),
+        ),
+        BlocProvider<AuthBloc>(
+          create: (_) =>
+              AuthBloc(repository: dependencies.authRepository)
+                ..add(const AuthStarted()),
+        ),
+      ],
+      child: BlocBuilder<SettingsCubit, AppSettings>(
+        buildWhen: (p, c) => p.languageCode != c.languageCode,
+        builder: (context, settings) => MaterialApp(
+          onGenerateTitle: (context) => AppLocalizations.of(context).appTitle,
+          theme: AppTheme.light(),
+          // Swahili first (PRD §14, ADR-0010); the citizen may switch to English
+          // in Settings — the chosen locale drives the whole app here.
+          locale: Locale(settings.languageCode),
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          home: _Root(dependencies: dependencies),
+        ),
       ),
     );
   }

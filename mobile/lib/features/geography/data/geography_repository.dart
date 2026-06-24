@@ -146,75 +146,8 @@ class GeographyRepository {
       '/wards',
       query: {
         'q': q,
-        if (districtId != null) 'districtId': districtId,
-        'page': 0,
-        'size': size,
-        'sort': 'name,asc',
-      },
-      parser: _asMapList,
-    );
-    return result.data.map(WardSummary.fromJson).toList(growable: false);
-  }
-
-  /// Lists the wards (Kata) under a district (Wilaya) for the **manual ward
-  /// picker** — `GET /districts/{districtId}/wards` (PRD §9.0, §22.6).
-  ///
-  /// WHY cached per district: a district's ward set is reference data that changes
-  /// rarely, so caching it lets a citizen browse and pick a ward fully offline and
-  /// avoids re-downloading the list on every visit (PRD §15 data-budget). On a
-  /// network miss the last cached page for this district is served if present.
-  /// Public; no session required — works for a Guest on a feature phone.
-  Future<List<WardSummary>> listWardsInDistrict(
-    String districtId, {
-    int page = 0,
-    int size = 100,
-  }) async {
-    final cacheKey = 'geography.district.$districtId.wards.page$page';
-    try {
-      final result = await _api.get<List<Map<String, dynamic>>>(
-        '/districts/$districtId/wards',
-        query: {'page': page, 'size': size, 'sort': 'name,asc'},
-        parser: _asMapList,
-      );
-      await _cache.write(cacheKey, result.data);
-      return result.data.map(WardSummary.fromJson).toList(growable: false);
-    } on Object {
-      final cached = await _cache.read(cacheKey);
-      if (cached is List) {
-        return cached
-            .whereType<Map<String, dynamic>>()
-            .map(WardSummary.fromJson)
-            .toList(growable: false);
-      }
-      rethrow;
-    }
-  }
-
-  /// Searches wards (Kata) by name prefix for the **manual ward picker** —
-  /// `GET /wards?q=&districtId=` (PRD §9.0, §22.6).
-  ///
-  /// A blank [query] returns an empty list without a call (the backend returns an
-  /// empty page for blank `q`; we short-circuit to save the citizen's data — a
-  /// picker does not pull the whole national ward table on an empty box, PRD §15).
-  /// [districtId], when supplied, scopes the search to one district. NOT cached:
-  /// free-text queries are unbounded, so caching them would bloat storage for no
-  /// reuse; the listing path above is the cached, offline-friendly one. Public.
-  Future<List<WardSummary>> searchWards(
-    String query, {
-    String? districtId,
-    int page = 0,
-    int size = 20,
-  }) async {
-    final q = query.trim();
-    if (q.isEmpty) {
-      return const [];
-    }
-    final result = await _api.get<List<Map<String, dynamic>>>(
-      '/wards',
-      query: {
-        'q': q,
         'districtId': ?districtId,
-        'page': page,
+        'page': 0,
         'size': size,
         'sort': 'name,asc',
       },

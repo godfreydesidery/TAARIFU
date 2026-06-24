@@ -17,6 +17,7 @@ import '../../../core/network/api_exception.dart';
 import '../../../core/storage/outbox_entry.dart';
 import '../../../core/storage/outbox_store.dart';
 import '../../../core/util/id_generator.dart';
+import 'attachment_models.dart';
 import 'reporting_models.dart';
 
 /// The outcome of a file-report attempt: either filed on the server now, or
@@ -74,6 +75,25 @@ class ReportRepository {
       await _enqueueDraft(key, body);
       return const FileOutcome.queued();
     }
+  }
+
+  /// Uploads one captured attachment via the **pre-signed upload contract**
+  /// (EI-8) and returns its object-store `ref` for `attachmentRefs`.
+  ///
+  /// Two steps (see [PresignedUpload] doc): `POST /reports/attachments/presign`
+  /// to get a short-lived `uploadUrl` + opaque `ref`, then `PUT` the bytes
+  /// direct to object storage (keeping large media off the report JSON body so
+  /// the report POST stays small and idempotency-safe).
+  ///
+  /// SEAM: the `presign` endpoint is not confirmed by the backend yet, so this
+  /// throws [UnsupportedError] rather than fabricating an endpoint. Until it is
+  /// wired the form carries a `local:` ref (see [PendingAttachment.ref]); when it
+  /// lands, only this method changes — callers are unaffected.
+  Future<String> uploadAttachment(PendingAttachment attachment) async {
+    throw UnsupportedError(
+      'Attachment upload endpoint (POST /reports/attachments/presign) is not '
+      'wired yet; queueing local refs until the backend confirms the contract.',
+    );
   }
 
   /// Lists drafts still waiting to sync (oldest first) — the Drafts view.

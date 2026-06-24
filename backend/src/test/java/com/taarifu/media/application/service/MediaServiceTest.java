@@ -15,6 +15,7 @@ import com.taarifu.media.domain.model.enums.ScanStatus;
 import com.taarifu.media.domain.port.ObjectStore;
 import com.taarifu.media.domain.repository.MediaObjectRepository;
 import com.taarifu.media.infrastructure.config.MediaPolicyProperties;
+import com.taarifu.reporting.api.ReportMediaAccessApi;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,6 +58,9 @@ class MediaServiceTest {
 
     @Mock private MediaObjectRepository repository;
     @Mock private ObjectStore objectStore;
+    // The reporting host-visibility port (MF-2). Mocked so the media unit test can drive every branch of the
+    // serve-path access gate without standing up the reporting module.
+    @Mock private ReportMediaAccessApi reportMediaAccess;
     // Real mapper — it is pure and cheap; testing the actual DTO shape is more valuable than a mock.
     private final MediaMapper mapper = new MediaMapper();
     // Real policy with defaults (image/* allow-list, 10 MiB cap) — exercises the actual policy logic.
@@ -68,7 +72,7 @@ class MediaServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MediaService(repository, objectStore, mapper, policy);
+        service = new MediaService(repository, objectStore, mapper, policy, reportMediaAccess);
     }
 
     @AfterEach
@@ -227,7 +231,9 @@ class MediaServiceTest {
     // ---------------------------------------------------------------------------------------------
 
     @Test
-    void getDownloadUrl_cleanObject_signsDownload() {
+    void getDownloadUrl_byUploader_cleanObject_signsDownload() {
+        // The uploader may always view their own object (the mayView uploader branch).
+        authenticateAs(uploader);
         MediaObject media = cleanMedia();
         when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
         when(objectStore.presignDownload(eq(media.getObjectKey()), any(Duration.class)))
@@ -241,7 +247,9 @@ class MediaServiceTest {
 
     @Test
     void getDownloadUrl_pendingObject_isRefused_andNeverSigned() {
-        // THE EI-8 SERVING GUARD: a non-CLEAN object must never yield a URL.
+        // THE EI-8 SERVING GUARD: a non-CLEAN object must never yield a URL (caller is the uploader, so the
+        // access gate passes and we reach the scan-state gate).
+        authenticateAs(uploader);
         MediaObject media = pendingUnbound("image/jpeg", 1L);
         when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
 
@@ -255,6 +263,7 @@ class MediaServiceTest {
 
     @Test
     void getDownloadUrl_infectedObject_isRefused_andNeverSigned() {
+        authenticateAs(uploader);
         MediaObject media = pendingUnbound("image/jpeg", 1L);
         media.applyScanVerdict(ScanStatus.INFECTED);
         when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
@@ -269,11 +278,86 @@ class MediaServiceTest {
 
     @Test
     void getDownloadUrl_unknownId_throwsNotFound() {
+        authenticateAs(uploader);
         UUID unknown = UUID.randomUUID();
         when(repository.findByPublicId(unknown)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getDownloadUrl(unknown))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // getDownloadUrl — the MF-2 host-visibility access gate (IDOR / OWASP A01)
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    void getDownloadUrl_reportMedia_authorizedByHost_signsDownload() {
+        // A non-uploader (e.g. the reporter, or an in-scope responder) the reporting visibility port GRANTS
+        // may download CLEAN evidence bound to a report.
+        UUID viewer = UUID.randomUUID();
+        authenticateAs(viewer);
+        MediaObject media = cleanReportMedia(UUID.randomUUID());
+        when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
+        when(reportMediaAccess.canViewReportMedia(media.getOwnerId(), viewer)).thenReturn(true);
+        when(objectStore.presignDownload(eq(media.getObjectKey()), any(Duration.class)))
+                .thenReturn(new ObjectStore.PresignedUrl("https://store/get", "GET", Map.of(), 300));
+
+        DownloadUrlDto dto = service.getDownloadUrl(media.getPublicId());
+
+        assertThat(dto.downloadUrl()).isEqualTo("https://store/get");
+    }
+
+    @Test
+    void getDownloadUrl_reportMedia_deniedByHost_isForbidden_andNeverSigned() {
+        // THE MF-2 IDOR GUARD: a non-uploader the host DENIES (a private/anonymous-sensitive report's
+        // evidence) must get 403 and never a signed URL — even though the object is CLEAN. If the gate were
+        // removed the scan-state check alone would mint a URL — this test would then fail, which is the point.
+        UUID stranger = UUID.randomUUID();
+        authenticateAs(stranger);
+        MediaObject media = cleanReportMedia(UUID.randomUUID());
+        when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
+        when(reportMediaAccess.canViewReportMedia(media.getOwnerId(), stranger)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.getDownloadUrl(media.getPublicId()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.FORBIDDEN);
+
+        verify(objectStore, never()).presignDownload(anyString(), any(Duration.class));
+    }
+
+    @Test
+    void getDownloadUrl_reportMedia_byUploader_skipsHostCheck_signsDownload() {
+        // The uploader short-circuits the host check (the uploader branch of mayView): the visibility port is
+        // never consulted, and the CLEAN object is served.
+        authenticateAs(uploader);
+        MediaObject media = cleanReportMedia(UUID.randomUUID());
+        when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
+        when(objectStore.presignDownload(eq(media.getObjectKey()), any(Duration.class)))
+                .thenReturn(new ObjectStore.PresignedUrl("https://store/get", "GET", Map.of(), 300));
+
+        DownloadUrlDto dto = service.getDownloadUrl(media.getPublicId());
+
+        assertThat(dto.downloadUrl()).isEqualTo("https://store/get");
+        verify(reportMediaAccess, never()).canViewReportMedia(any(), any());
+    }
+
+    @Test
+    void getDownloadUrl_unboundReportMedia_nonUploader_isForbidden() {
+        // Deny-by-default: an object not bound to a host yet (ownerId == null) is viewable only by its
+        // uploader; a stranger is refused without ever consulting the host port.
+        UUID stranger = UUID.randomUUID();
+        authenticateAs(stranger);
+        MediaObject media = cleanMedia(); // ownerType=REPORT but ownerId is null (unbound)
+        when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
+
+        assertThatThrownBy(() -> service.getDownloadUrl(media.getPublicId()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.FORBIDDEN);
+
+        verify(reportMediaAccess, never()).canViewReportMedia(any(), any());
+        verify(objectStore, never()).presignDownload(anyString(), any(Duration.class));
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -325,10 +409,25 @@ class MediaServiceTest {
         return media;
     }
 
-    /** Builds a persisted-looking CLEAN media object (with a publicId) for serve-path tests. */
+    /** Builds a persisted-looking CLEAN media object (with a publicId, unbound) for serve-path tests. */
     private MediaObject cleanMedia() {
         MediaObject media = pendingUnbound("image/jpeg", 2048L);
         media.applyScanVerdict(ScanStatus.CLEAN);
+        return media;
+    }
+
+    /**
+     * Builds a CLEAN media object bound to a {@code REPORT} host (ownerType=REPORT, ownerId set) — the case
+     * the MF-2 host-visibility gate delegates to the reporting visibility port.
+     *
+     * @param reportId the bound report's public id.
+     */
+    private MediaObject cleanReportMedia(UUID reportId) {
+        MediaObject media = new MediaObject("REPORT", null,
+                "quarantine/2026/06/" + UUID.randomUUID(), "f.jpg", "image/jpeg", 2048L, uploader);
+        media.bindTo(reportId);
+        media.applyScanVerdict(ScanStatus.CLEAN);
+        assignPublicId(media, UUID.randomUUID());
         return media;
     }
 

@@ -71,6 +71,13 @@
 # TAARIFU_USSD_GATEWAY_SECRET=<set-in-env>     # SECRET — shared with the aggregator out-of-band
 # TAARIFU_USSD_GATEWAY_HEADER=X-Ussd-Secret    # header the aggregator presents the secret in
 
+# --- Media malware-scanner verdict callback auth (MF-3, PRD §18/§21 EI-8) ---
+# Shared secret the scanner presents on POST /media/{id}/scan-callback (constant-time header compare).
+# FAIL-CLOSED: if unset, the callback rejects EVERY call — do not wire a real scanner in prod until this is
+# set, so a citizen token cannot forge a CLEAN/INFECTED verdict. Env only, never committed.
+# TAARIFU_MEDIA_SCANNER_SECRET=<set-in-env>    # SECRET — shared with the scanner service out-of-band
+# TAARIFU_MEDIA_SCANNER_HEADER=X-Scanner-Secret # header the scanner presents the secret in
+
 # --- Communications channels (PRD §21 EI-3/5/6) ---
 # Each channel defaults to the safe LOGGING stub (no external calls). Set the provider AND its
 # required endpoints to enable a real adapter. Secrets are env/secret-mount only — NEVER committed.

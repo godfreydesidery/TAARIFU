@@ -173,6 +173,17 @@ taarifu:
       secret: ${TAARIFU_USSD_GATEWAY_SECRET:}              # SECRET — env/secret-mount only, never committed
       header: ${TAARIFU_USSD_GATEWAY_HEADER:X-Ussd-Secret} # header the aggregator presents the secret in
 
+  # --- Media malware-scanner verdict callback (POST /media/{id}/scan-callback) — service-principal auth ---
+  # (MF-3, wave4-review §2, PRD §18/§21 EI-8). The callback makes evidence servable (a CLEAN verdict), so it
+  # is authenticated to the SCANNER by a SHARED SECRET header (constant-time compare in
+  # MediaScannerSecretFilter) — a citizen token cannot forge a verdict. The secret is env-only, NEVER
+  # committed. FAIL-CLOSED: when the secret is unset the callback rejects every call (a disabled link, not
+  # an open one) — so do not wire a real scanner in prod until TAARIFU_MEDIA_SCANNER_SECRET is set.
+  media:
+    scan-callback:
+      secret: ${TAARIFU_MEDIA_SCANNER_SECRET:}                 # SECRET — env/secret-mount only, never committed
+      header: ${TAARIFU_MEDIA_SCANNER_HEADER:X-Scanner-Secret} # header the scanner presents the secret in
+
   # --- Prod-safe first-admin bootstrap (threat-model E / TR-5 / G16; ProdAdminBootstrap). ---
   # Closes the chicken-and-egg of a fresh prod DB with zero accounts WITHOUT shipping a default
   # credential. NOT profile-gated: the bean exists ONLY when an operator explicitly opts in via

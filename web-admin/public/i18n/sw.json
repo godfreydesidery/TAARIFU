@@ -80,7 +80,9 @@
     "qaNewOrganisation": "Shirika jipya",
     "qaLinkRepresentative": "Unganisha mwakilishi",
     "qaNewCategory": "Aina mpya",
-    "manage": "Simamia"
+    "manage": "Simamia",
+    "statOpenCases": "Kesi zinazoendelea",
+    "statSlaBreached": "SLA imepitwa"
   },
   "geography": {
     "regionsTitle": "Mikoa",
@@ -188,7 +190,13 @@
       "COMMENT": "Maoni",
       "ATTACHMENT": "Kiambatisho",
       "ESCALATION": "Kupandisha"
-    }
+    },
+    "allCategories": "Aina zote",
+    "filterArea": "Eneo (kata)",
+    "anonymous": "Bila jina",
+    "assignedResponder": "Mtoa huduma aliyepewa",
+    "description": "Maelezo",
+    "internal": "Ndani"
   },
   "responders": {
     "title": "Mashirika ya Watoa Huduma",
@@ -264,7 +272,7 @@
     "actionTaken": "Hatua imerekodiwa.",
     "appeals": "Rufaa",
     "backToQueue": "Rudi kwenye foleni",
-    "appealsHint": "Amua rufaa kwa kitambulisho chake. Huwezi kuamua rufaa ya hatua yako mwenyewe.",
+    "appealsHint": "Amua rufaa iliyo wazi. Huwezi kuamua rufaa ya hatua yako mwenyewe (uhuru unatekelezwa).",
     "appealId": "Kitambulisho cha rufaa",
     "appealOutcome": "Matokeo",
     "decisionNote": "Maelezo ya uamuzi",
@@ -294,7 +302,10 @@
       "UPHELD": "Imethibitishwa",
       "OVERTURNED": "Imebatilishwa",
       "OPEN": "Wazi"
-    }
+    },
+    "appellant": "Mkata rufaa",
+    "filed": "Iliwasilishwa",
+    "noAppeals": "Hakuna rufaa kwenye foleni hii."
   },
   "tokens": {
     "walletTitle": "Pochi Yangu",
@@ -393,15 +404,12 @@
   },
   "users": {
     "title": "Watumiaji na Majukumu",
-    "grantRepresentative": "Toa jukumu la Mwakilishi",
-    "apiGapNote": "Orodha ya jumla ya watumiaji na API ya kutoa/kupanga majukumu kiholela bado haipatikani upande wa seva. Eneo hili linaonyesha utambulisho na majukumu yako, orodha ya majukumu, na njia iliyopo ya kuunganisha jukumu la Mwakilishi.",
     "myIdentity": "Utambulisho wangu",
     "tier": "Ngazi",
     "roles": "Majukumu",
     "noRoles": "Hakuna majukumu yaliyotolewa.",
     "roleCatalogue": "Orodha ya majukumu",
     "role": "Jukumu",
-    "grantedBy": "Limetolewa na",
     "roleValue": {
       "CITIZEN": "Raia",
       "ORGANIZATION_MEMBER": "Mwanachama wa shirika",
@@ -412,15 +420,59 @@
       "ADMIN": "Msimamizi",
       "ROOT": "Msimamizi mkuu"
     },
-    "grantedByValue": {
-      "CITIZEN": "Kujisajili mwenyewe",
-      "ORGANIZATION_MEMBER": "Msimamizi wa shirika",
-      "ORGANIZATION_ADMIN": "Jukwaa / msimamizi wa shirika",
-      "REPRESENTATIVE": "Msimamizi (baada ya uthibitisho)",
-      "AREA_OFFICIAL": "Msimamizi",
-      "MODERATOR": "Msimamizi",
-      "ADMIN": "Root / Msimamizi",
-      "ROOT": "Root"
+    "directory": "Orodha ya akaunti",
+    "filterName": "Jina",
+    "filterPhoneSuffix": "Simu (tarakimu za mwisho)",
+    "allTiers": "Ngazi zote",
+    "allRoles": "Majukumu yote",
+    "allStatuses": "Hali zote",
+    "status": "Hali",
+    "nameCol": "Jina",
+    "phone": "Simu",
+    "created": "Iliundwa",
+    "lastLogin": "Kuingia mwisho",
+    "email": "Barua pepe",
+    "manage": "Simamia",
+    "noResults": "Hakuna akaunti zilizopatikana.",
+    "backToDirectory": "Rudi kwenye orodha",
+    "idVerified": "Kitambulisho kimethibitishwa",
+    "locationCount": "Maeneo yaliyobandikwa",
+    "rolesScopes": "Majukumu na mipaka",
+    "grantStatus": "Hali ya jukumu",
+    "scope": "Mipaka",
+    "scopeUnrestricted": "Bila mipaka",
+    "scopeAreas": "Maeneo",
+    "scopeCategories": "Aina",
+    "scopeConstituency": "Jimbo",
+    "constituencyPlaceholder": "UUID ya jimbo (si lazima)",
+    "revoke": "Ondoa",
+    "grantRole": "Toa jukumu",
+    "grantHint": "Toa jukumu kwa nyongeza (akaunti inabaki na majukumu yake yaliyopo). Mipaka si lazima.",
+    "grant": "Toa jukumu",
+    "accountActions": "Vitendo vya akaunti",
+    "accountActionsHint": "Kusimamisha kunazuia kuingia (kunaweza kurejeshwa). Huwezi kutenda kwenye akaunti yako mwenyewe.",
+    "reinstate": "Rejesha akaunti",
+    "suspend": "Simamisha akaunti",
+    "suspendReason": "Sababu (si lazima)",
+    "suspendReasonPlaceholder": "mf. POLICY_VIOLATION",
+    "roleGranted": "Jukumu limetolewa.",
+    "roleRevoked": "Jukumu limeondolewa.",
+    "suspended": "Akaunti imesimamishwa.",
+    "reinstated": "Akaunti imerejeshwa.",
+    "confirmRevoke": "Ondoa utoaji huu wa jukumu?",
+    "confirmSuspend": "Simamisha akaunti hii? Hawataweza kuingia.",
+    "confirmReinstate": "Rejesha akaunti hii kuwa hai?",
+    "statusValue": {
+      "PENDING": "Inasubiri",
+      "ACTIVE": "Hai",
+      "SUSPENDED": "Imesimamishwa",
+      "DISABLED": "Imezimwa"
+    },
+    "grantStatusValue": {
+      "PENDING_VERIFICATION": "Inasubiri uthibitisho",
+      "ACTIVE": "Hai",
+      "SUSPENDED": "Imesimamishwa",
+      "FORMER": "Ya zamani"
     }
   },
   "wardPicker": {

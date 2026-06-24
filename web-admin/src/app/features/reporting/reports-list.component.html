@@ -1,12 +1,12 @@
-<!-- Official report queue: filter by status/text/SLA, drill into case detail. -->
+<!-- Official report queue: server-side status/category/area/SLA filters; drill into staff case detail. -->
 <section>
   <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
     <h1 class="h3 mb-0">{{ 'reports.title' | translate }}</h1>
   </div>
 
-  <!-- Filters -->
+  <!-- Filters: status/category/area/SLA are server-side; text search is client-side over the page. -->
   <div class="row g-2 mb-3">
-    <div class="col-12 col-md-5">
+    <div class="col-12 col-md-4">
       <label class="visually-hidden" for="report-search">{{ 'common.search' | translate }}</label>
       <input
         id="report-search"
@@ -17,13 +17,13 @@
         [placeholder]="'reports.searchPlaceholder' | translate"
       />
     </div>
-    <div class="col-8 col-md-4">
+    <div class="col-6 col-md-3">
       <label class="visually-hidden" for="report-status">{{ 'reports.status' | translate }}</label>
       <select
         id="report-status"
         class="form-select form-select-sm"
         [ngModel]="statusFilter()"
-        (ngModelChange)="statusFilter.set($event)"
+        (ngModelChange)="statusFilter.set($event); applyFilters()"
       >
         <option value="">{{ 'reports.allStatuses' | translate }}</option>
         @for (s of statuses; track s) {
@@ -31,17 +31,35 @@
         }
       </select>
     </div>
-    <div class="col-4 col-md-3 d-flex align-items-center">
+    <div class="col-6 col-md-3">
+      <label class="visually-hidden" for="report-category">{{ 'reports.category' | translate }}</label>
+      <select
+        id="report-category"
+        class="form-select form-select-sm"
+        [ngModel]="categoryFilter()"
+        (ngModelChange)="categoryFilter.set($event); applyFilters()"
+      >
+        <option value="">{{ 'reports.allCategories' | translate }}</option>
+        @for (c of categoryOptions(); track c.id) {
+          <option [value]="c.id">{{ c.name }}</option>
+        }
+      </select>
+    </div>
+    <div class="col-12 col-md-2 d-flex align-items-center">
       <div class="form-check mb-0">
         <input
           id="sla-breached"
           type="checkbox"
           class="form-check-input"
           [ngModel]="slaBreachedOnly()"
-          (ngModelChange)="slaBreachedOnly.set($event)"
+          (ngModelChange)="slaBreachedOnly.set($event); applyFilters()"
         />
         <label class="form-check-label small" for="sla-breached">{{ 'reports.slaBreached' | translate }}</label>
       </div>
+    </div>
+    <div class="col-12 col-md-6">
+      <label class="form-label small mb-1" for="report-area">{{ 'reports.filterArea' | translate }}</label>
+      <app-ward-picker inputId="report-area" [ngModel]="areaFilter()" (ngModelChange)="areaFilter.set($event); applyFilters()" />
     </div>
   </div>
 
@@ -76,13 +94,18 @@
         <tbody>
           @for (report of filteredRows(); track report.id) {
             <tr>
-              <td><code>{{ report.code }}</code></td>
+              <td>
+                <code>{{ report.code }}</code>
+                @if (report.anonymous) {
+                  <span class="badge text-bg-light ms-1">{{ 'reports.anonymous' | translate }}</span>
+                }
+              </td>
               <td>{{ report.title }}</td>
               <td>{{ report.categoryName || '—' }}</td>
               <td><span class="badge text-bg-secondary">{{ 'reports.statusValue.' + report.status | translate }}</span></td>
               <td>{{ 'reports.priorityValue.' + report.priority | translate }}</td>
               <td>
-                @if (slaBreached(report)) {
+                @if (report.slaBreached) {
                   <span class="badge text-bg-danger">{{ 'reports.breached' | translate }}</span>
                 } @else if (report.dueAt) {
                   <small class="text-muted">{{ report.dueAt | date: 'short' }}</small>

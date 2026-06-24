@@ -80,7 +80,9 @@
     "qaNewOrganisation": "New organisation",
     "qaLinkRepresentative": "Link a representative",
     "qaNewCategory": "New category",
-    "manage": "Manage"
+    "manage": "Manage",
+    "statOpenCases": "Open cases",
+    "statSlaBreached": "SLA breached"
   },
   "geography": {
     "regionsTitle": "Regions",
@@ -188,7 +190,13 @@
       "COMMENT": "Comment",
       "ATTACHMENT": "Attachment",
       "ESCALATION": "Escalation"
-    }
+    },
+    "allCategories": "All categories",
+    "filterArea": "Area (ward)",
+    "anonymous": "Anonymous",
+    "assignedResponder": "Assigned responder",
+    "description": "Description",
+    "internal": "Internal"
   },
   "responders": {
     "title": "Responder Organisations",
@@ -264,7 +272,7 @@
     "actionTaken": "Action recorded.",
     "appeals": "Appeals",
     "backToQueue": "Back to queue",
-    "appealsHint": "Decide an appeal by its id. You cannot decide an appeal of your own action.",
+    "appealsHint": "Decide an open appeal. You cannot decide an appeal of your own action (independence is enforced).",
     "appealId": "Appeal id",
     "appealOutcome": "Outcome",
     "decisionNote": "Decision note",
@@ -294,7 +302,10 @@
       "UPHELD": "Upheld",
       "OVERTURNED": "Overturned",
       "OPEN": "Open"
-    }
+    },
+    "appellant": "Appellant",
+    "filed": "Filed",
+    "noAppeals": "No appeals in this queue."
   },
   "tokens": {
     "walletTitle": "My Wallet",
@@ -393,15 +404,12 @@
   },
   "users": {
     "title": "Users & Roles",
-    "grantRepresentative": "Grant Representative role",
-    "apiGapNote": "A generic user directory and arbitrary role-grant/scope API is not yet available server-side. This area shows your identity and roles, the role catalogue, and the existing Representative-link grant flow.",
     "myIdentity": "My identity",
     "tier": "Tier",
     "roles": "Roles",
     "noRoles": "No roles assigned.",
     "roleCatalogue": "Role catalogue",
     "role": "Role",
-    "grantedBy": "Granted by",
     "roleValue": {
       "CITIZEN": "Citizen",
       "ORGANIZATION_MEMBER": "Organisation member",
@@ -412,15 +420,59 @@
       "ADMIN": "Administrator",
       "ROOT": "Super admin"
     },
-    "grantedByValue": {
-      "CITIZEN": "Self sign-up",
-      "ORGANIZATION_MEMBER": "Organisation admin",
-      "ORGANIZATION_ADMIN": "Platform / org admin",
-      "REPRESENTATIVE": "Admin (after verification)",
-      "AREA_OFFICIAL": "Admin",
-      "MODERATOR": "Admin",
-      "ADMIN": "Root / Admin",
-      "ROOT": "Root"
+    "directory": "Account directory",
+    "filterName": "Name",
+    "filterPhoneSuffix": "Phone (last digits)",
+    "allTiers": "All tiers",
+    "allRoles": "All roles",
+    "allStatuses": "All statuses",
+    "status": "Status",
+    "nameCol": "Name",
+    "phone": "Phone",
+    "created": "Created",
+    "lastLogin": "Last login",
+    "email": "Email",
+    "manage": "Manage",
+    "noResults": "No accounts found.",
+    "backToDirectory": "Back to directory",
+    "idVerified": "ID verified",
+    "locationCount": "Pinned locations",
+    "rolesScopes": "Roles & scopes",
+    "grantStatus": "Grant status",
+    "scope": "Scope",
+    "scopeUnrestricted": "Unrestricted",
+    "scopeAreas": "Areas",
+    "scopeCategories": "Categories",
+    "scopeConstituency": "Constituency",
+    "constituencyPlaceholder": "Constituency UUID (optional)",
+    "revoke": "Revoke",
+    "grantRole": "Grant a role",
+    "grantHint": "Grant a role additively (the account keeps its existing roles). Scope is optional.",
+    "grant": "Grant role",
+    "accountActions": "Account actions",
+    "accountActionsHint": "Suspending blocks sign-in (recoverable). You cannot act on your own account.",
+    "reinstate": "Reinstate account",
+    "suspend": "Suspend account",
+    "suspendReason": "Reason (optional)",
+    "suspendReasonPlaceholder": "e.g. POLICY_VIOLATION",
+    "roleGranted": "Role granted.",
+    "roleRevoked": "Role revoked.",
+    "suspended": "Account suspended.",
+    "reinstated": "Account reinstated.",
+    "confirmRevoke": "Revoke this role grant?",
+    "confirmSuspend": "Suspend this account? They will be unable to sign in.",
+    "confirmReinstate": "Reinstate this account to active?",
+    "statusValue": {
+      "PENDING": "Pending",
+      "ACTIVE": "Active",
+      "SUSPENDED": "Suspended",
+      "DISABLED": "Disabled"
+    },
+    "grantStatusValue": {
+      "PENDING_VERIFICATION": "Pending verification",
+      "ACTIVE": "Active",
+      "SUSPENDED": "Suspended",
+      "FORMER": "Former"
     }
   },
   "wardPicker": {

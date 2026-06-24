@@ -1,36 +1,19 @@
 <!--
-  Users & Roles: operator identity + additive roles + role catalogue + grant entry point.
-  The generic user directory + role-grant API is a CENTRAL NEED (no backend endpoint yet).
+  Users & Roles: server-paged account directory with filters (name/phoneSuffix/tier/role/status).
+  Rows are PII-minimised — masked phone only, never a raw number or national ID (PRD §18).
 -->
 <section>
   <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
     <h1 class="h3 mb-0">{{ 'users.title' | translate }}</h1>
-    <a routerLink="/institutions/representatives/new" class="btn btn-primary btn-sm">
-      + {{ 'users.grantRepresentative' | translate }}
-    </a>
   </div>
 
-  <div class="alert alert-warning" role="note">{{ 'users.apiGapNote' | translate }}</div>
-
-  @if (loading()) {
-    <div class="text-center py-5" role="status" aria-live="polite">
-      <span class="spinner-border" aria-hidden="true"></span>
-      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
-    </div>
-  } @else if (errored()) {
-    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
-      <span>{{ 'common.errorLoading' | translate }}</span>
-      <button type="button" class="btn btn-sm btn-outline-danger" (click)="load()">{{ 'common.retry' | translate }}</button>
-    </div>
-  } @else {
-    <!-- The signed-in operator's identity + roles. -->
+  <!-- The signed-in operator's identity + roles. -->
+  @if (me(); as me) {
     <div class="card mb-4" style="max-width: 560px">
       <div class="card-body">
         <h2 class="h6 text-muted">{{ 'users.myIdentity' | translate }}</h2>
-        @if (me(); as me) {
-          <p class="mb-1"><strong>{{ me.firstName || '—' }} {{ me.lastName || '' }}</strong></p>
-          <p class="mb-1 small">{{ 'users.tier' | translate }}: <span class="badge text-bg-info">{{ me.tier || 'T0' }}</span></p>
-        }
+        <p class="mb-1"><strong>{{ me.firstName || '—' }} {{ me.lastName || '' }}</strong></p>
+        <p class="mb-2 small">{{ 'users.tier' | translate }}: <span class="badge text-bg-info">{{ me.tier || 'T0' }}</span></p>
         <p class="mb-2 small">{{ 'users.roles' | translate }}:</p>
         <div class="d-flex flex-wrap gap-1">
           @for (role of effectiveRoles(); track role) {
@@ -41,26 +24,128 @@
         </div>
       </div>
     </div>
+  }
 
-    <!-- The platform role catalogue (reference). -->
-    <h2 class="h5">{{ 'users.roleCatalogue' | translate }}</h2>
+  <h2 class="h5 mb-2">{{ 'users.directory' | translate }}</h2>
+
+  <!-- Filters (server-side). -->
+  <div class="row g-2 mb-3">
+    <div class="col-12 col-md-3">
+      <label class="visually-hidden" for="user-name">{{ 'users.filterName' | translate }}</label>
+      <input
+        id="user-name"
+        type="search"
+        class="form-control form-control-sm"
+        [ngModel]="nameFilter()"
+        (ngModelChange)="nameFilter.set($event)"
+        (keyup.enter)="applyFilters()"
+        [placeholder]="'users.filterName' | translate"
+      />
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="visually-hidden" for="user-phone">{{ 'users.filterPhoneSuffix' | translate }}</label>
+      <input
+        id="user-phone"
+        type="search"
+        class="form-control form-control-sm"
+        [ngModel]="phoneSuffixFilter()"
+        (ngModelChange)="phoneSuffixFilter.set($event)"
+        (keyup.enter)="applyFilters()"
+        [placeholder]="'users.filterPhoneSuffix' | translate"
+      />
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="visually-hidden" for="user-tier">{{ 'users.tier' | translate }}</label>
+      <select id="user-tier" class="form-select form-select-sm" [ngModel]="tierFilter()" (ngModelChange)="tierFilter.set($event); applyFilters()">
+        <option value="">{{ 'users.allTiers' | translate }}</option>
+        @for (t of tiers; track t) {
+          <option [value]="t">{{ t }}</option>
+        }
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="visually-hidden" for="user-role">{{ 'users.role' | translate }}</label>
+      <select id="user-role" class="form-select form-select-sm" [ngModel]="roleFilter()" (ngModelChange)="roleFilter.set($event); applyFilters()">
+        <option value="">{{ 'users.allRoles' | translate }}</option>
+        @for (r of roleCatalogue; track r) {
+          <option [value]="r">{{ 'users.roleValue.' + r | translate }}</option>
+        }
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="visually-hidden" for="user-status">{{ 'users.status' | translate }}</label>
+      <select id="user-status" class="form-select form-select-sm" [ngModel]="statusFilter()" (ngModelChange)="statusFilter.set($event); applyFilters()">
+        <option value="">{{ 'users.allStatuses' | translate }}</option>
+        @for (s of statuses; track s) {
+          <option [value]="s">{{ 'users.statusValue.' + s | translate }}</option>
+        }
+      </select>
+    </div>
+    <div class="col-12 col-md-1 d-grid">
+      <button type="button" class="btn btn-sm btn-outline-primary" (click)="applyFilters()">{{ 'common.search' | translate }}</button>
+    </div>
+  </div>
+
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
+    </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="loadPage(0)">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else if (rows().length === 0) {
+    <div class="alert alert-info" role="status">{{ 'users.noResults' | translate }}</div>
+  } @else {
     <div class="table-responsive">
-      <table class="table table-sm align-middle">
+      <table class="table table-hover align-middle">
         <thead>
           <tr>
-            <th scope="col">{{ 'users.role' | translate }}</th>
-            <th scope="col">{{ 'users.grantedBy' | translate }}</th>
+            <th scope="col">{{ 'users.nameCol' | translate }}</th>
+            <th scope="col">{{ 'users.phone' | translate }}</th>
+            <th scope="col">{{ 'users.tier' | translate }}</th>
+            <th scope="col">{{ 'users.status' | translate }}</th>
+            <th scope="col">{{ 'users.roles' | translate }}</th>
+            <th scope="col">{{ 'users.created' | translate }}</th>
+            <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
           </tr>
         </thead>
         <tbody>
-          @for (role of roleCatalogue; track role) {
+          @for (user of rows(); track user.publicId) {
             <tr>
-              <td><span class="badge text-bg-light">{{ 'users.roleValue.' + role | translate }}</span></td>
-              <td><small class="text-muted">{{ 'users.grantedByValue.' + role | translate }}</small></td>
+              <td>{{ user.displayName || '—' }}</td>
+              <td><span class="text-muted small">{{ user.maskedPhone || '—' }}</span></td>
+              <td><span class="badge text-bg-info">{{ user.trustTier }}</span></td>
+              <td>
+                <span
+                  class="badge"
+                  [class.text-bg-success]="user.status === 'ACTIVE'"
+                  [class.text-bg-warning]="user.status === 'SUSPENDED' || user.status === 'PENDING'"
+                  [class.text-bg-secondary]="user.status === 'DISABLED'"
+                  >{{ 'users.statusValue.' + user.status | translate }}</span
+                >
+              </td>
+              <td>
+                <div class="d-flex flex-wrap gap-1">
+                  @for (role of user.roles; track role) {
+                    <span class="badge text-bg-light">{{ 'users.roleValue.' + role | translate }}</span>
+                  }
+                </div>
+              </td>
+              <td><small class="text-muted">{{ user.createdAt | date: 'shortDate' }}</small></td>
+              <td class="text-end">
+                <a [routerLink]="['/users', user.publicId]" class="btn btn-sm btn-outline-secondary">
+                  {{ 'users.manage' | translate }}
+                </a>
+              </td>
             </tr>
           }
         </tbody>
       </table>
     </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="loadPage($event)" />
   }
 </section>

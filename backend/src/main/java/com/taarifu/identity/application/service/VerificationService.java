@@ -1,5 +1,6 @@
 package com.taarifu.identity.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
 import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.audit.AuditOutcome;
@@ -11,6 +12,7 @@ import com.taarifu.identity.domain.model.Profile;
 import com.taarifu.identity.domain.model.User;
 import com.taarifu.identity.domain.model.VerificationRequest;
 import com.taarifu.identity.domain.model.enums.IdType;
+import com.taarifu.identity.domain.model.enums.TrustTier;
 import com.taarifu.identity.domain.model.enums.VerificationStatus;
 import com.taarifu.identity.domain.model.enums.VerificationType;
 import com.taarifu.identity.domain.port.IdentityVerificationProvider;
@@ -47,6 +49,7 @@ public class VerificationService {
     private final IdentityVerificationProvider verificationProvider;
     private final CryptoPort crypto;
     private final AuditEventService audit;
+    private final IdentityFunnelAnalytics funnel;
 
     /**
      * @param userRepository                 account lookup.
@@ -55,19 +58,23 @@ public class VerificationService {
      * @param verificationProvider           the pluggable verification port (operator-assisted default, D-Q2).
      * @param crypto                         computes the blind index (never decrypts for dedup — D15).
      * @param audit                          append-only audit writer (refs/hashes only — L-1/§18).
+     * @param funnel                         emits the {@code identity_verification_started}/{@code _failed}
+     *                                       verification-funnel facts (A1; channel APP).
      */
     public VerificationService(UserRepository userRepository,
                                ProfileRepository profileRepository,
                                VerificationRequestRepository verificationRequestRepository,
                                IdentityVerificationProvider verificationProvider,
                                CryptoPort crypto,
-                               AuditEventService audit) {
+                               AuditEventService audit,
+                               IdentityFunnelAnalytics funnel) {
         this.userRepository = userRepository;
         this.profileRepository = profileRepository;
         this.verificationRequestRepository = verificationRequestRepository;
         this.verificationProvider = verificationProvider;
         this.crypto = crypto;
         this.audit = audit;
+        this.funnel = funnel;
     }
 
     /**
@@ -104,6 +111,12 @@ public class VerificationService {
                     .of(AuditEventType.AUTH_VERIFICATION_REQUESTED, AuditOutcome.DENIED)
                     .actor(userPublicId).subject(userPublicId)
                     .reason("DUPLICATE_IDENTITY").detailRef("idHash:" + idHash).build());
+            // ANALYTICS (A1, §3.3 funnel): a dedup-blocked submit is a funnel drop-off (the subject does not
+            // reach T3). Emitted on the outbox in THIS transaction; the rollback below would NOT discard it —
+            // but a dedup block does not roll back (we throw cleanly), so the fact is durable. No PII (no idNo,
+            // no hash, no subject) — the tier stays T2 (the verification never proceeded).
+            funnel.emit(AnalyticsEventTypes.IDENTITY_VERIFICATION_FAILED, TrustTier.T2.name(),
+                    IdentityFunnelAnalytics.CHANNEL_APP);
             throw new ApiException(ErrorCode.DUPLICATE_IDENTITY);
         }
 
@@ -130,6 +143,13 @@ public class VerificationService {
                 .of(AuditEventType.AUTH_VERIFICATION_REQUESTED, AuditOutcome.SUCCESS)
                 .actor(userPublicId).subject(userPublicId)
                 .reason(idType.name()).detailRef("idHash:" + idHash).build());
+
+        // ANALYTICS (A1, §3.3 funnel): the T2→(T3) funnel step — a verification was started. Emitted on the
+        // outbox in THIS transaction, recorded asynchronously off the citizen path. The subject is at T2 here
+        // (submitting is not being verified — the tier is unchanged, PRD §25.5). Coarse tier+channel only, no
+        // PII (no idNo, no idHash, no fullName, no evidence ref on the event).
+        funnel.emit(AnalyticsEventTypes.IDENTITY_VERIFICATION_STARTED, TrustTier.T2.name(),
+                IdentityFunnelAnalytics.CHANNEL_APP);
 
         return new SubmitResult(request.getPublicId(), VerificationStatus.PENDING);
     }

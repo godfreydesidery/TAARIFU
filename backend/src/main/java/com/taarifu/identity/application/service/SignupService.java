@@ -1,5 +1,6 @@
 package com.taarifu.identity.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
 import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.audit.AuditOutcome;
@@ -36,6 +37,7 @@ public class SignupService {
     private final AccountCreator accountCreator;
     private final UserRepository userRepository;
     private final AuditEventService audit;
+    private final IdentityFunnelAnalytics funnel;
 
     /**
      * @param otpService     OTP issue/verify.
@@ -44,17 +46,20 @@ public class SignupService {
      *                       provisioning path — {@link AccountCreator}).
      * @param userRepository account persistence (one-per-phone guard).
      * @param audit          append-only audit writer.
+     * @param funnel         emits the {@code account_signed_up} verification-funnel analytics fact (A1).
      */
     public SignupService(OtpService otpService,
                          TokenService tokenService,
                          AccountCreator accountCreator,
                          UserRepository userRepository,
-                         AuditEventService audit) {
+                         AuditEventService audit,
+                         IdentityFunnelAnalytics funnel) {
         this.otpService = otpService;
         this.tokenService = tokenService;
         this.accountCreator = accountCreator;
         this.userRepository = userRepository;
         this.audit = audit;
+        this.funnel = funnel;
     }
 
     /**
@@ -107,6 +112,11 @@ public class SignupService {
                 .of(AuditEventType.AUTH_TIER_CHANGED, AuditOutcome.SUCCESS)
                 .actor(user.getPublicId()).subject(user.getPublicId())
                 .reason("T0->" + tier.name()).build());
+
+        // ANALYTICS (A1, §3.3 funnel): the T0→T1 funnel-entry fact, emitted on the outbox in THIS transaction
+        // and recorded asynchronously off the citizen path. Channel APP — this is the OTP/app signup path
+        // (the USSD provisioning path emits the same fact with channel USSD). Coarse tier+channel only, no PII.
+        funnel.emit(AnalyticsEventTypes.ACCOUNT_SIGNED_UP, tier.name(), IdentityFunnelAnalytics.CHANNEL_APP);
 
         TokenService.TokenPair tokens = tokenService.issuePair(user);
         return new SignupResult(user.getPublicId(), tier, tokens);

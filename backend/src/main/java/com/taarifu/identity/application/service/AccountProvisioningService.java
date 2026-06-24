@@ -1,5 +1,6 @@
 package com.taarifu.identity.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.audit.AuditOutcome;
@@ -43,6 +44,7 @@ public class AccountProvisioningService implements AccountProvisioningApi {
     private final ProfileRepository profileRepository;
     private final ProfileLocationRepository profileLocationRepository;
     private final AuditEventService audit;
+    private final IdentityFunnelAnalytics funnel;
 
     /**
      * @param accountCreator            the shared create-T1-account routine (DRY with signup).
@@ -50,17 +52,20 @@ public class AccountProvisioningService implements AccountProvisioningApi {
      * @param profileRepository         resolves the account public id → its {@code Profile} (registered-ward read).
      * @param profileLocationRepository reads the profile's single primary location (registered ward, D12).
      * @param audit                     append-only audit writer (records first provisioning of a USSD account).
+     * @param funnel                    emits the {@code account_signed_up} verification-funnel fact (A1; channel USSD).
      */
     public AccountProvisioningService(AccountCreator accountCreator,
                                       UserRepository userRepository,
                                       ProfileRepository profileRepository,
                                       ProfileLocationRepository profileLocationRepository,
-                                      AuditEventService audit) {
+                                      AuditEventService audit,
+                                      IdentityFunnelAnalytics funnel) {
         this.accountCreator = accountCreator;
         this.userRepository = userRepository;
         this.profileRepository = profileRepository;
         this.profileLocationRepository = profileLocationRepository;
         this.audit = audit;
+        this.funnel = funnel;
     }
 
     /** {@inheritDoc} */
@@ -87,6 +92,12 @@ public class AccountProvisioningService implements AccountProvisioningApi {
                 .of(AuditEventType.AUTH_SIGNUP_COMPLETED, AuditOutcome.SUCCESS)
                 .actor(user.getPublicId()).subject(user.getPublicId())
                 .reason("USSD_PROVISION").build());
+
+        // ANALYTICS (A1, §3.3 funnel): the same T0→T1 funnel-entry fact as OTP signup, but tagged channel
+        // USSD so the funnel/channel-mix dashboards see feature-phone onboarding. Emitted on the outbox in
+        // THIS transaction, recorded asynchronously off the dialogue path. Coarse tier+channel only, no PII.
+        funnel.emit(AnalyticsEventTypes.ACCOUNT_SIGNED_UP, user.getTrustTier().name(),
+                IdentityFunnelAnalytics.CHANNEL_USSD);
         return user.getPublicId();
     }
 

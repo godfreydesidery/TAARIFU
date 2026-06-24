@@ -43,7 +43,12 @@ public class CodeGenerator {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String nextCode(String prefix, String sequenceName, int padWidth) {
         long next = nextSequenceValue(sequenceName);
-        return "%s-%d-%0" + padWidth + "d".formatted(prefix, Year.now().getValue(), next);
+        // The format string must be fully assembled BEFORE formatting: method-call precedence binds
+        // ".formatted(...)" to the "d" literal alone, so the previous unparenthesised
+        // "%s-%d-%0" + padWidth + "d".formatted(...) returned the literal template "%s-%d-%06d" (the
+        // specifiers never applied) and broke every coded entity's code + its uniqueness. Parenthesise.
+        String template = "%s-%d-%0" + padWidth + "d";
+        return template.formatted(prefix, Year.now().getValue(), next);
     }
 
     /**

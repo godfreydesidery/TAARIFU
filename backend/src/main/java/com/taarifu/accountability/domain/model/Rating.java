@@ -28,8 +28,11 @@ import java.util.UUID;
  *       period a hard {@code 409} — one person, one rating, regardless of token balance.</li>
  *   <li><b>No self-action (D16):</b> a representative cannot rate themselves — checked via
  *       {@code ScopeGuard.isNotSelf} before persist (conflict-of-interest).</li>
- *   <li><b>Electoral scope (D13):</b> a citizen may only rate a representative they are an elector of —
- *       // TODO(wiring): enforce once the institutions/geography electoral mapping is wired.</li>
+ *   <li><b>Electoral scope (D13, two-tier):</b> a citizen may only rate a representative they are an
+ *       elector of — enforced in {@code RatingService} via institutions'
+ *       {@code RepresentativeQueryApi.constituencyOf}/{@code wardOf} × identity's
+ *       {@code ElectoralScopeApi}. The same ports throw {@code NOT_FOUND} for a phantom representative, so
+ *       a citizen can never rate a non-existent rep.</li>
  *   <li><b>Fence (D18, §23):</b> this entity and its service path carry <b>no token balance and no token
  *       collaborator</b>. A token balance must NEVER appear in the authorization path of a rating — wealth
  *       cannot buy democratic weight. The aggregate score is computed from these append-only rows only.</li>
@@ -41,7 +44,10 @@ import java.util.UUID;
  *
  * <p>WHY {@code subjectId} and {@code raterProfileId} are opaque {@link UUID}s, not FKs: the subject lives
  * in another module (institutions/projects) and the rater's profile in <b>identity</b>; this module is
- * isolated and references them by public id (// TODO(wiring) for the subject's existence/electoral check).</p>
+ * isolated and references them by public id. For a {@code REPRESENTATIVE} subject, existence and electoral
+ * scope are validated in {@code RatingService} via institutions' published {@code RepresentativeQueryApi}.
+ * ({@code OFFICE}/{@code PROJECT} subjects have no owning module/port yet, so their existence is not yet
+ * validated — // TODO(wiring) once those seams exist.)</p>
  */
 @Entity
 @Table(name = "rating",
@@ -66,8 +72,10 @@ public class Rating extends BaseEntity {
     private RatingSubjectType subjectType;
 
     /**
-     * Public id of the rated subject (institutions/projects module — referenced by id only, never an FK;
-     * // TODO(wiring): validate existence + electoral scope via the owning module's API).
+     * Public id of the rated subject (institutions/projects module — referenced by id only, never an FK).
+     * For a {@code REPRESENTATIVE} subject, existence + electoral scope are validated in
+     * {@code RatingService} via institutions' {@code RepresentativeQueryApi} (× identity's
+     * {@code ElectoralScopeApi}). {@code OFFICE}/{@code PROJECT} subjects have no owning module/port yet.
      */
     @Column(name = "subject_id", nullable = false)
     private UUID subjectId;

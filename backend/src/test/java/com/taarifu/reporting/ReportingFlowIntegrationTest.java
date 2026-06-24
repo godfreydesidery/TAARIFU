@@ -1,6 +1,7 @@
 package com.taarifu.reporting;
 
 import com.taarifu.AbstractPostgisIntegrationTest;
+import com.taarifu.FlywayCleanMigrateTestConfig;
 import com.taarifu.geography.test.GeographyTestData;
 import com.taarifu.reporting.api.dto.CaseEventDto;
 import com.taarifu.reporting.api.dto.CreateIssueCategoryDto;
@@ -12,13 +13,18 @@ import com.taarifu.reporting.application.service.IssueCategoryService;
 import com.taarifu.reporting.application.service.ReportService;
 import com.taarifu.reporting.domain.model.enums.ReportStatus;
 import com.taarifu.reporting.domain.model.enums.ReportVisibility;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.UUID;
 
@@ -37,9 +43,31 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>WHY service-level (not full HTTP with JWT here): the file endpoint's T2 tier gate is the kernel's
  * concern (covered by the auth increment's tests); this test focuses on the reporting domain rules and
  * the migration/repository round-trip, which is where this module's risk lives.</p>
+ *
+ * <p><b>WHY Flyway-owned schema + {@code ddl-auto=validate} here</b> (the test-harness fix, wave4-review
+ * §4 central need; ADR-0005/0009): filing a report mints its {@code TAR-YYYY-NNNNNN} ticket code from the
+ * Postgres sequence {@code report_code_seq}, which is created by Flyway (V23) — <b>not</b> by Hibernate
+ * (the application draws it with a raw {@code SELECT nextval(...)}, so Hibernate's entity-derived
+ * {@code create-drop} schema never contains it). Under the shared {@code test} profile's create-drop this
+ * test failed with {@code relation "report_code_seq" does not exist} — even in isolation. Booting the
+ * <b>real migrated schema</b> (the exact production configuration) is therefore the only faithful way to
+ * exercise the file path, and it incidentally pins that V23 owns the sequence. The fixture seeds its own
+ * geography after wiping it ({@link #seed()}), so it does not depend on the Flyway reference-data seed.</p>
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@Import(FlywayCleanMigrateTestConfig.class)   // clean-then-migrate so create-drop leftovers in the shared container never block Flyway
+@TestPropertySource(properties = {
+        // Override the shared test profile's create-drop with the production schema path: Flyway owns the
+        // schema (so report_code_seq exists, V23) and Hibernate only validates the entities against it.
+        "spring.flyway.enabled=true",
+        "spring.flyway.locations=classpath:db/migration",
+        "spring.jpa.hibernate.ddl-auto=validate",
+        // Allow Flyway.clean() in tests ONLY (production keeps clean disabled): the shared static container
+        // is reused across create-drop and Flyway tests, so the Flyway tests must clean first to start from
+        // an empty schema (see FlywayCleanMigrateTestConfig).
+        "spring.flyway.clean-disabled=false"
+})
 class ReportingFlowIntegrationTest extends AbstractPostgisIntegrationTest {
 
     @Autowired
@@ -51,11 +79,38 @@ class ReportingFlowIntegrationTest extends AbstractPostgisIntegrationTest {
     @Autowired
     private GeographyTestData geographyTestData;
 
+    @Autowired
+    private TransactionTemplate txTemplate;
+
+    @PersistenceContext
+    private EntityManager em;
+
     private final Pageable page = PageRequest.of(0, 20);
     private UUID wardId;
 
+    /**
+     * Resets the reporting + reference state this test owns to a known-empty slate, then seeds the
+     * Kilimanjaro→Rombo→Mengwe geography fixture.
+     *
+     * <p>WHY explicit cleanup under the Flyway+validate schema: this class boots the <b>real migrated
+     * schema</b> (so {@code report_code_seq} exists — see the class Javadoc). That schema is seeded by
+     * Flyway (the national geography of V71–V109 and the issue taxonomy of V82/V83) and — unlike the
+     * create-drop slice tests — persists across the methods of this single cached context. So the fixture
+     * must (a) delete the Flyway-seeded {@code issue_category} rows and any prior-method {@code report}/
+     * {@code case_event} rows so each per-test {@code categoryService.create(...)} runs on a clean,
+     * collision-free slate (the seeded codes {@code WATER_SANITATION}/{@code HEALTH}/{@code EDUCATION}
+     * would otherwise violate {@code uq_issue_category_code}); and (b) wipe the seeded geography before
+     * re-seeding its own (the helper inserts the fixed {@code TZ-19}/{@code TZ-1907} codes, which clash with
+     * the seed's national set). Deletions run in FK order inside a committed transaction so the HTTP-less
+     * service calls below see a clean database. No production behaviour is touched — test data only.</p>
+     */
     @BeforeEach
     void seed() {
+        txTemplate.executeWithoutResult(s -> {
+            em.createNativeQuery("DELETE FROM case_event").executeUpdate();
+            em.createNativeQuery("DELETE FROM report").executeUpdate();
+            em.createNativeQuery("DELETE FROM issue_category").executeUpdate();
+        });
         geographyTestData.clear();
         wardId = geographyTestData.seedKilimanjaroRomboMengwe().wardPublicId();
     }

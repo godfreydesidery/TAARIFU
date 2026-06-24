@@ -30,9 +30,11 @@ import java.util.UUID;
  *
  * <p>WHY {@code representativeId} is an opaque {@link UUID}, not a {@code @ManyToOne} FK to a
  * representative entity: the representative aggregate lives in the <b>institutions</b> module, which this
- * module must not import (module-boundary isolation). It is referenced by public id and resolved through
- * institutions' public API at the wiring step (// TODO(wiring)). This is the deliberate cross-module
- * exception — a real FK would breach the boundary (ARCHITECTURE.md §4.3 spirit).</p>
+ * module must not import (module-boundary isolation). It is referenced by public id; its existence is
+ * confirmed via institutions' published {@code RepresentativeQueryApi.exists} port in
+ * {@code CurationService} before any row is persisted (ADR-0013) — a curated contribution can never be
+ * attributed to a non-existent representative. This is the deliberate cross-module exception — a real FK
+ * would breach the boundary (ARCHITECTURE.md §4.3 spirit).</p>
  *
  * <p>WHY {@code attachmentRefs} are object-store <b>references</b>, not blobs: documents (Hansard PDFs,
  * order papers) live behind signed URLs in object storage; only keys are stored here (PRD §18, EI-8).</p>
@@ -48,7 +50,8 @@ public class RepresentativeContribution extends BaseEntity {
 
     /**
      * Public id of the representative this contribution belongs to (institutions module — referenced by
-     * id only, never an FK; // TODO(wiring): validate against institutions' public API).
+     * id only, never an FK; existence validated via {@code RepresentativeQueryApi.exists} in
+     * {@code CurationService} before persistence).
      */
     @Column(name = "representative_id", nullable = false)
     private UUID representativeId;

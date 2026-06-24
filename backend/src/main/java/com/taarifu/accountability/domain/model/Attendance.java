@@ -20,8 +20,9 @@ import java.util.UUID;
  * read-only.</p>
  *
  * <p>WHY {@code representativeId} is an opaque {@link UUID}: the representative lives in the
- * <b>institutions</b> module which this module must not import — it is referenced by public id and
- * resolved through that module's API at wiring (// TODO(wiring)).</p>
+ * <b>institutions</b> module which this module must not import — it is referenced by public id, and its
+ * existence is confirmed via institutions' published {@code RepresentativeQueryApi.exists} port in
+ * {@code CurationService} before any attendance row is persisted (ADR-0013).</p>
  *
  * <p>WHY the {@code (representative_id, session_ref)} uniqueness: a representative is either present or
  * absent for a given sitting — exactly one authoritative attendance row per session, so aggregates
@@ -39,8 +40,8 @@ import java.util.UUID;
 public class Attendance extends BaseEntity {
 
     /**
-     * Public id of the representative (institutions module — referenced by id only, never an FK;
-     * // TODO(wiring): validate against institutions' public API).
+     * Public id of the representative (institutions module — referenced by id only, never an FK; existence
+     * validated via {@code RepresentativeQueryApi.exists} in {@code CurationService} before persistence).
      */
     @Column(name = "representative_id", nullable = false)
     private UUID representativeId;

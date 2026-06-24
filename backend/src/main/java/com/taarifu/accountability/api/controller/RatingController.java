@@ -28,8 +28,9 @@ import org.springframework.web.bind.annotation.RestController;
  *   <li>{@code @RequiresTier("T3")} — the <b>live</b> tier (DB-resolved by the aspect, never the token
  *       claim) must be T3; a binding action requires verified identity (D13). This annotation is the tier
  *       half of the fence.</li>
- *   <li>The service adds no-self-action, electoral-scope (// TODO(wiring)), and one-per-(rater, subject,
- *       period) — and reads <b>no token balance</b> (§23/D18).</li>
+ *   <li>The service adds no-self-action, electoral-scope (and representative existence — both via
+ *       institutions' published {@code RepresentativeQueryApi}), and one-per-(rater, subject, period) —
+ *       and reads <b>no token balance</b> (§23/D18).</li>
  * </ul>
  *
  * <p>The rater is taken from the security context inside the service, never from the request body — a

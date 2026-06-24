@@ -34,9 +34,20 @@ public class InstitutionsTestData {
                           UUID parliamentPublicId, long parliamentId) {
     }
 
-    /** Removes all institutions + geography rows so each test starts clean. */
+    /**
+     * Removes all institutions + geography rows so each test starts clean.
+     *
+     * <p>WHY {@code profile_location} is cleared first: a {@code profile_location} row (written by an identity
+     * test that <b>committed</b> an electoral/residence location and shares the static container's database)
+     * carries an FK to {@code constituency}/{@code location}. If such a row leaked in, the
+     * {@code DELETE FROM constituency} below would fail with a foreign-key violation — making this read test
+     * order-dependent on whichever identity test ran before it. Clearing the referencing rows first keeps the
+     * geography wipe robust regardless of test order (TEST-ONLY reset; no production code).</p>
+     */
     @Transactional
     public void clear() {
+        // Drop any leaked cross-module rows that reference geography before wiping geography itself.
+        em.createNativeQuery("DELETE FROM profile_location").executeUpdate();
         em.createNativeQuery("DELETE FROM representative").executeUpdate();
         em.createNativeQuery("DELETE FROM parliament_role").executeUpdate();
         em.createNativeQuery("DELETE FROM parliament").executeUpdate();

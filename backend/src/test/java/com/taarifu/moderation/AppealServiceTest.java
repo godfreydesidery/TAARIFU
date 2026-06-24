@@ -1,10 +1,14 @@
 package com.taarifu.moderation;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.audit.domain.model.AuditEvent;
 import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.moderation.api.dto.AppealSummaryDto;
 import com.taarifu.moderation.api.dto.DecideAppealRequest;
 import com.taarifu.moderation.api.dto.FileAppealRequest;
@@ -21,6 +25,7 @@ import com.taarifu.moderation.domain.repository.ModerationActionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
@@ -60,6 +65,7 @@ class AppealServiceTest {
     @Mock private ModerationActionRepository actionRepository;
     @Mock private AuditEventService audit;
     @Mock private ClockPort clock;
+    @Mock private OutboxWriter outboxWriter;
 
     private AppealService service;
 
@@ -69,7 +75,7 @@ class AppealServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AppealService(appealRepository, actionRepository, audit, clock);
+        service = new AppealService(appealRepository, actionRepository, audit, clock, outboxWriter);
     }
 
     /** A persisted-looking action taken by {@code originalModerator} against {@code author}'s content. */
@@ -159,6 +165,18 @@ class AppealServiceTest {
         assertThat(dto.status()).isEqualTo(AppealStatus.OVERTURNED);
         assertThat(appeal.getHandledByModeratorId()).isEqualTo(independentModerator);
         assertThat(appeal.getDecidedAt()).isEqualTo(NOW);
+
+        // A4: deciding an appeal must append a moderation_appeal_resolved civic-activity fact carrying the
+        // outcome (OVERTURNED), activeRole=MODERATOR, and NO PII — fails if the emit is dropped/mis-dimensioned.
+        ArgumentCaptor<EventEnvelope<?>> envelope = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(outboxWriter).append(envelope.capture());
+        assertThat(envelope.getValue().eventType()).isEqualTo(AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED);
+        assertThat(envelope.getValue().payload()).isInstanceOf(CivicActivityRecorded.class);
+        CivicActivityRecorded fact = (CivicActivityRecorded) envelope.getValue().payload();
+        assertThat(fact.analyticsEventType()).isEqualTo(AnalyticsEventTypes.MODERATION_APPEAL_RESOLVED);
+        assertThat(fact.activeRole()).isEqualTo("MODERATOR");
+        assertThat(fact.outcome()).isEqualTo(AppealStatus.OVERTURNED.name());
+        assertThat(fact.actorRef()).isNull(); // no PII on the analytics fact
     }
 
     @Test

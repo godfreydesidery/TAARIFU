@@ -1,6 +1,10 @@
 package com.taarifu.moderation;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.domain.port.ClockPort;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.moderation.api.FlagSubjectType;
 import com.taarifu.moderation.api.dto.FlagContentRequest;
 import com.taarifu.moderation.application.service.FlagService;
@@ -44,6 +48,7 @@ class FlagServiceTest {
     @Mock private SeverityPolicy severityPolicy;
     @Mock private SubjectAuthorResolver subjectAuthorResolver;
     @Mock private ClockPort clock;
+    @Mock private OutboxWriter outboxWriter;
 
     private FlagService service;
 
@@ -53,7 +58,8 @@ class FlagServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new FlagService(flagRepository, itemRepository, severityPolicy, subjectAuthorResolver, clock);
+        service = new FlagService(flagRepository, itemRepository, severityPolicy, subjectAuthorResolver,
+                clock, outboxWriter);
     }
 
     private FlagContentRequest request() {
@@ -80,6 +86,52 @@ class FlagServiceTest {
         ArgumentCaptor<ModerationItem> captor = ArgumentCaptor.forClass(ModerationItem.class);
         org.mockito.Mockito.verify(itemRepository).save(captor.capture());
         assertThat(captor.getValue().getSubjectAuthorProfileId()).isEqualTo(author);
+    }
+
+    @Test
+    void emitsContentFlaggedAnalyticsFact_idsAndCodesOnly_noPii() {
+        // A4: flagging must append a content_flagged civic-activity fact (the abuse-report-rate KPI numerator).
+        UUID author = UUID.randomUUID();
+        when(flagRepository.existsByFlaggerProfileIdAndSubjectTypeAndSubjectId(
+                flagger, FlagSubjectType.REPORT, subjectId)).thenReturn(false);
+        when(severityPolicy.initialSeverity(FlagReason.ABUSE)).thenReturn(ModerationSeverity.MEDIUM);
+        when(itemRepository.findBySubjectTypeAndSubjectId(FlagSubjectType.REPORT, subjectId))
+                .thenReturn(Optional.empty());
+        when(subjectAuthorResolver.authorOf(FlagSubjectType.REPORT, subjectId))
+                .thenReturn(Optional.of(author));
+        when(clock.now()).thenReturn(NOW);
+        // Stamp a publicId on the saved item so the analytics fact's aggregateId is non-null.
+        when(itemRepository.save(any(ModerationItem.class))).thenAnswer(inv -> {
+            ModerationItem i = inv.getArgument(0);
+            setPublicId(i, UUID.randomUUID());
+            return i;
+        });
+        when(flagRepository.save(any(Flag.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.flag(flagger, request());
+
+        // The emit is asserted to carry the correct dimensions and NO PII — fails if the emit is dropped or
+        // carries the flagger identity / a wrong dimension.
+        ArgumentCaptor<EventEnvelope<?>> envelope = ArgumentCaptor.forClass(EventEnvelope.class);
+        org.mockito.Mockito.verify(outboxWriter).append(envelope.capture());
+        assertThat(envelope.getValue().eventType()).isEqualTo(AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED);
+        assertThat(envelope.getValue().payload()).isInstanceOf(CivicActivityRecorded.class);
+        CivicActivityRecorded fact = (CivicActivityRecorded) envelope.getValue().payload();
+        assertThat(fact.analyticsEventType()).isEqualTo(AnalyticsEventTypes.CONTENT_FLAGGED);
+        assertThat(fact.activeRole()).isEqualTo("CITIZEN");
+        assertThat(fact.outcome()).isEqualTo(FlagReason.ABUSE.name()); // the flag reason, controlled vocab
+        assertThat(fact.actorRef()).isNull(); // no PII on the analytics fact
+    }
+
+    /** Sets BaseEntity.publicId via reflection (assigned on persist in production; needed for unit emits). */
+    private static void setPublicId(Object entity, UUID id) {
+        try {
+            java.lang.reflect.Field f = entity.getClass().getSuperclass().getDeclaredField("publicId");
+            f.setAccessible(true);
+            f.set(entity, id);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Test

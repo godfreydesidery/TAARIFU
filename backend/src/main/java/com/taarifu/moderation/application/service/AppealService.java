@@ -1,5 +1,7 @@
 package com.taarifu.moderation.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.audit.AuditOutcome;
@@ -7,6 +9,8 @@ import com.taarifu.common.audit.domain.model.AuditEvent;
 import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.moderation.api.dto.AppealDto;
 import com.taarifu.moderation.api.dto.AppealSummaryDto;
 import com.taarifu.moderation.api.dto.DecideAppealRequest;
@@ -52,21 +56,28 @@ public class AppealService {
     private final ModerationActionRepository actionRepository;
     private final AuditEventService audit;
     private final ClockPort clock;
+    private final OutboxWriter outboxWriter;
 
     /**
      * @param appealRepository appeal store (one-live-appeal-per-action).
      * @param actionRepository append-only action log (to resolve the appealed action).
      * @param audit            append-only audit writer (independence-denial evidence).
      * @param clock            time source (testable).
+     * @param outboxWriter     the transactional-outbox port; {@link #decideAppeal} appends a
+     *                         {@code moderation_appeal_resolved} analytics fact in the decide transaction so
+     *                         the analytics sink records it asynchronously, off the moderator's path —
+     *                         completing the trust-and-safety funnel (Appendix E, M15; ADR-0013 §2).
      */
     public AppealService(AppealRepository appealRepository,
                          ModerationActionRepository actionRepository,
                          AuditEventService audit,
-                         ClockPort clock) {
+                         ClockPort clock,
+                         OutboxWriter outboxWriter) {
         this.appealRepository = appealRepository;
         this.actionRepository = actionRepository;
         this.audit = audit;
         this.clock = clock;
+        this.outboxWriter = outboxWriter;
     }
 
     /**
@@ -185,8 +196,31 @@ public class AppealService {
                 .reason(request.outcome().name())
                 .detailRef(saved.getPublicId().toString())
                 .build());
-        // TODO(wiring): also emit `moderation_appeal_resolved` {host_ref, outcome} via the transactional
-        // outbox; an OVERTURNED outcome triggers a new reversing ModerationAction by ops/wiring.
+        // ANALYTICS (Appendix E, M15; ADR-0013 §2): append a moderation_appeal_resolved civic-activity fact
+        // to the outbox in THIS transaction — the analytics sink records it ASYNCHRONOUSLY, off the
+        // moderator's path, completing the trust-and-safety funnel (flag → action → appeal → resolution).
+        // The appeal outcome rides as the controlled-vocabulary `outcome` code (UPHELD/OVERTURNED); the
+        // active role is MODERATOR. Ids/codes ONLY — NO appellant identity, NO grounds/decision note, NO
+        // content (PRD §18, PDPA, ADR-0014 §1). The aggregate is the appeal's public id. (An OVERTURNED
+        // outcome separately signals a new reversing ModerationAction by ops/wiring — history is never
+        // mutated, §25.8.)
+        outboxWriter.append(EventEnvelope.of(
+                AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED,
+                AnalyticsEventTypes.AGGREGATE_CIVIC_ACTIVITY,
+                saved.getPublicId(),
+                new CivicActivityRecorded(
+                        AnalyticsEventTypes.MODERATION_APPEAL_RESOLVED,
+                        clock.now(),
+                        null,                       // actorRef: no pseudonymous actor hash resolved here
+                        null,                       // geoAreaId: moderation is not geo-scoped
+                        null,                       // categoryId: n/a for an appeal
+                        null,                       // tier: n/a
+                        null,                       // channel: n/a (server-side action)
+                        "MODERATOR",                // activeRole name (string — NOT the analytics enum; ADR-0013 §3)
+                        null,                       // latencySeconds: n/a
+                        null,                       // breachType: n/a
+                        request.outcome().name()),  // outcome = the appeal decision (controlled vocab)
+                clock.now()));
         return AppealDto.from(saved);
     }
 }

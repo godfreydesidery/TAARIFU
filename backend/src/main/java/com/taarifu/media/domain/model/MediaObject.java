@@ -136,21 +136,6 @@ public class MediaObject extends BaseEntity {
     @Column(name = "uploaded", nullable = false)
     private boolean uploaded = false;
 
-    /**
-     * {@code true} once the client has confirmed the bytes were PUT to storage and the declared
-     * content-type/size were validated against policy ({@code confirm} step, V121).
-     *
-     * <p>WHY a confirm step distinct from {@code scan_status} (the lifecycle the pipeline needs): the
-     * pre-signed PUT happens directly between the client and the store, so the application never observes
-     * the upload completing. The explicit <b>confirm</b> call is the client telling the platform "the
-     * bytes are there" — at which point the declared content-type allow-list and max-size are enforced
-     * (an evidence photo only — PRD §15/§18) and the object becomes eligible for scanning. An object that
-     * was never confirmed is a dangling upload-intent (no bytes, or an abandoned PUT) and must never be
-     * referenced by a report or served. Defaults {@code false}.</p>
-     */
-    @Column(name = "uploaded", nullable = false)
-    private boolean uploaded = false;
-
     /** JPA requires a no-arg constructor; not for application use. */
     protected MediaObject() {
     }
@@ -224,34 +209,6 @@ public class MediaObject extends BaseEntity {
      *
      * @param hostPublicId the host resource public id (e.g. the filed report's {@code publicId}).
      * @throws IllegalStateException if already bound to a different host (single-bind guard).
-     */
-    public void bindTo(UUID hostPublicId) {
-        if (this.ownerId != null && !this.ownerId.equals(hostPublicId)) {
-            throw new IllegalStateException("Media object is already bound to a different host");
-        }
-        this.ownerId = hostPublicId;
-    }
-
-    /**
-     * Marks the object as confirmed-uploaded (the bytes are in storage and the declared content-type/size
-     * passed policy). Called by the {@code confirm} step; idempotent (re-confirming a confirmed object is a
-     * no-op so a retried confirm never errors).
-     */
-    public void markUploaded() {
-        this.uploaded = true;
-    }
-
-    /**
-     * Binds this (previously unbound) object to its host resource once that resource exists (V121).
-     *
-     * <p>WHY binding is a distinct step: the photo is uploaded before the report is filed, so the host id
-     * is unknown at upload time ({@link #ownerId} starts {@code null}). The host module supplies the id at
-     * file time through the {@code media.api} port. Binding is allowed once and only to the same
-     * {@code ownerType} the object was created for; re-binding to a different host is rejected so an
-     * attacker cannot graft an already-bound (or already-validated) object onto a different report.</p>
-     *
-     * @param hostPublicId the host resource's public id (e.g. the filed report's {@code publicId}).
-     * @throws IllegalStateException if the object is already bound to a different host (single-bind guard).
      */
     public void bindTo(UUID hostPublicId) {
         if (this.ownerId != null && !this.ownerId.equals(hostPublicId)) {

@@ -45,6 +45,15 @@ spring:
     locale: sw                         # default request locale = Swahili
     locale-resolver: accept_header     # honour Accept-Language, default to sw
 
+  # --- Redis: ONLY used when taarifu.ratelimit.backend=redis (the multi-instance rate-limiters, W3-2). ---
+  # host/port come from the environment (no host/credentials in source). With the default backend=memory
+  # these are inert: the in-memory limiters need no Redis and the context boots with no Redis present.
+  # A Redis password, if the deployment uses one, comes from SPRING_DATA_REDIS_PASSWORD (env) — never source.
+  data:
+    redis:
+      host: ${TAARIFU_REDIS_HOST:localhost}
+      port: ${TAARIFU_REDIS_PORT:6379}
+
 # --- Server: versioned API root /api/v1 (ARCHITECTURE §5.4). ---
 server:
   port: ${SERVER_PORT:8081}   # 8081 by default; 8080 left free for other local services. Override via SERVER_PORT.
@@ -105,6 +114,14 @@ springdoc:
 # Taarifu-specific configuration (all secrets via env; see application-sample.yml).
 # =============================================================================
 taarifu:
+  # --- Rate-limit backend selector (W3-2). Picks the shared anti-automation counter store. ---
+  # 'memory' (default, matchIfMissing): in-process InMemoryAuthRateLimiter + InMemoryUssdGatewayRateLimiter
+  #   — correct for dev/test/single-instance; no Redis needed; lost on restart, NOT shared across instances.
+  # 'redis': RedisAuthRateLimiter + RedisUssdGatewayRateLimiter — ONE shared, auto-expiring budget per
+  #   identity across every app instance. REQUIRED for multi-instance production correctness (TR-3 / G14);
+  #   set spring.data.redis.host/port (above) to a reachable Redis. Thresholds are identical to in-memory.
+  ratelimit:
+    backend: ${TAARIFU_RATELIMIT_BACKEND:memory}
   security:
     jwt:
       # JWT signing secret MUST come from the environment — no default in source (PRD §18).

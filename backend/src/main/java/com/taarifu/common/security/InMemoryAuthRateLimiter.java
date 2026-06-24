@@ -1,7 +1,7 @@
 package com.taarifu.common.security;
 
 import com.taarifu.common.domain.port.ClockPort;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -14,22 +14,25 @@ import java.util.concurrent.ConcurrentHashMap;
  * (AUTH-DESIGN §9, S-2).
  *
  * <p>Responsibility: provides working anti-automation so the auth flows are buildable and unit-testable
- * with <b>no external dependency</b>. The production target is a Redis-backed implementation (shared
- * across instances, auto-expiring); this adapter is single-instance and is replaced by the Redis
- * adapter behind {@link AuthRateLimiter} when Redis is wired (it yields to any other bean via
- * {@link ConditionalOnMissingBean}).</p>
+ * with <b>no external dependency</b>, and is the <b>single-instance / dev / test default</b>. The
+ * production multi-instance target is {@link RedisAuthRateLimiter} (shared across instances,
+ * auto-expiring); the two are mutually exclusive on {@code taarifu.ratelimit.backend}: this adapter is the
+ * {@code matchIfMissing}/{@code =memory} default, the Redis adapter is selected only by {@code =redis}, so
+ * exactly one {@link AuthRateLimiter} bean resolves in every environment and a context with no Redis still
+ * boots (W3-2).</p>
  *
  * <p>Defaults (AUTH-DESIGN §9, config-tunable later): OTP send 1 per 60s per recipient; OTP verify 5
  * attempts per challenge; login lockout after 10 failures in a 15-minute window, with exponential
  * backoff after 3. All state is keyed by <b>hashed</b> identifiers supplied by the caller — this class
- * never sees a raw phone/IP (S-4).</p>
+ * never sees a raw phone/IP (S-4). {@link RedisAuthRateLimiter} preserves these thresholds byte-for-byte.</p>
  *
  * <p>WHY this is acceptable as the default (and what production changes): in-memory counters are lost on
  * restart and not shared across instances, so they are not a hardened control on their own — Redis is
- * required for production multi-instance correctness. This adapter makes the seam real and testable now.</p>
+ * required for production multi-instance correctness (set {@code taarifu.ratelimit.backend=redis}). This
+ * adapter makes the seam real and testable now.</p>
  */
 @Component
-@ConditionalOnMissingBean(name = "redisAuthRateLimiter")
+@ConditionalOnProperty(name = "taarifu.ratelimit.backend", havingValue = "memory", matchIfMissing = true)
 public class InMemoryAuthRateLimiter implements AuthRateLimiter {
 
     private static final Duration OTP_SEND_INTERVAL = Duration.ofSeconds(60);

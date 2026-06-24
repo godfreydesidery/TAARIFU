@@ -10,6 +10,8 @@ import com.taarifu.communications.domain.port.PushSender;
 import com.taarifu.communications.domain.port.SmsGateway;
 import com.taarifu.communications.domain.repository.NotificationPreferenceRepository;
 import com.taarifu.communications.domain.repository.NotificationRepository;
+import com.taarifu.identity.api.RecipientContactApi;
+import com.taarifu.identity.api.dto.RecipientContact;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -49,6 +51,19 @@ import java.util.stream.Collectors;
  * <p><b>Always-on types</b> ({@code SYSTEM}, {@code MODERATION_OUTCOME}) ignore an opt-out — a citizen
  * cannot silence security/moderation notices (PRD §13).</p>
  *
+ * <p><b>🔒 Recipient contact resolution & PII (ADR-0013 §1, §4; PRD §18, PDPA):</b> the SMS and email
+ * channels must address a <i>real</i> destination, which only identity holds. This service resolves the
+ * recipient's raw MSISDN/email once per dispatch through identity's published
+ * {@link RecipientContactApi} — but <b>only</b> when a contact-bearing channel could actually fire (an SMS
+ * or email row, or a PUSH that may degrade to SMS); a FEED/PUSH-only dispatch does no identity round-trip.
+ * The resolved {@link RecipientContact} is treated as the most sensitive value on this path: it is handed
+ * <b>straight to the masking {@code SmsGateway}/{@code EmailSender}</b> and is <b>never logged, never
+ * persisted, and never placed in an event, feed item, or audit row</b> (S-4). A recipient with no usable
+ * contact for a channel (no profile, an anonymised/tombstoned account, or an unverified/absent email) is a
+ * <b>graceful skip</b> — the row is marked {@code FAILED} with a non-PII reason
+ * ({@code NO_MSISDN_FOR_RECIPIENT}/{@code NO_EMAIL_FOR_RECIPIENT}) and the fan-out continues; a single
+ * unreachable recipient never crashes the dispatch (EI-3/6).</p>
+ *
  * <p>WHY this is synchronous-but-fail-soft here (not yet a worker): the transactional-outbox + worker
  * substrate is a later increment (ARCHITECTURE §8). This service is written so it can be moved behind the
  * bus unchanged — it never throws on a routine channel failure (it records {@code FAILED}/falls back), so
@@ -68,11 +83,20 @@ public class NotificationDispatchService {
     private static final Set<NotificationType> ALWAYS_ON =
             EnumSet.of(NotificationType.SYSTEM, NotificationType.MODERATION_OUTCOME);
 
+    /**
+     * The "no usable contact" sentinel — used when the recipient has no resolvable contact (no profile, or a
+     * missing/withheld value). Carrying a non-null empty contact (rather than a {@code null}) keeps the
+     * send path branch-free: each channel asks {@code hasMsisdn()}/{@code hasEmail()} and skips gracefully
+     * when absent (EI-3/6 — degrade, never crash, never NPE on a fan-out).
+     */
+    private static final RecipientContact EMPTY_CONTACT = new RecipientContact(null, null);
+
     private final NotificationRepository notificationRepository;
     private final NotificationPreferenceRepository preferenceRepository;
     private final SmsGateway smsGateway;
     private final PushSender pushSender;
     private final EmailSender emailSender;
+    private final RecipientContactApi recipientContactApi;
     private final ClockPort clock;
 
     /**
@@ -81,6 +105,10 @@ public class NotificationDispatchService {
      * @param smsGateway             SMS port (existing; reused from auth).
      * @param pushSender             push port.
      * @param emailSender            email port.
+     * @param recipientContactApi    identity's published contact-resolution port (ADR-0013 §1) — resolves a
+     *                               recipient's raw MSISDN/email so the SMS/email rows address a real
+     *                               destination. The resolved contact is PII: it is handed straight to the
+     *                               masking gateway/sender and never logged, stored, or put in an event (S-4).
      * @param clock                  injectable "now" for quiet-hour + send timestamps (testability).
      */
     public NotificationDispatchService(NotificationRepository notificationRepository,
@@ -88,12 +116,14 @@ public class NotificationDispatchService {
                                        SmsGateway smsGateway,
                                        PushSender pushSender,
                                        EmailSender emailSender,
+                                       RecipientContactApi recipientContactApi,
                                        ClockPort clock) {
         this.notificationRepository = notificationRepository;
         this.preferenceRepository = preferenceRepository;
         this.smsGateway = smsGateway;
         this.pushSender = pushSender;
         this.emailSender = emailSender;
+        this.recipientContactApi = recipientContactApi;
         this.clock = clock;
     }
 
@@ -126,10 +156,29 @@ public class NotificationDispatchService {
         boolean smsAllowed = isChannelAllowed(type, Channel.SMS,
                 requestedChannels.contains(Channel.SMS), prefs.get(Channel.SMS), localNow, true);
 
+        // Resolve the recipient's raw contact (MSISDN/email) ONCE, only if a contact-bearing channel could
+        // fire (an SMS row, an email row, or a PUSH that may fall back to SMS). FEED-only dispatches do no
+        // identity round-trip. The contact is PII (S-4): it is threaded transiently to the masking
+        // gateway/sender below and is never logged, stored, or placed in an event/feed (ADR-0013 PII rule).
+        RecipientContact contact = needsContact(selected, smsAllowed)
+                ? recipientContactApi.contactFor(recipientProfileId).orElse(EMPTY_CONTACT)
+                : EMPTY_CONTACT;
+
         return selected.stream()
                 .map(channel -> queueAndSend(recipientProfileId, type, channel, payloadRef, sourceId,
-                        title, body, smsAllowed))
+                        title, body, smsAllowed, contact))
                 .toList();
+    }
+
+    /**
+     * @return {@code true} if any selected channel needs a resolved contact — an SMS or EMAIL row, or a PUSH
+     *         that may degrade to SMS — so a FEED/PUSH-only dispatch with no SMS fallback never pays for a
+     *         contact lookup (KISS on the fan-out hot path).
+     */
+    private boolean needsContact(Set<Channel> selected, boolean smsAllowed) {
+        return selected.contains(Channel.SMS)
+                || selected.contains(Channel.EMAIL)
+                || (selected.contains(Channel.PUSH) && smsAllowed);
     }
 
     /** Loads the recipient's prefs for this type, keyed by channel for O(1) lookup. */
@@ -195,10 +244,13 @@ public class NotificationDispatchService {
     /**
      * Idempotently queues a notification for one channel, then attempts delivery, recording the outcome.
      * On PUSH with no device token, falls back to SMS if SMS is permissible for this recipient.
+     *
+     * @param contact the recipient's pre-resolved raw MSISDN/email ({@link #EMPTY_CONTACT} when none) — PII
+     *                handed only to the masking gateway/sender, never logged here (S-4).
      */
     private Notification queueAndSend(UUID recipientProfileId, NotificationType type, Channel channel,
                                       String payloadRef, UUID sourceId, String title, String body,
-                                      boolean smsAllowed) {
+                                      boolean smsAllowed, RecipientContact contact) {
         String key = idempotencyKey(type, channel, recipientProfileId, sourceId);
         Optional<Notification> existing = notificationRepository.findByIdempotencyKey(key);
         if (existing.isPresent()) {
@@ -207,18 +259,25 @@ public class NotificationDispatchService {
         }
         Notification n = notificationRepository.save(
                 Notification.queue(recipientProfileId, type, channel, payloadRef, key));
-        deliver(n, recipientProfileId, type, sourceId, title, body, smsAllowed);
+        deliver(n, recipientProfileId, type, sourceId, title, body, smsAllowed, contact);
         return n;
     }
 
-    /** Attempts delivery over the row's channel; FEED is delivered by persistence alone (retained item). */
+    /**
+     * Attempts delivery over the row's channel; FEED is delivered by persistence alone (retained item).
+     * SMS/email are addressed with the recipient's pre-resolved raw contact ({@code contact}); a missing
+     * contact for the channel is a graceful skip (row marked {@code FAILED} with a non-PII reason), never a
+     * crash (EI-3/6).
+     */
     private void deliver(Notification n, UUID recipientProfileId, NotificationType type, UUID sourceId,
-                         String title, String body, boolean smsAllowed) {
+                         String title, String body, boolean smsAllowed, RecipientContact contact) {
         switch (n.getChannel()) {
             case FEED ->
                 // The feed item IS the persisted row; mark delivered immediately (EI-5).
                     n.markDelivered(clock.now());
             case PUSH -> {
+                // PUSH addresses the recipient by their (non-PII) profile id ref — the push provider maps it
+                // to the device token registry; it never carries a phone/email.
                 PushSender.PushResult r = pushSender.send(new PushSender.PushMessage(
                         recipientProfileId.toString(), title, body,
                         sourceId == null ? null : sourceId.toString(), n.getIdempotencyKey()));
@@ -227,20 +286,23 @@ public class NotificationDispatchService {
                 } else if (r.noToken() && smsAllowed) {
                     // Degrade push → SMS (US-5.1, EI-5): record this row failed-over, queue an SMS row.
                     n.markFailed("NO_PUSH_TOKEN_FELL_BACK_TO_SMS");
-                    fallbackToSms(recipientProfileId, type, sourceId, body);
+                    fallbackToSms(recipientProfileId, type, sourceId, body, contact);
                 } else {
                     n.markFailed(r.reason() == null ? "PUSH_FAILED" : r.reason());
                 }
             }
             case SMS ->
-                // SMS body carries no PII beyond the message; recipient resolution (MSISDN) is the
-                // adapter's job — here we pass the profile id ref, the adapter maps to the phone.
-                // TODO(wiring): resolve the recipient MSISDN via identity's public API in the adapter.
-                    sendSms(n, recipientProfileId, body);
+                    sendSms(n, contact, body);
             case EMAIL -> {
-                // TODO(wiring): resolve the recipient email via identity's public API in the adapter.
+                if (!contact.hasEmail()) {
+                    // No deliverable (verified) email for this recipient — skip gracefully (EI-6), never send
+                    // to a missing/unverified address. The row records the skip with a non-PII reason.
+                    n.markFailed("NO_EMAIL_FOR_RECIPIENT");
+                    return;
+                }
+                // The sender masks the address before logging; the raw value is passed only here, not logged.
                 EmailSender.EmailResult r = emailSender.send(new EmailSender.EmailMessage(
-                        recipientProfileId.toString(), title, body, type.name(), n.getIdempotencyKey()));
+                        contact.email(), title, body, type.name(), n.getIdempotencyKey()));
                 if (r.accepted()) {
                     n.markSent(clock.now());
                 } else {
@@ -250,22 +312,37 @@ public class NotificationDispatchService {
         }
     }
 
-    /** Queues + sends an SMS fallback row (separate idempotency key so it is its own auditable delivery). */
-    private void fallbackToSms(UUID recipientProfileId, NotificationType type, UUID sourceId, String body) {
+    /**
+     * Queues + sends an SMS fallback row (separate idempotency key so it is its own auditable delivery),
+     * addressed with the recipient's pre-resolved MSISDN ({@code contact}).
+     */
+    private void fallbackToSms(UUID recipientProfileId, NotificationType type, UUID sourceId, String body,
+                               RecipientContact contact) {
         String key = idempotencyKey(type, Channel.SMS, recipientProfileId, sourceId) + ":fallback";
         if (notificationRepository.existsByIdempotencyKey(key)) {
             return;
         }
         Notification sms = notificationRepository.save(
                 Notification.queue(recipientProfileId, type, Channel.SMS, null, key));
-        sendSms(sms, recipientProfileId, body);
+        sendSms(sms, contact, body);
     }
 
-    /** Sends one SMS and records the outcome; never throws on a routine failure (EI-3). */
-    private void sendSms(Notification n, UUID recipientProfileId, String body) {
+    /**
+     * Sends one SMS to the recipient's pre-resolved MSISDN and records the outcome; never throws on a routine
+     * failure (EI-3). A recipient with no usable MSISDN is a graceful skip (row {@code FAILED} with a non-PII
+     * reason), not a send to a bad number and not a crash.
+     *
+     * @param contact the recipient's resolved contact; only {@link RecipientContact#msisdn()} is read here.
+     *                The raw number is passed straight to the masking {@code SmsGateway} — never logged (S-4).
+     */
+    private void sendSms(Notification n, RecipientContact contact, String body) {
+        if (!contact.hasMsisdn()) {
+            // No phone resolved (no profile, or an anonymised/tombstoned recipient) — skip gracefully (EI-3).
+            n.markFailed("NO_MSISDN_FOR_RECIPIENT");
+            return;
+        }
         SmsGateway.SmsSendResult r = smsGateway.send(new SmsGateway.SmsMessage(
-                // The adapter resolves the destination MSISDN from the profile ref; we never log a phone.
-                recipientProfileId.toString(), body, "NOTIFICATION", n.getIdempotencyKey()));
+                contact.msisdn(), body, "NOTIFICATION", n.getIdempotencyKey()));
         if (r.accepted()) {
             n.markSent(clock.now());
         } else {

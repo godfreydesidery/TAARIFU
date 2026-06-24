@@ -11,8 +11,11 @@ import com.taarifu.communications.domain.port.SmsGateway;
 import com.taarifu.communications.application.service.NotificationDispatchService;
 import com.taarifu.communications.domain.repository.NotificationPreferenceRepository;
 import com.taarifu.communications.domain.repository.NotificationRepository;
+import com.taarifu.identity.api.RecipientContactApi;
+import com.taarifu.identity.api.dto.RecipientContact;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.time.LocalTime;
@@ -24,6 +27,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -47,11 +51,16 @@ class NotificationDispatchServiceTest {
     private SmsGateway smsGateway;
     private PushSender pushSender;
     private EmailSender emailSender;
+    private RecipientContactApi recipientContactApi;
     private FixedClock clock;
     private NotificationDispatchService service;
 
     private final UUID recipient = UUID.randomUUID();
     private final UUID source = UUID.randomUUID();
+
+    /** A usable, verified contact the default stub resolves for the recipient (raw — never asserted in logs). */
+    private static final RecipientContact CONTACT =
+            new RecipientContact("+255712345678", "mwananchi@example.tz");
 
     @BeforeEach
     void setUp() {
@@ -60,10 +69,11 @@ class NotificationDispatchServiceTest {
         smsGateway = mock(SmsGateway.class);
         pushSender = mock(PushSender.class);
         emailSender = mock(EmailSender.class);
+        recipientContactApi = mock(RecipientContactApi.class);
         // Noon UTC == 15:00 EAT — outside any typical night quiet window.
         clock = new FixedClock(Instant.parse("2026-06-23T12:00:00Z"));
         service = new NotificationDispatchService(notificationRepository, preferenceRepository,
-                smsGateway, pushSender, emailSender, clock);
+                smsGateway, pushSender, emailSender, recipientContactApi, clock);
 
         // Default: no preferences, no existing dispatch rows, save returns the argument.
         when(preferenceRepository.findByProfileId(any())).thenReturn(List.of());
@@ -73,6 +83,9 @@ class NotificationDispatchServiceTest {
                 .thenAnswer(inv -> inv.getArgument(0));
         when(pushSender.send(any())).thenReturn(PushSender.PushResult.ok());
         when(smsGateway.send(any())).thenReturn(SmsGateway.SmsSendResult.accepted("ok"));
+        when(emailSender.send(any())).thenReturn(EmailSender.EmailResult.accepted("ok"));
+        // By default identity resolves a usable phone+email for the recipient.
+        when(recipientContactApi.contactFor(any())).thenReturn(Optional.of(CONTACT));
     }
 
     @Test
@@ -97,7 +110,7 @@ class NotificationDispatchServiceTest {
     }
 
     @Test
-    void smsIsSent_whenCitizenOptedIn() {
+    void smsIsSent_whenCitizenOptedIn_addressedToTheResolvedMsisdn() {
         when(preferenceRepository.findByProfileId(recipient)).thenReturn(List.of(
                 NotificationPreference.of(recipient, NotificationType.NEW_ANNOUNCEMENT, Channel.SMS, true)));
 
@@ -106,7 +119,71 @@ class NotificationDispatchServiceTest {
 
         assertThat(sent).extracting(Notification::getChannel)
                 .containsExactlyInAnyOrder(Channel.FEED, Channel.SMS);
-        verify(smsGateway, times(1)).send(any());
+        // The gateway must receive the recipient's REAL E.164 (resolved via identity), never the profile id.
+        ArgumentCaptor<SmsGateway.SmsMessage> msg = ArgumentCaptor.forClass(SmsGateway.SmsMessage.class);
+        verify(smsGateway, times(1)).send(msg.capture());
+        assertThat(msg.getValue().recipientE164()).isEqualTo(CONTACT.msisdn());
+        assertThat(msg.getValue().recipientE164()).isNotEqualTo(recipient.toString());
+    }
+
+    @Test
+    void emailIsSent_addressedToTheResolvedVerifiedAddress() {
+        when(preferenceRepository.findByProfileId(recipient)).thenReturn(List.of(
+                NotificationPreference.of(recipient, NotificationType.NEW_ANNOUNCEMENT, Channel.EMAIL, true)));
+
+        service.dispatch(recipient, NotificationType.NEW_ANNOUNCEMENT,
+                Set.of(Channel.FEED, Channel.EMAIL), "ref", source, "T", "B");
+
+        // The email sender must receive the recipient's REAL address (resolved via identity).
+        ArgumentCaptor<EmailSender.EmailMessage> msg = ArgumentCaptor.forClass(EmailSender.EmailMessage.class);
+        verify(emailSender, times(1)).send(msg.capture());
+        assertThat(msg.getValue().recipientEmail()).isEqualTo(CONTACT.email());
+    }
+
+    @Test
+    void smsSkippedGracefully_whenRecipientHasNoMsisdn() {
+        // An opted-in recipient whose contact cannot be resolved (no profile / anonymised) → empty.
+        when(preferenceRepository.findByProfileId(recipient)).thenReturn(List.of(
+                NotificationPreference.of(recipient, NotificationType.NEW_ANNOUNCEMENT, Channel.SMS, true)));
+        when(recipientContactApi.contactFor(recipient)).thenReturn(Optional.empty());
+
+        List<Notification> sent = service.dispatch(recipient, NotificationType.NEW_ANNOUNCEMENT,
+                Set.of(Channel.FEED, Channel.SMS), "ref", source, "T", "B");
+
+        // No gateway call (no number to dial), and the SMS row records the non-PII skip reason — never a crash.
+        verify(smsGateway, never()).send(any());
+        assertThat(sent).filteredOn(n -> n.getChannel() == Channel.SMS)
+                .isNotEmpty()
+                .allMatch(n -> n.getStatus() == NotificationStatus.FAILED);
+        // FEED is still retained — one unreachable channel never loses the durable item (EI-5).
+        assertThat(sent).filteredOn(n -> n.getChannel() == Channel.FEED)
+                .allMatch(n -> n.getStatus() == NotificationStatus.DELIVERED);
+    }
+
+    @Test
+    void emailSkippedGracefully_whenRecipientHasNoVerifiedEmail() {
+        when(preferenceRepository.findByProfileId(recipient)).thenReturn(List.of(
+                NotificationPreference.of(recipient, NotificationType.NEW_ANNOUNCEMENT, Channel.EMAIL, true)));
+        // Identity resolves a phone but withholds the (unverified/absent) email → email is null.
+        when(recipientContactApi.contactFor(recipient))
+                .thenReturn(Optional.of(new RecipientContact("+255712345678", null)));
+
+        List<Notification> sent = service.dispatch(recipient, NotificationType.NEW_ANNOUNCEMENT,
+                Set.of(Channel.FEED, Channel.EMAIL), "ref", source, "T", "B");
+
+        verify(emailSender, never()).send(any());
+        assertThat(sent).filteredOn(n -> n.getChannel() == Channel.EMAIL)
+                .isNotEmpty()
+                .allMatch(n -> n.getStatus() == NotificationStatus.FAILED);
+    }
+
+    @Test
+    void feedOnlyDispatch_doesNotResolveContact() {
+        // A FEED-only dispatch needs no phone/email — identity must not be queried (no needless PII access).
+        service.dispatch(recipient, NotificationType.NEW_ANNOUNCEMENT,
+                Set.of(Channel.FEED), "ref", source, "T", "B");
+
+        verify(recipientContactApi, never()).contactFor(any());
     }
 
     @Test

@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Spring Data repository for the {@link OutboxEvent} store (ADR-0014 §3).
@@ -90,4 +91,91 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
      */
     @Query("SELECT COUNT(e) FROM OutboxEvent e WHERE e.status = com.taarifu.common.outbox.OutboxStatus.FAILED")
     long countFailed();
+
+    /**
+     * Re-queues a single terminally {@link OutboxStatus#FAILED} row back to {@link OutboxStatus#PENDING}
+     * for reprocessing — the operator DLQ-replay primitive (ADR-0014 revisit trigger (c); review P4-4).
+     *
+     * <p>Resets the row to a clean pending state: {@code status='PENDING'}, {@code attempts=0},
+     * {@code last_error=NULL}, {@code processed_at=NULL}, and {@code next_attempt_at=:now} (due immediately,
+     * so the relay re-picks it on the next poll).</p>
+     *
+     * <p><b>🔒 STRICTLY FAILED → PENDING.</b> The {@code WHERE status='FAILED'} predicate pins the only
+     * legal source state, so this can <b>never</b> touch a {@link OutboxStatus#PROCESSED} row (which would
+     * re-fire an already-delivered effect) nor a still-in-flight {@link OutboxStatus#PENDING} row. This also
+     * makes replay <b>idempotent</b>: a second call for the same id matches 0 rows (the first call already
+     * moved it to PENDING), returning 0.</p>
+     *
+     * <p>Native SQL (not a managed-entity update) so the requeue is a single, lock-free statement that does
+     * not load the row into the persistence context. {@code @Modifying(clearAutomatically=true)} flushes the
+     * context so a subsequent read in the same transaction does not see a stale managed copy.</p>
+     *
+     * @param publicId the public id of the FAILED row to re-queue.
+     * @param now      the instant to set as {@code next_attempt_at} (the row becomes due immediately).
+     * @return {@code 1} if a FAILED row with this id was re-queued, {@code 0} otherwise (already PENDING,
+     *         PROCESSED, or no such row — all no-ops).
+     */
+    @Modifying(clearAutomatically = true)
+    @Query(value = """
+            UPDATE outbox_event
+            SET status = 'PENDING', attempts = 0, last_error = NULL,
+                processed_at = NULL, next_attempt_at = :now
+            WHERE public_id = :publicId AND status = 'FAILED'
+            """, nativeQuery = true)
+    int requeueFailedById(@Param("publicId") UUID publicId, @Param("now") Instant now);
+
+    /**
+     * Re-queues a bounded batch of terminally {@link OutboxStatus#FAILED} rows back to
+     * {@link OutboxStatus#PENDING}, optionally filtered by {@code event_type} and by a {@code processed_at}
+     * age window (when the row reached the FAILED terminal state) — the bulk operator DLQ-replay primitive
+     * (ADR-0014 revisit trigger (c); review P4-4).
+     *
+     * <p>Each matched row is reset to a clean pending state exactly as {@link #requeueFailedById}:
+     * {@code attempts=0}, {@code last_error=NULL}, {@code processed_at=NULL}, {@code next_attempt_at=:now}.</p>
+     *
+     * <p><b>Optional filters (pass {@code null} to skip each).</b> {@code eventType} restricts replay to one
+     * taxonomy key (e.g. retry only {@code REPORT_ROUTED} after a routing fix). {@code processedFrom} /
+     * {@code processedTo} bound the window on {@code processed_at} — the time the row was FAILED — so an
+     * operator can replay, say, only failures from a known incident window. Each predicate is null-guarded in
+     * SQL ({@code :param IS NULL OR column …}), so an unset filter widens the match rather than excluding
+     * everything.</p>
+     *
+     * <p><b>WHY bounded ({@code id IN (SELECT … LIMIT)}):</b> a mass replay must not re-queue an unbounded
+     * backlog in one statement (long lock, fat transaction, and a sudden relay surge). The {@code LIMIT}
+     * caps each call; the caller may loop. Ordering by {@code processed_at} re-queues the oldest failures
+     * first.</p>
+     *
+     * <p><b>🔒 STRICTLY FAILED → PENDING + idempotent</b> — same guarantee as {@link #requeueFailedById}:
+     * the {@code status='FAILED'} predicate is the only source state, so PROCESSED/PENDING rows are never
+     * touched, and re-running the same window re-queues progressively fewer rows (already-moved rows no
+     * longer match), converging to 0.</p>
+     *
+     * @param eventType     restrict to this {@code event_type}, or {@code null} for any.
+     * @param processedFrom inclusive lower bound on {@code processed_at}, or {@code null} for no lower bound.
+     * @param processedTo   inclusive upper bound on {@code processed_at}, or {@code null} for no upper bound.
+     * @param now           the instant to set as {@code next_attempt_at} (rows become due immediately).
+     * @param batchSize     the maximum number of FAILED rows to re-queue in this statement.
+     * @return the number of rows re-queued (0 when none match; may be {@code < batchSize} when the eligible
+     *         set is smaller).
+     */
+    @Modifying(clearAutomatically = true)
+    @Query(value = """
+            UPDATE outbox_event
+            SET status = 'PENDING', attempts = 0, last_error = NULL,
+                processed_at = NULL, next_attempt_at = :now
+            WHERE id IN (
+                SELECT id FROM outbox_event
+                WHERE status = 'FAILED'
+                  AND (:eventType IS NULL OR event_type = :eventType)
+                  AND (CAST(:processedFrom AS timestamptz) IS NULL OR processed_at >= :processedFrom)
+                  AND (CAST(:processedTo   AS timestamptz) IS NULL OR processed_at <= :processedTo)
+                ORDER BY processed_at
+                LIMIT :batchSize
+            )
+            """, nativeQuery = true)
+    int requeueFailedBatch(@Param("eventType") String eventType,
+                           @Param("processedFrom") Instant processedFrom,
+                           @Param("processedTo") Instant processedTo,
+                           @Param("now") Instant now,
+                           @Param("batchSize") int batchSize);
 }

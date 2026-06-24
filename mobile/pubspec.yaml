@@ -43,6 +43,11 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # Drives the full-app smoke test (integration_test/app_smoke_test.dart): pumps
+  # the real onboarding widget tree and asserts the first screen renders. Part of
+  # the Flutter SDK (no extra APK weight — test-only).
+  integration_test:
+    sdk: flutter
   bloc_test: ^10.0.0
   flutter_lints: ^6.0.0
 

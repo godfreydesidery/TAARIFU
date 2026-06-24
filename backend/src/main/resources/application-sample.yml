@@ -44,6 +44,13 @@
 # 'postgis' (default; requires seeded ward boundaries) or 'stub' (dev/test, no geometry needed).
 # TAARIFU_GEOCODER=postgis
 
+# --- USSD aggregator webhook auth (P2-1, PRD §14/§18) ---
+# Shared secret the aggregator presents on POST /ussd/gateway (constant-time header compare). FAIL-CLOSED:
+# if unset, the webhook rejects EVERY call — do not expose USSD in prod until this is set. Env only, never
+# committed. Generate: openssl rand -base64 48
+# TAARIFU_USSD_GATEWAY_SECRET=<set-in-env>     # SECRET — shared with the aggregator out-of-band
+# TAARIFU_USSD_GATEWAY_HEADER=X-Ussd-Secret    # header the aggregator presents the secret in
+
 # --- Communications channels (PRD §21 EI-3/5/6) ---
 # Each channel defaults to the safe LOGGING stub (no external calls). Set the provider AND its
 # required endpoints to enable a real adapter. Secrets are env/secret-mount only — NEVER committed.

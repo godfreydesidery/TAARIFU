@@ -145,6 +145,17 @@ taarifu:
     # Active Geocoder adapter: 'postgis' (default, source of truth) or 'stub' (dev/test).
     geocoder: ${TAARIFU_GEOCODER:postgis}
 
+  # --- USSD aggregator webhook (POST /ussd/gateway) — server-to-server auth (P2-1, PRD §14/§18). ---
+  # The webhook is permitAll() (a feature-phone caller has no JWT), so the aggregator link is authenticated
+  # by a SHARED SECRET header (constant-time compare in UssdGatewaySecretFilter). The secret is env-only,
+  # NEVER committed. FAIL-CLOSED: when the secret is unset the webhook rejects every call (a disabled
+  # webhook, not an open one) — so do not expose USSD in prod until TAARIFU_USSD_GATEWAY_SECRET is set.
+  # Per-MSISDN rate-limiting (UssdGatewayRateLimiter) additionally throttles keypress + account-creation abuse.
+  ussd:
+    gateway:
+      secret: ${TAARIFU_USSD_GATEWAY_SECRET:}              # SECRET — env/secret-mount only, never committed
+      header: ${TAARIFU_USSD_GATEWAY_HEADER:X-Ussd-Secret} # header the aggregator presents the secret in
+
   # --- Communications channels (SMS / push / email) — outbound adapter selectors + endpoints. ---
   # Each channel selects exactly ONE adapter bean via @ConditionalOnProperty on the `provider` key.
   # The default is the safe LOGGING stub (matchIfMissing=true on the stubs), so dev/test AND a

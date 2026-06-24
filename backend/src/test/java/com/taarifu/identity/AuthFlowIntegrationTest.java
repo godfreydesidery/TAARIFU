@@ -4,6 +4,9 @@ import com.taarifu.AbstractPostgisIntegrationTest;
 import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.common.domain.port.ClockPort;
+import com.taarifu.common.security.AuthRateLimiter;
+import com.taarifu.common.security.InMemoryAuthRateLimiter;
 import com.taarifu.common.security.TierResolver;
 import com.taarifu.communications.infrastructure.adapter.LoggingSmsGatewayStub;
 import com.taarifu.geography.test.GeographyTestData;
@@ -19,8 +22,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -55,26 +61,114 @@ class AuthFlowIntegrationTest extends AbstractPostgisIntegrationTest {
     @Autowired private TierResolver tierResolver;
     @Autowired private LoggingSmsGatewayStub smsStub;
     @Autowired private GeographyTestData geographyTestData;
+    @Autowired private TransactionTemplate txTemplate;
+    @Autowired private ResettableAuthRateLimiter rateLimiter;
 
     @PersistenceContext private EntityManager em;
 
+    /**
+     * Test-only {@link AuthRateLimiter} that is <b>resettable between methods</b> and that does not let the
+     * real per-recipient OTP-send window leak across the methods of this suite.
+     *
+     * <p>WHY this exists (and what it deliberately keeps real). These flow tests share one Spring context, so
+     * the production {@link InMemoryAuthRateLimiter} singleton would carry its sliding-window state across
+     * methods: e.g. the 1-send-per-60s OTP cap blocks a method's <i>second legitimate</i> same-phone send
+     * (signup-then-login OTP, or the duplicate-signup probe) and a prior method's login failures would taint
+     * the lockout boundary — both surface here as a spurious {@code RATE_LIMITED}. This double delegates
+     * <b>login lockout/backoff to a real {@link InMemoryAuthRateLimiter}</b> (so
+     * {@code passwordLogin_locksOutAfterRepeatedFailures} still proves the genuine S-2 lockout), but treats
+     * OTP send/verify as <b>always-permit</b> here — the OTP send-rate and the durable verify cap are proven
+     * directly in {@code InMemoryAuthRateLimiterTest} and {@code AuthDurableCapAndEffectiveWindowIntegrationTest},
+     * not in these end-to-end flow assertions. {@link #reset()} (called per test) gives each method a clean
+     * limiter, mirroring the per-test DB cleanup.</p>
+     */
+    static final class ResettableAuthRateLimiter implements AuthRateLimiter {
+
+        private final ClockPort clock;
+        private volatile InMemoryAuthRateLimiter loginDelegate;
+
+        ResettableAuthRateLimiter(ClockPort clock) {
+            this.clock = clock;
+            this.loginDelegate = new InMemoryAuthRateLimiter(clock);
+        }
+
+        /** Clears all limiter state (fresh login lockout window) for the next test. */
+        void reset() {
+            this.loginDelegate = new InMemoryAuthRateLimiter(clock);
+        }
+
+        /** OTP send-rate is not under test here — always permit so legitimate same-phone re-sends pass. */
+        @Override public boolean allowOtpSend(String recipientHash) {
+            return true;
+        }
+
+        /** OTP verify cap is proven by the durable DB counter elsewhere — always permit here. */
+        @Override public boolean allowOtpVerifyAttempt(String challengeKey) {
+            return true;
+        }
+
+        /** Login lockout/backoff is genuine (delegated) so the S-2 lockout assertion stays real. */
+        @Override public boolean allowLoginAttempt(String accountHash) {
+            return loginDelegate.allowLoginAttempt(accountHash);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void recordLoginFailure(String accountHash) {
+            loginDelegate.recordLoginFailure(accountHash);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void resetLogin(String accountHash) {
+            loginDelegate.resetLogin(accountHash);
+        }
+    }
+
+    /** Registers the resettable limiter as the primary {@link AuthRateLimiter} for this test context only. */
+    @TestConfiguration
+    static class RateLimiterTestConfig {
+        /**
+         * @param clock the shared system clock (so the delegated login window behaves as in production).
+         * @return the resettable limiter, {@code @Primary} so it wins over {@link InMemoryAuthRateLimiter}.
+         */
+        @Bean
+        @Primary
+        ResettableAuthRateLimiter resettableAuthRateLimiter(ClockPort clock) {
+            return new ResettableAuthRateLimiter(clock);
+        }
+    }
+
+    /**
+     * Cleans the identity/audit tables and re-seeds the CITIZEN catalogue row before each test.
+     *
+     * <p>WHY a {@link TransactionTemplate} rather than {@code @Transactional} on this {@code @BeforeEach}:
+     * a {@code @Transactional} annotation on a JUnit lifecycle callback is <b>not</b> woven (the test
+     * instance is not a Spring AOP proxy, and {@code TransactionalTestExecutionListener} only manages the
+     * {@code @Test}-method transaction, not {@code @BeforeEach}). The native {@code executeUpdate} calls
+     * then run with no bound transaction and raise {@code TransactionRequiredException}. Wrapping the writes
+     * in a programmatic transaction binds a real {@code PlatformTransactionManager} and <b>commits</b> the
+     * seed — which this suite needs, because the live tier resolver / security stack read the committed
+     * state on their own connections (matches {@code VerificationFlowIntegrationTest}).</p>
+     */
     @BeforeEach
-    @Transactional
     void seedRolesAndCleanup() {
-        // Clean the identity/audit tables between tests (create-drop leaves them across methods).
-        em.createNativeQuery("DELETE FROM audit_event").executeUpdate();
-        em.createNativeQuery("DELETE FROM refresh_token").executeUpdate();
-        em.createNativeQuery("DELETE FROM otp_challenge").executeUpdate();
-        em.createNativeQuery("DELETE FROM role_assignment").executeUpdate();
-        em.createNativeQuery("DELETE FROM profile_location").executeUpdate();
-        em.createNativeQuery("DELETE FROM profile").executeUpdate();
-        em.createNativeQuery("DELETE FROM app_user").executeUpdate();
-        em.createNativeQuery("DELETE FROM role").executeUpdate();
-        // Seed the CITIZEN catalogue row the signup flow grants.
-        em.createNativeQuery("""
-                INSERT INTO role (public_id, version, created_at, deleted, name, description)
-                VALUES (:pid, 0, now(), false, 'CITIZEN', 'Registered citizen')
-                """).setParameter("pid", UUID.randomUUID()).executeUpdate();
+        // Fresh limiter per method so a prior method's OTP-send window / login-lockout state cannot bleed in.
+        rateLimiter.reset();
+        txTemplate.executeWithoutResult(s -> {
+            // Clean the identity/audit tables between tests (create-drop leaves them across methods).
+            em.createNativeQuery("DELETE FROM audit_event").executeUpdate();
+            em.createNativeQuery("DELETE FROM refresh_token").executeUpdate();
+            em.createNativeQuery("DELETE FROM otp_challenge").executeUpdate();
+            em.createNativeQuery("DELETE FROM role_assignment").executeUpdate();
+            em.createNativeQuery("DELETE FROM profile_location").executeUpdate();
+            em.createNativeQuery("DELETE FROM profile").executeUpdate();
+            em.createNativeQuery("DELETE FROM app_user").executeUpdate();
+            em.createNativeQuery("DELETE FROM role").executeUpdate();
+            // Seed the CITIZEN catalogue row the signup flow grants.
+            em.createNativeQuery("""
+                    INSERT INTO role (public_id, version, created_at, deleted, name, description)
+                    VALUES (:pid, 0, now(), false, 'CITIZEN', 'Registered citizen')
+                    """).setParameter("pid", UUID.randomUUID()).executeUpdate();
+        });
     }
 
     private String requestAndReadCode(UUID challengeId, String phone) {

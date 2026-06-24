@@ -10,7 +10,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.UUID;
@@ -38,22 +38,33 @@ class TierGateForgedClaimIntegrationTest extends AbstractHttpIntegrationTest {
     @Autowired private JwtService jwtService;
     @Autowired private SignupService signupService;
     @Autowired private LoggingSmsGatewayStub smsStub;
+    @Autowired private TransactionTemplate txTemplate;
     @PersistenceContext private EntityManager em;
 
+    /**
+     * Cleans the identity tables and re-seeds CITIZEN before each test.
+     *
+     * <p>WHY a {@link TransactionTemplate} rather than {@code @Transactional} on this {@code @BeforeEach}:
+     * the annotation is not woven on a JUnit lifecycle callback (no AOP proxy; the test transaction listener
+     * only covers {@code @Test}), so the native {@code executeUpdate} calls would raise
+     * {@code TransactionRequiredException}. The programmatic transaction binds a manager and commits the
+     * seed so the HTTP/security stack reads it on its own connection.</p>
+     */
     @BeforeEach
-    @Transactional
     void seed() {
-        em.createNativeQuery("DELETE FROM audit_event").executeUpdate();
-        em.createNativeQuery("DELETE FROM refresh_token").executeUpdate();
-        em.createNativeQuery("DELETE FROM otp_challenge").executeUpdate();
-        em.createNativeQuery("DELETE FROM role_assignment").executeUpdate();
-        em.createNativeQuery("DELETE FROM profile").executeUpdate();
-        em.createNativeQuery("DELETE FROM app_user").executeUpdate();
-        em.createNativeQuery("DELETE FROM role").executeUpdate();
-        em.createNativeQuery("""
-                INSERT INTO role (public_id, version, created_at, deleted, name, description)
-                VALUES (:pid, 0, now(), false, 'CITIZEN', 'Registered citizen')
-                """).setParameter("pid", UUID.randomUUID()).executeUpdate();
+        txTemplate.executeWithoutResult(s -> {
+            em.createNativeQuery("DELETE FROM audit_event").executeUpdate();
+            em.createNativeQuery("DELETE FROM refresh_token").executeUpdate();
+            em.createNativeQuery("DELETE FROM otp_challenge").executeUpdate();
+            em.createNativeQuery("DELETE FROM role_assignment").executeUpdate();
+            em.createNativeQuery("DELETE FROM profile").executeUpdate();
+            em.createNativeQuery("DELETE FROM app_user").executeUpdate();
+            em.createNativeQuery("DELETE FROM role").executeUpdate();
+            em.createNativeQuery("""
+                    INSERT INTO role (public_id, version, created_at, deleted, name, description)
+                    VALUES (:pid, 0, now(), false, 'CITIZEN', 'Registered citizen')
+                    """).setParameter("pid", UUID.randomUUID()).executeUpdate();
+        });
     }
 
     @Test

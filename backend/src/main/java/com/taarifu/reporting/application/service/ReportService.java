@@ -24,6 +24,7 @@ import com.taarifu.reporting.domain.model.enums.CaseEventType;
 import com.taarifu.reporting.domain.model.enums.ReportPriority;
 import com.taarifu.reporting.domain.model.enums.ReportStatus;
 import com.taarifu.reporting.domain.model.enums.ReportVisibility;
+import com.taarifu.reporting.domain.port.AttachmentValidator;
 import com.taarifu.reporting.domain.port.WardResolver;
 import com.taarifu.reporting.domain.repository.CaseEventRepository;
 import com.taarifu.reporting.domain.repository.IssueCategoryRepository;
@@ -93,6 +94,7 @@ public class ReportService implements ReportLifecycleApi {
     private final ReportingMapper mapper;
     private final ClockPort clock;
     private final OutboxWriter outboxWriter;
+    private final AttachmentValidator attachmentValidator;
 
     /**
      * @param reportRepository    report persistence port.
@@ -105,11 +107,14 @@ public class ReportService implements ReportLifecycleApi {
      * @param outboxWriter        the transactional-outbox port; {@link #fileReport} appends a
      *                            {@link ReportEventTypes#REPORT_ROUTED} event in the filing transaction so a
      *                            responders handler creates the OWNER assignment asynchronously (ADR-0014 §5b).
+     * @param attachmentValidator validates+binds the citizen's media attachment refs at file time (delegates
+     *                            to the media module's public api port; the bind runs in the file transaction
+     *                            so a bad attachment set rolls the whole filing back).
      */
     public ReportService(ReportRepository reportRepository, IssueCategoryRepository categoryRepository,
                          CaseEventRepository caseEventRepository, WardResolver wardResolver,
                          CodeGenerator codeGenerator, ReportingMapper mapper, ClockPort clock,
-                         OutboxWriter outboxWriter) {
+                         OutboxWriter outboxWriter, AttachmentValidator attachmentValidator) {
         this.reportRepository = reportRepository;
         this.categoryRepository = categoryRepository;
         this.caseEventRepository = caseEventRepository;
@@ -118,6 +123,7 @@ public class ReportService implements ReportLifecycleApi {
         this.mapper = mapper;
         this.clock = clock;
         this.outboxWriter = outboxWriter;
+        this.attachmentValidator = attachmentValidator;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -169,6 +175,9 @@ public class ReportService implements ReportLifecycleApi {
         // SLA: dueAt = filedAt + category TTR (UC-D04).
         var dueAt = clock.now().plus(category.getDefaultSlaTtrMinutes(), ChronoUnit.MINUTES);
 
+        // Parse the citizen-supplied attachment refs (media public ids) early so a malformed id is a clean
+        // 400 before any persistence; the canonical bound set is established via the media port below.
+        java.util.List<UUID> attachmentIds = parseAttachmentRefs(request.attachmentRefs());
         String attachmentRefs = joinAttachmentRefs(request.attachmentRefs());
 
         Report report = new Report(effectiveReporterId, category, request.title(), request.description(),
@@ -178,6 +187,13 @@ public class ReportService implements ReportLifecycleApi {
         // Issue the human ticket code from the DB sequence before persist (race-safe, gap-tolerant).
         report.setCode(codeGenerator.nextCode(REPORT_CODE_PREFIX, REPORT_CODE_SEQUENCE, REPORT_CODE_PAD_WIDTH));
         reportRepository.save(report);
+
+        // ATTACHMENTS: validate the refs are THIS citizen's own confirmed uploads and bind them to the
+        // just-saved report (the report's publicId is now assigned). Runs in THIS file transaction via the
+        // media.api port, so any bad/forged/foreign attachment id rejects the whole filing (atomic). An
+        // anonymous filing (effectiveReporterId == null) carrying media is rejected by the port — an
+        // account-owned attachment cannot be proven for an anonymous report (PDPA, PRD §25.3).
+        attachmentValidator.validateAndBind(report.getPublicId(), effectiveReporterId, attachmentIds);
 
         // Initial timeline entry (public): the case opened at NEW.
         appendEvent(report, CaseEventType.STATUS_CHANGE, true, effectiveReporterId,
@@ -559,5 +575,28 @@ public class ReportService implements ReportLifecycleApi {
             return null;
         }
         return String.join(",", refs);
+    }
+
+    /**
+     * Parses the citizen-supplied attachment ref strings (media public ids) into {@code UUID}s, rejecting a
+     * malformed id with a clean {@link ErrorCode#BAD_REQUEST} before any persistence.
+     *
+     * @param refs the raw ref strings, or {@code null}.
+     * @return the parsed ids (empty list if {@code null}/empty input).
+     * @throws ApiException {@link ErrorCode#BAD_REQUEST} if any ref is not a valid UUID.
+     */
+    private java.util.List<UUID> parseAttachmentRefs(java.util.List<String> refs) {
+        if (refs == null || refs.isEmpty()) {
+            return java.util.List.of();
+        }
+        java.util.List<UUID> ids = new java.util.ArrayList<>(refs.size());
+        for (String ref : refs) {
+            try {
+                ids.add(UUID.fromString(ref));
+            } catch (IllegalArgumentException badUuid) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "media.attach.unknown", String.valueOf(ref));
+            }
+        }
+        return ids;
     }
 }

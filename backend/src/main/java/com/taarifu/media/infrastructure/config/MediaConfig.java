@@ -12,11 +12,12 @@ import org.springframework.context.annotation.Configuration;
  * properties on each adapter (stub by default; the S3 adapter is selected by {@code object-store=s3}),
  * so no explicit adapter wiring is needed here.</p>
  *
- * <p>It also registers {@link MediaStoreProperties} so the S3 adapter's non-secret connection settings
- * ({@code taarifu.media.s3.*}) bind without touching the shared application bootstrap — keeping all media
- * configuration localised to this module (KISS, module-isolation).</p>
+ * <p>It also registers {@link MediaStoreProperties} (the S3 adapter's non-secret connection settings,
+ * {@code taarifu.media.s3.*}) and {@link MediaPolicyProperties} (the upload allow-list / max size,
+ * {@code taarifu.media.policy.*}) so both bind without touching the shared application bootstrap —
+ * keeping all media configuration localised to this module (KISS, module-isolation).</p>
  */
 @Configuration
-@EnableConfigurationProperties(MediaStoreProperties.class)
+@EnableConfigurationProperties({MediaStoreProperties.class, MediaPolicyProperties.class})
 public class MediaConfig {
 }

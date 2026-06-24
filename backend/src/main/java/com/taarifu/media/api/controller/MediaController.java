@@ -7,6 +7,7 @@ import com.taarifu.media.api.dto.MediaObjectDto;
 import com.taarifu.media.api.dto.ScanCallbackRequest;
 import com.taarifu.media.api.dto.UploadRequest;
 import com.taarifu.media.api.dto.UploadTicketDto;
+import com.taarifu.media.api.dto.UploadUrlRequest;
 import com.taarifu.media.application.service.MediaService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -73,6 +74,56 @@ public class MediaController {
                     + "Bytes go straight to object storage; the object is not servable until scanned CLEAN (EI-8).")
     public ApiResponse<UploadTicketDto> requestUpload(@Valid @RequestBody UploadRequest request) {
         return responses.ok(mediaService.requestUpload(request));
+    }
+
+    /**
+     * Requests a pre-signed upload URL in the citizen evidence-attachment pipeline ({@code upload-url}).
+     * Persists a {@code PENDING}, <b>unbound</b>, not-yet-confirmed record and returns the PUT URL; the
+     * media object is bound to its host report at file time by the reporting module.
+     *
+     * @param request the validated upload-url intent (host type + declared metadata; no host id yet).
+     * @return an envelope carrying the {@link UploadTicketDto}.
+     */
+    @PostMapping("/upload-url")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Request a pre-signed upload URL (attachment pipeline)",
+            description = "Creates a PENDING/unbound media record and returns a pre-signed PUT. Content-type "
+                    + "allow-list + max size are checked here (fail fast) and authoritatively at confirm.")
+    public ApiResponse<UploadTicketDto> requestUploadUrl(@Valid @RequestBody UploadUrlRequest request) {
+        return responses.ok(mediaService.requestUploadUrl(request));
+    }
+
+    /**
+     * Confirms a completed upload ({@code confirm}). Validates the declared content-type allow-list + max
+     * size, marks the object uploaded, and makes it scan-eligible. Only the uploader may confirm.
+     *
+     * @param publicId the media object's public id.
+     * @return an envelope carrying the resulting {@link MediaObjectDto} (now {@code uploaded=true}).
+     */
+    @PostMapping("/{publicId}/confirm")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Confirm an upload (validate content-type + size)",
+            description = "Marks the object uploaded after the pre-signed PUT; enforces the content-type "
+                    + "allow-list and max size; rejects a non-owner (403). Idempotent on retry.")
+    public ApiResponse<MediaObjectDto> confirm(@PathVariable UUID publicId) {
+        return responses.ok(mediaService.confirm(publicId));
+    }
+
+    /**
+     * Fetches an access-controlled pre-signed GET for a media object ({@code GET /media/{publicId}}).
+     * Succeeds only for a scanned-CLEAN object; a non-servable object yields a {@code 409 CONFLICT}
+     * envelope (EI-8 serving rule). This is the canonical read endpoint for the attachment pipeline.
+     *
+     * @param publicId the media object's public id.
+     * @return an envelope carrying the {@link DownloadUrlDto}.
+     */
+    @GetMapping("/{publicId}")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Get an access-controlled pre-signed GET",
+            description = "Issues a short-lived GET only for a CLEAN object; PENDING/INFECTED/FAILED are refused (EI-8). "
+                    + "Host-level visibility is enforced by the host module (wiring).")
+    public ApiResponse<DownloadUrlDto> getMedia(@PathVariable UUID publicId) {
+        return responses.ok(mediaService.getDownloadUrl(publicId));
     }
 
     /**

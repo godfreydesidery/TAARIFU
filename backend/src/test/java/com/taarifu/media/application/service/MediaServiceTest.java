@@ -8,16 +8,18 @@ import com.taarifu.media.api.dto.DownloadUrlDto;
 import com.taarifu.media.api.dto.MediaObjectDto;
 import com.taarifu.media.api.dto.UploadRequest;
 import com.taarifu.media.api.dto.UploadTicketDto;
+import com.taarifu.media.api.dto.UploadUrlRequest;
 import com.taarifu.media.application.mapper.MediaMapper;
 import com.taarifu.media.domain.model.MediaObject;
 import com.taarifu.media.domain.model.enums.ScanStatus;
 import com.taarifu.media.domain.port.ObjectStore;
 import com.taarifu.media.domain.repository.MediaObjectRepository;
+import com.taarifu.media.infrastructure.config.MediaPolicyProperties;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -40,13 +42,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link MediaService} — the EI-8 quarantine-then-serve invariants (PRD §21 EI-8, §18).
+ * Unit tests for {@link MediaService} — the EI-8 quarantine-then-serve invariants plus the attachment
+ * pipeline's upload-url / confirm policy gates (PRD §21 EI-8, §15, §18).
  *
  * <p>Responsibility: proves, with no Docker/DB, the load-bearing rules: an upload is created in
- * {@code PENDING}/quarantine with a server-generated key and the uploader taken from the principal; a
- * download URL is issued <b>only</b> for a CLEAN object and refused otherwise; the scan callback drives
- * the correct transition; and a {@code PENDING} verdict is rejected. Each test that asserts a guard is
- * written so it would <b>fail if the guard were removed</b> (e.g. {@code download_pending_refused}).</p>
+ * {@code PENDING}/quarantine with a server-generated key and the uploader taken from the principal; the
+ * pipeline upload-url creates an <b>unbound</b> record and rejects a disallowed type/size up front; confirm
+ * enforces the allow-list + max size and refuses a non-owner; a download URL is issued <b>only</b> for a
+ * CLEAN object and refused otherwise; the scan callback drives the correct transition; and a {@code PENDING}
+ * verdict is rejected. Each guard test is written so it would <b>fail if the guard were removed</b>.</p>
  */
 @ExtendWith(MockitoExtension.class)
 class MediaServiceTest {
@@ -55,14 +59,16 @@ class MediaServiceTest {
     @Mock private ObjectStore objectStore;
     // Real mapper — it is pure and cheap; testing the actual DTO shape is more valuable than a mock.
     private final MediaMapper mapper = new MediaMapper();
+    // Real policy with defaults (image/* allow-list, 10 MiB cap) — exercises the actual policy logic.
+    private final MediaPolicyProperties policy = new MediaPolicyProperties(null, null);
 
     private MediaService service;
 
     private final UUID uploader = UUID.randomUUID();
 
-    @org.junit.jupiter.api.BeforeEach
+    @BeforeEach
     void setUp() {
-        service = new MediaService(repository, objectStore, mapper);
+        service = new MediaService(repository, objectStore, mapper, policy);
     }
 
     @AfterEach
@@ -77,6 +83,10 @@ class MediaServiceTest {
                 .setDetails(new CurrentUser(principal, List.of("CITIZEN"), "T1"));
         SecurityContextHolder.getContext().setAuthentication(auth);
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // requestUpload (legacy, bound) + requestUploadUrl (pipeline, unbound)
+    // ---------------------------------------------------------------------------------------------
 
     @Test
     void requestUpload_createsPendingQuarantinedRecord_andSignsUpload() {
@@ -107,6 +117,116 @@ class MediaServiceTest {
     }
 
     @Test
+    void requestUploadUrl_createsUnboundPendingRecord_andSignsUpload() {
+        authenticateAs(uploader);
+        UploadUrlRequest req = new UploadUrlRequest("REPORT", "evidence.jpg", "image/jpeg", 1024L);
+
+        when(repository.save(any(MediaObject.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(objectStore.presignUpload(anyString(), eq("image/jpeg"), any(Duration.class)))
+                .thenReturn(new ObjectStore.PresignedUrl("https://store/put", "PUT",
+                        Map.of("Content-Type", "image/jpeg"), 900));
+
+        service.requestUploadUrl(req);
+
+        ArgumentCaptor<MediaObject> saved = ArgumentCaptor.forClass(MediaObject.class);
+        verify(repository).save(saved.capture());
+        MediaObject media = saved.getValue();
+        // The pipeline upload is UNBOUND (no host id) and not-yet-confirmed/uploaded.
+        assertThat(media.getOwnerId()).isNull();
+        assertThat(media.isUploaded()).isFalse();
+        assertThat(media.getScanStatus()).isEqualTo(ScanStatus.PENDING);
+        assertThat(media.getUploadedByProfileId()).isEqualTo(uploader);
+    }
+
+    @Test
+    void requestUploadUrl_disallowedContentType_isRejected_andNothingSaved() {
+        authenticateAs(uploader);
+        // A PDF (or any non-image) is not on the default allow-list — reject before issuing a URL.
+        UploadUrlRequest req = new UploadUrlRequest("REPORT", "doc.pdf", "application/pdf", 1024L);
+
+        assertThatThrownBy(() -> service.requestUploadUrl(req))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+
+        verify(repository, never()).save(any());
+        verify(objectStore, never()).presignUpload(anyString(), any(), any());
+    }
+
+    @Test
+    void requestUploadUrl_oversizeObject_isRejected() {
+        authenticateAs(uploader);
+        // 11 MiB exceeds the default 10 MiB cap.
+        UploadUrlRequest req = new UploadUrlRequest("REPORT", "huge.jpg", "image/jpeg", 11L * 1024 * 1024);
+
+        assertThatThrownBy(() -> service.requestUploadUrl(req))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(repository, never()).save(any());
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // confirm — the authoritative policy + owner gate
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    void confirm_byUploader_marksUploaded() {
+        authenticateAs(uploader);
+        MediaObject media = pendingUnbound("image/jpeg", 2048L);
+        when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
+
+        MediaObjectDto dto = service.confirm(media.getPublicId());
+
+        assertThat(media.isUploaded()).isTrue();
+        assertThat(dto.scanStatus()).isEqualTo("PENDING"); // confirmed, awaiting scan
+        assertThat(dto.servable()).isFalse();
+    }
+
+    @Test
+    void confirm_byNonUploader_isForbidden() {
+        // THE OWNER GUARD: a different principal must not confirm someone else's upload. If the guard were
+        // removed the call would succeed — this test would then fail, which is the point.
+        authenticateAs(UUID.randomUUID());
+        MediaObject media = pendingUnbound("image/jpeg", 2048L);
+        when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
+
+        assertThatThrownBy(() -> service.confirm(media.getPublicId()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.FORBIDDEN);
+        assertThat(media.isUploaded()).isFalse();
+    }
+
+    @Test
+    void confirm_disallowedContentType_isRejected() {
+        // THE POLICY GUARD AT CONFIRM: even if a bad type slipped through, confirm is authoritative.
+        authenticateAs(uploader);
+        MediaObject media = pendingUnbound("application/zip", 2048L);
+        when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
+
+        assertThatThrownBy(() -> service.confirm(media.getPublicId()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        assertThat(media.isUploaded()).isFalse();
+    }
+
+    @Test
+    void confirm_unknownId_throwsNotFound() {
+        authenticateAs(uploader);
+        UUID unknown = UUID.randomUUID();
+        when(repository.findByPublicId(unknown)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.confirm(unknown))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // getDownloadUrl — the EI-8 serving gate
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
     void getDownloadUrl_cleanObject_signsDownload() {
         MediaObject media = cleanMedia();
         when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
@@ -121,10 +241,8 @@ class MediaServiceTest {
 
     @Test
     void getDownloadUrl_pendingObject_isRefused_andNeverSigned() {
-        // THE EI-8 SERVING GUARD: a non-CLEAN object must never yield a URL. If the guard in the service
-        // were removed, presignDownload would be called and this test would fail — that is the point.
-        MediaObject media = new MediaObject("REPORT", UUID.randomUUID(), "quarantine/2026/06/x",
-                "f.jpg", "image/jpeg", 1L, uploader); // PENDING by construction
+        // THE EI-8 SERVING GUARD: a non-CLEAN object must never yield a URL.
+        MediaObject media = pendingUnbound("image/jpeg", 1L);
         when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
 
         assertThatThrownBy(() -> service.getDownloadUrl(media.getPublicId()))
@@ -137,8 +255,7 @@ class MediaServiceTest {
 
     @Test
     void getDownloadUrl_infectedObject_isRefused_andNeverSigned() {
-        MediaObject media = new MediaObject("REPORT", UUID.randomUUID(), "quarantine/2026/06/y",
-                "f.jpg", "image/jpeg", 1L, uploader);
+        MediaObject media = pendingUnbound("image/jpeg", 1L);
         media.applyScanVerdict(ScanStatus.INFECTED);
         when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
 
@@ -159,24 +276,25 @@ class MediaServiceTest {
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // applyScanVerdict
+    // ---------------------------------------------------------------------------------------------
+
     @Test
     void applyScanVerdict_clean_promotesToServable_andFlagsExifStripped() {
-        MediaObject media = new MediaObject("REPORT", UUID.randomUUID(), "quarantine/2026/06/z",
-                "f.jpg", "image/jpeg", 1L, uploader);
+        MediaObject media = pendingUnbound("image/jpeg", 1L);
         when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
 
         MediaObjectDto dto = service.applyScanVerdict(media.getPublicId(), ScanStatus.CLEAN);
 
         assertThat(dto.scanStatus()).isEqualTo("CLEAN");
         assertThat(dto.servable()).isTrue();
-        // EXIF/geo strip seam: CLEAN promotion flags the privacy pass (EI-8, §18).
         assertThat(dto.exifStripped()).isTrue();
     }
 
     @Test
     void applyScanVerdict_infected_isNotServable_andNotStripped() {
-        MediaObject media = new MediaObject("REPORT", UUID.randomUUID(), "quarantine/2026/06/i",
-                "f.jpg", "image/jpeg", 1L, uploader);
+        MediaObject media = pendingUnbound("image/jpeg", 1L);
         when(repository.findByPublicId(media.getPublicId())).thenReturn(Optional.of(media));
 
         MediaObjectDto dto = service.applyScanVerdict(media.getPublicId(), ScanStatus.INFECTED);
@@ -188,21 +306,29 @@ class MediaServiceTest {
 
     @Test
     void applyScanVerdict_pending_isRejectedAsBadRequest() {
-        // PENDING is a pre-scan state, never a scan RESULT — a callback claiming it is a bad request.
         assertThatThrownBy(() -> service.applyScanVerdict(UUID.randomUUID(), ScanStatus.PENDING))
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getErrorCode())
                 .isEqualTo(ErrorCode.BAD_REQUEST);
-        // The record is never even loaded for an invalid verdict.
         verify(repository, never()).findByPublicId(any());
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Fixtures
+    // ---------------------------------------------------------------------------------------------
+
+    /** Builds a transient PENDING, unbound media object (publicId assigned) uploaded by {@link #uploader}. */
+    private MediaObject pendingUnbound(String contentType, long sizeBytes) {
+        MediaObject media = new MediaObject("REPORT", null,
+                "quarantine/2026/06/" + UUID.randomUUID(), "f.jpg", contentType, sizeBytes, uploader);
+        assignPublicId(media, UUID.randomUUID());
+        return media;
     }
 
     /** Builds a persisted-looking CLEAN media object (with a publicId) for serve-path tests. */
     private MediaObject cleanMedia() {
-        MediaObject media = new MediaObject("REPORT", UUID.randomUUID(), "quarantine/2026/06/clean",
-                "evidence.jpg", "image/jpeg", 2048L, uploader);
+        MediaObject media = pendingUnbound("image/jpeg", 2048L);
         media.applyScanVerdict(ScanStatus.CLEAN);
-        assignPublicId(media, UUID.randomUUID());
         return media;
     }
 
@@ -210,9 +336,8 @@ class MediaServiceTest {
      * Sets the inherited {@code publicId} on a transient entity for unit tests.
      *
      * <p>WHY reflection: {@code BaseEntity.publicId} is normally assigned in {@code @PrePersist}, which a
-     * Mockito unit test (no EntityManager) never triggers. The serve/callback paths look the object up by
-     * {@code publicId}, so the test must supply one without standing up a database (KISS — the DB-backed
-     * path is covered separately by the Testcontainers IT).</p>
+     * Mockito unit test (no EntityManager) never triggers. The serve/confirm/callback paths look the object
+     * up by {@code publicId}, so the test must supply one without standing up a database.</p>
      */
     private static void assignPublicId(MediaObject media, UUID id) {
         try {

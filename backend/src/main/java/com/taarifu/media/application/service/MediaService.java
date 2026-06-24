@@ -8,11 +8,13 @@ import com.taarifu.media.api.dto.DownloadUrlDto;
 import com.taarifu.media.api.dto.MediaObjectDto;
 import com.taarifu.media.api.dto.UploadRequest;
 import com.taarifu.media.api.dto.UploadTicketDto;
+import com.taarifu.media.api.dto.UploadUrlRequest;
 import com.taarifu.media.application.mapper.MediaMapper;
 import com.taarifu.media.domain.model.MediaObject;
 import com.taarifu.media.domain.model.enums.ScanStatus;
 import com.taarifu.media.domain.port.ObjectStore;
 import com.taarifu.media.domain.repository.MediaObjectRepository;
+import com.taarifu.media.infrastructure.config.MediaPolicyProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -59,16 +61,20 @@ public class MediaService {
     private final MediaObjectRepository repository;
     private final ObjectStore objectStore;
     private final MediaMapper mapper;
+    private final MediaPolicyProperties policy;
 
     /**
      * @param repository  media persistence port.
      * @param objectStore S3-compatible object-store port (stub in dev/test).
      * @param mapper      entity→DTO mapper.
+     * @param policy      upload allow-list / max-size policy enforced at the {@code confirm} step.
      */
-    public MediaService(MediaObjectRepository repository, ObjectStore objectStore, MediaMapper mapper) {
+    public MediaService(MediaObjectRepository repository, ObjectStore objectStore, MediaMapper mapper,
+                        MediaPolicyProperties policy) {
         this.repository = repository;
         this.objectStore = objectStore;
         this.mapper = mapper;
+        this.policy = policy;
     }
 
     /**
@@ -103,6 +109,84 @@ public class MediaService {
                 presigned.method(),
                 presigned.requiredHeaders(),
                 presigned.expiresInSeconds());
+    }
+
+    /**
+     * Pipeline use-case A — {@code POST /media/upload-url}. Persists a new {@code PENDING}, <b>unbound</b>
+     * (no host id yet), not-yet-confirmed record and mints a pre-signed PUT for the citizen evidence-photo
+     * attachment flow.
+     *
+     * <p>WHY unbound: in this pipeline the photo is uploaded <i>before</i> the report is filed, so the host
+     * id is unknown here ({@code ownerId} stays {@code null}); the reporting module binds the object at file
+     * time via the {@code media.api} port. WHY the content-type/size are still validated against policy now:
+     * to reject an obviously-disallowed attachment (e.g. a video, an oversized blob) before a pre-signed URL
+     * is even issued — fail fast, save the round-trip and the wasted upload on a low-bandwidth link
+     * (PRD §15). The authoritative re-check is at {@link #confirm(UUID)}.</p>
+     *
+     * @param request the validated upload-url intent (host type + declared metadata; no host id).
+     * @return an {@link UploadTicketDto}: the new media id plus the pre-signed PUT.
+     * @throws ApiException {@link ErrorCode#BAD_REQUEST} if the declared content-type/size violate policy.
+     */
+    public UploadTicketDto requestUploadUrl(UploadUrlRequest request) {
+        UUID uploader = CurrentUser.requirePublicId();
+
+        // Fail fast at the boundary: reject a disallowed type/size before issuing a URL (PRD §15/§18).
+        enforcePolicy(request.contentType(), request.sizeBytes());
+
+        String objectKey = newQuarantineKey();
+        MediaObject media = new MediaObject(
+                request.ownerType(), null, objectKey,
+                request.originalFilename(), request.contentType(), request.sizeBytes(), uploader);
+        media = repository.save(media);
+
+        ObjectStore.PresignedUrl presigned =
+                objectStore.presignUpload(objectKey, request.contentType(), UPLOAD_TTL);
+
+        return new UploadTicketDto(
+                media.getPublicId(),
+                presigned.url(),
+                presigned.method(),
+                presigned.requiredHeaders(),
+                presigned.expiresInSeconds());
+    }
+
+    /**
+     * Pipeline use-case B — {@code POST /media/{publicId}/confirm}. The client has finished the pre-signed
+     * PUT; this validates the declared content-type allow-list + max size, marks the object
+     * confirmed-uploaded, and (in this increment) kicks off the scan by leaving it {@code PENDING}/eligible.
+     *
+     * <p>WHY confirm is the authoritative policy gate: the byte transfer is direct client↔store, so the app
+     * never observes it; confirm is the single point where the object becomes "uploaded" and therefore the
+     * right place to enforce the allow-list/size invariant so it cannot be bypassed by skipping the step.
+     * Only the uploader may confirm their own object (no confirming another citizen's upload).</p>
+     *
+     * <p>WHY idempotent: a client may retry confirm (flaky link). A second confirm on an already-uploaded
+     * object re-validates and returns the same state — no error, no double effect (EI-8 fail-safe spirit).</p>
+     *
+     * @param mediaId the media object's public id.
+     * @return the resulting {@link MediaObjectDto} (now {@code uploaded=true}).
+     * @throws ResourceNotFoundException if no such object exists/soft-deleted.
+     * @throws ApiException {@link ErrorCode#FORBIDDEN} if the caller is not the uploader;
+     *                      {@link ErrorCode#BAD_REQUEST} if the content-type/size violate policy.
+     */
+    @Transactional
+    public MediaObjectDto confirm(UUID mediaId) {
+        UUID caller = CurrentUser.requirePublicId();
+        MediaObject media = require(mediaId);
+
+        // Only the uploader may confirm their own object — never confirm on behalf of another citizen.
+        if (!caller.equals(media.getUploadedByProfileId())) {
+            throw new ApiException(ErrorCode.FORBIDDEN, "media.notOwner");
+        }
+
+        // Authoritative allow-list + max-size enforcement (the single point an object becomes scan-eligible).
+        enforcePolicy(media.getContentType(), media.getSizeBytes());
+
+        media.markUploaded();
+        // Scan kick-off seam: the object stays PENDING and is now scan-eligible. The asynchronous scanner
+        // pipeline picks up confirmed-PENDING objects and calls back the verdict (EI-8). Wiring the scanner
+        // enqueue (vs. the existing callback-driven flow) is a CENTRAL INTEGRATION NEED.
+        return mapper.toDto(media);
     }
 
     /**
@@ -181,6 +265,25 @@ public class MediaService {
     private MediaObject require(UUID mediaId) {
         return repository.findByPublicId(mediaId)
                 .orElseThrow(() -> new ResourceNotFoundException("media.notFound", mediaId));
+    }
+
+    /**
+     * Enforces the upload policy: the declared content-type must be on the allow-list and the declared size
+     * within the cap, else a localised {@link ErrorCode#BAD_REQUEST}. Centralised so the rule is identical
+     * at upload-url time (fail fast) and confirm time (authoritative).
+     *
+     * @param contentType the declared MIME type.
+     * @param sizeBytes   the declared size in bytes.
+     * @throws ApiException {@link ErrorCode#BAD_REQUEST} on a disallowed content-type or oversized object.
+     */
+    private void enforcePolicy(String contentType, Long sizeBytes) {
+        if (!policy.isContentTypeAllowed(contentType)) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "media.contentTypeNotAllowed", String.valueOf(contentType));
+        }
+        if (!policy.isSizeAllowed(sizeBytes)) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "media.tooLarge",
+                    String.valueOf(sizeBytes), String.valueOf(policy.maxSizeBytes()));
+        }
     }
 
     /**

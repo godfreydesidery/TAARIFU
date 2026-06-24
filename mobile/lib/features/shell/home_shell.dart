@@ -9,6 +9,8 @@
 /// repositories so their state is fresh per visit and cheap when not open.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -22,6 +24,7 @@ import '../feed/bloc/feed_cubit.dart';
 import '../feed/view/feed_screen.dart';
 import '../notifications/bloc/notification_prefs_cubit.dart';
 import '../notifications/bloc/notifications_cubit.dart';
+import '../notifications/data/push_service.dart';
 import '../notifications/view/notification_prefs_screen.dart';
 import '../notifications/view/notifications_screen.dart';
 import '../profile/bloc/profile_cubit.dart';
@@ -34,6 +37,7 @@ import '../reporting/view/report_detail_screen.dart';
 import '../reporting/view/report_form_screen.dart';
 import '../representatives/bloc/my_reps_cubit.dart';
 import '../representatives/view/my_reps_screen.dart';
+import '../settings/view/settings_screen.dart';
 
 /// The signed-in shell.
 class HomeShell extends StatefulWidget {
@@ -49,8 +53,37 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
+  StreamSubscription<NotificationDeepLink>? _pushSub;
 
   AppDependencies get _deps => widget.dependencies;
+
+  @override
+  void initState() {
+    super.initState();
+    // Register the device for push (no-op until firebase_messaging is wired) and
+    // route notification taps into the app: a REPORT_STATUS tap opens that
+    // report's timeline (deep-link tap-through, US-5.1). Unknown types open the
+    // inbox so a tap never dead-ends.
+    final push = _deps.pushService;
+    unawaited(push.registerToken());
+    _pushSub = push.onMessageOpened.listen(_handleDeepLink);
+  }
+
+  @override
+  void dispose() {
+    _pushSub?.cancel();
+    super.dispose();
+  }
+
+  /// Routes a notification tap to the right surface.
+  void _handleDeepLink(NotificationDeepLink link) {
+    if (!mounted) return;
+    if (link.isReport) {
+      _openReportDetail(link.targetId!);
+    } else {
+      _openNotifications();
+    }
+  }
 
   // --- Navigation to the route-pushed feature screens ----------------------
 
@@ -62,6 +95,7 @@ class _HomeShellState extends State<HomeShell> {
           create: (_) => ReportFormCubit(
             categoryRepository: _deps.categoryRepository,
             reportRepository: _deps.reportRepository,
+            attachmentService: _deps.attachmentService,
           )..loadCategories(),
           child: ReportFormScreen(
             geographyRepository: _deps.geographyRepository,
@@ -76,12 +110,18 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   /// Opens the citizen's own reports + offline drafts (US-3.2).
+  ///
+  /// The cubit takes the shared connectivity hint so the offline outbox
+  /// auto-flushes when a bar reappears (retry-on-reconnect; the idempotency key
+  /// keeps replays duplicate-free).
   void _openMyReports() {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => BlocProvider(
-          create: (_) =>
-              MyReportsCubit(repository: _deps.reportRepository)..load(),
+          create: (_) => MyReportsCubit(
+            repository: _deps.reportRepository,
+            connectivity: _deps.connectivity,
+          )..load(),
           child: MyReportsScreen(onOpenReport: _openReportDetail),
         ),
       ),
@@ -125,7 +165,26 @@ class _HomeShellState extends State<HomeShell> {
         builder: (_) => BlocProvider(
           create: (_) =>
               ProfileCubit(repository: _deps.profileRepository)..load(),
-          child: const ProfileScreen(),
+          child: ProfileScreen(
+            geographyRepository: _deps.geographyRepository,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Opens the Settings screen (language, data-saver, sign out, version).
+  void _openSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SettingsScreen(
+          appVersion: _deps.appConfig.appVersion,
+          onSignOut: () {
+            // Clear any push token then wipe the session (secure logout).
+            unawaited(_deps.pushService.clearToken());
+            context.read<AuthBloc>().add(const AuthLoggedOut());
+            Navigator.of(context).popUntil((r) => r.isFirst);
+          },
         ),
       ),
     );
@@ -260,6 +319,11 @@ class _HomeShellState extends State<HomeShell> {
             _drawerItem(Icons.person_outline, l10n.navProfile, () {
               Navigator.of(context).pop();
               _openProfile();
+            }),
+            const Divider(),
+            _drawerItem(Icons.settings_outlined, l10n.navSettings, () {
+              Navigator.of(context).pop();
+              _openSettings();
             }),
           ],
         ),

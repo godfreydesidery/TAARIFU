@@ -30,6 +30,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.UUID;
@@ -79,6 +80,9 @@ class UserAdminServiceIntegrationTest extends AbstractPostgisIntegrationTest {
     @PersistenceContext
     private EntityManager em;
 
+    @Autowired
+    private TransactionTemplate txTemplate;
+
     private final UUID actingAdmin = UUID.randomUUID();
 
     /**
@@ -87,23 +91,30 @@ class UserAdminServiceIntegrationTest extends AbstractPostgisIntegrationTest {
      * not migrations), so the V102 catalogue is not present and rows persist across methods under create-drop
      * — exactly as {@code AuthFlowIntegrationTest} seeds CITIZEN itself. We seed the three roles these tests
      * grant.
+     *
+     * <p>WHY a {@link TransactionTemplate} rather than {@code @Transactional} on this {@code @BeforeEach}:
+     * the annotation is not woven on a JUnit lifecycle callback (no AOP proxy; the test transaction listener
+     * only manages the {@code @Test} method's transaction), so the native {@code executeUpdate} calls would
+     * raise {@code TransactionRequiredException}. The programmatic transaction binds a manager and commits
+     * the catalogue seed before each test runs in its own (rolled-back) {@code @Transactional} method.</p>
      */
     @BeforeEach
-    @Transactional
     void seedRolesAndClean() {
-        // Delete child rows before app_user (FK order) so this cleanup is robust to rows another test class
-        // left behind under the shared create-drop schema (e.g. refresh_token/otp_challenge from auth tests).
-        em.createNativeQuery("DELETE FROM audit_event").executeUpdate();
-        em.createNativeQuery("DELETE FROM refresh_token").executeUpdate();
-        em.createNativeQuery("DELETE FROM otp_challenge").executeUpdate();
-        em.createNativeQuery("DELETE FROM role_assignment").executeUpdate();
-        em.createNativeQuery("DELETE FROM profile_location").executeUpdate();
-        em.createNativeQuery("DELETE FROM profile").executeUpdate();
-        em.createNativeQuery("DELETE FROM app_user").executeUpdate();
-        em.createNativeQuery("DELETE FROM role").executeUpdate();
-        seedRole("CITIZEN", "Registered citizen");
-        seedRole("MODERATOR", "Content/safety moderator");
-        seedRole("RESPONDER_AGENT", "Responder agent");
+        txTemplate.executeWithoutResult(s -> {
+            // Delete child rows before app_user (FK order) so this cleanup is robust to rows another test
+            // class left behind under the shared create-drop schema (e.g. refresh_token/otp_challenge).
+            em.createNativeQuery("DELETE FROM audit_event").executeUpdate();
+            em.createNativeQuery("DELETE FROM refresh_token").executeUpdate();
+            em.createNativeQuery("DELETE FROM otp_challenge").executeUpdate();
+            em.createNativeQuery("DELETE FROM role_assignment").executeUpdate();
+            em.createNativeQuery("DELETE FROM profile_location").executeUpdate();
+            em.createNativeQuery("DELETE FROM profile").executeUpdate();
+            em.createNativeQuery("DELETE FROM app_user").executeUpdate();
+            em.createNativeQuery("DELETE FROM role").executeUpdate();
+            seedRole("CITIZEN", "Registered citizen");
+            seedRole("MODERATOR", "Content/safety moderator");
+            seedRole("RESPONDER_AGENT", "Responder agent");
+        });
     }
 
     private void seedRole(String name, String description) {

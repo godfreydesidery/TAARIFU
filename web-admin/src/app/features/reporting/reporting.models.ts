@@ -1,13 +1,14 @@
 /**
- * Reporting & case-management DTOs — mirror the backend `ReportDto`, `PublicReportDto`, `CaseEventDto`,
- * and the responder case-lifecycle request bodies (reporting + responders modules; PRD §9.1, §12.1,
+ * Reporting & case-management DTOs — mirror the backend `AdminReportSummary`/`AdminReportDetail`/
+ * `CaseEventDto` (admin queue + case detail), `ReportDto`/`PublicReportDto` (lifecycle responses), and the
+ * responder case-lifecycle request bodies (reporting + responders modules; PRD §9.1, §10 US-3.4, §12.1,
  * Epic M3). These shape the official report queue + case detail/timeline + status actions.
  *
- * <p>WHY two read shapes: the admin/responder case view reads the rich {@link Report} (owner-grade
- * fields), while the public near-me queue reads the PII-free {@link PublicReport}. The console queue is
- * built on the public list (the only paged list endpoint the backend exposes for reports today — there is
- * no admin "list all reports" endpoint yet; see CENTRAL NEEDS) and drills into the responder lifecycle
- * actions for case management.</p>
+ * <p>WHY the admin shapes: the back-office console reads the owner-grade {@link AdminReportSummary} (paged
+ * `GET /admin/reports`, with server-side status/category/area/SLA filters) and {@link AdminReportDetail}
+ * (`GET /admin/reports/{id}`, including the full internal+public timeline, US-3.4). Both are PII-minimised —
+ * no reporter identity, no precise geo-point (PRD §18, PDPA, D-Q1). The lifecycle actions (assign/start/
+ * resolve/escalate) return the rich owner-view {@link Report}.</p>
  */
 
 /** Report case-lifecycle status tokens (PRD §12.1). Used for filter chips + status badges. */
@@ -77,33 +78,115 @@ export interface Report {
 }
 
 /**
- * The PII-free public report row (`GET /public/reports`). Backs the console queue list. It never carries
- * reporter id or precise geo; only PUBLIC reports are returned (PRD §25.3).
+ * One row of the admin/owner-grade report queue (`GET /admin/reports`) — mirrors the backend
+ * `AdminReportSummary`. PII-minimised: no description body, no reporter linkage, no precise geo-point. The
+ * {@link anonymous} flag tells staff to apply the sensitive-handling path without ever seeing who filed it.
  */
-export interface PublicReport {
+export interface AdminReportSummary {
   /** The report's public id (UUID). */
   id: string;
-  /** Human-readable ticket code. */
+  /** Human ticket code (`TAR-YYYY-NNNNNN`). */
   code: string;
   /** Issue category public id. */
   categoryId: string;
-  /** Issue category display name. */
+  /** Issue category display name, or `null`. */
   categoryName: string | null;
-  /** Title. */
+  /** Citizen title/summary. */
   title: string;
-  /** Ward public id, or `null`. */
+  /** Resolved ward (Kata) public id, or `null`. */
   wardId: string | null;
-  /** Case status token. */
+  /** Lifecycle status name. */
   status: string;
-  /** Priority token. */
+  /** Priority name. */
   priority: string;
   /** SLA due instant (ISO-8601), or `null`. */
   dueAt: string | null;
+  /** `true` if the case is still active and its SLA `dueAt` has passed (server-derived). */
+  slaBreached: boolean;
+  /** Assigned responder public id, or `null` if unassigned. */
+  assignedResponderId: string | null;
+  /** `true` if the report has no reporter linkage (anonymous sensitive filing, D-Q1). */
+  anonymous: boolean;
   /** Filed-at instant (ISO-8601). */
   createdAt: string;
 }
 
-/** A case-timeline event (`GET /reports/{id}/timeline`). One row per status change/assignment/comment. */
+/**
+ * The staff case-detail view of one report (`GET /admin/reports/{id}`) — mirrors the backend
+ * `AdminReportDetail`. Includes the FULL case {@link timeline} (public + internal responder notes, US-3.4),
+ * reached only by ADMIN/MODERATOR. No reporter PII, no precise geo-point (PRD §18, D-Q1).
+ */
+export interface AdminReportDetail {
+  /** The report's public id (UUID). */
+  id: string;
+  /** Human ticket code. */
+  code: string;
+  /** Issue category public id. */
+  categoryId: string;
+  /** Issue category display name, or `null`. */
+  categoryName: string | null;
+  /** Citizen title. */
+  title: string;
+  /** Citizen description (operator-visible case content; not reporter PII). */
+  description: string;
+  /** Resolved ward (Kata) public id, or `null`. */
+  wardId: string | null;
+  /** Constituency (Jimbo) public id in effect, or `null`. */
+  constituencyId: string | null;
+  /** Effective visibility name. */
+  visibility: string;
+  /** Lifecycle status name. */
+  status: string;
+  /** Priority name. */
+  priority: string;
+  /** SLA due instant (ISO-8601), or `null`. */
+  dueAt: string | null;
+  /** `true` if the case is still active and its SLA `dueAt` has passed (server-derived). */
+  slaBreached: boolean;
+  /** Resolution note, or `null` if unresolved. */
+  resolution: string | null;
+  /** Citizen confirmation outcome: `null` pending, else `true`/`false`. */
+  confirmation: boolean | null;
+  /** Canonical report public id if this is a duplicate, else `null`. */
+  duplicateOfId: string | null;
+  /** Assigned responder public id, or `null` if unassigned. */
+  assignedResponderId: string | null;
+  /** `true` if the report has no reporter linkage (D-Q1). */
+  anonymous: boolean;
+  /** Filed-at instant (ISO-8601). */
+  createdAt: string;
+  /** The full case timeline (public + internal events), newest first. */
+  timeline: CaseEvent[];
+}
+
+/** Per-status report count for the dashboard breakdown (mirrors the backend `ReportStatusCount`). */
+export interface ReportStatusCount {
+  /** Lifecycle status name. */
+  status: string;
+  /** Number of reports in that status. */
+  count: number;
+}
+
+/**
+ * The flattened aggregate-counts payload the dashboard overview header binds to (`GET /admin/stats`) —
+ * mirrors the backend `AdminStatsDto`. Counts only — no PII. A degraded module returns its count as 0.
+ */
+export interface AdminStats {
+  /** Per-status report counts (a status with no reports is omitted). */
+  reportsByStatus: ReportStatusCount[];
+  /** Total reports in a non-terminal status. */
+  openCases: number;
+  /** Total still-active reports whose SLA `dueAt` has passed. */
+  slaBreachedCases: number;
+  /** Number of identity verifications awaiting review (0 if unavailable). */
+  verificationQueueDepth: number;
+  /** Number of moderation flags awaiting action (0 if unavailable). */
+  flagsPending: number;
+  /** When the aggregate was computed (ISO-8601), for UI freshness. */
+  generatedAt: string;
+}
+
+/** A case-timeline event (`GET /admin/reports/{id}` timeline). One row per status change/assignment/comment. */
 export interface CaseEvent {
   /** The event's public id (UUID). */
   id: string;

@@ -232,7 +232,27 @@ class ReportDraft {
   final bool anonymous;
 
   /// Object-store refs to already-uploaded, scanned attachments.
+  ///
+  /// Before the pre-signed upload endpoint exists these may be `local:` refs
+  /// (the captured file path) that the repository resolves to real refs at sync
+  /// time — see [PendingAttachment] and `ReportRepository.uploadAttachment`.
   final List<String> attachmentRefs;
+
+  /// Returns a copy carrying [refs] as the attachment references.
+  ///
+  /// Keeps the draft immutable while letting the form attach captured-media refs
+  /// just before submit (the screen builds the draft without attachments).
+  ReportDraft withAttachmentRefs(List<String> refs) => ReportDraft(
+    categoryId: categoryId,
+    title: title,
+    description: description,
+    wardId: wardId,
+    latitude: latitude,
+    longitude: longitude,
+    visibility: visibility,
+    anonymous: anonymous,
+    attachmentRefs: refs,
+  );
 
   /// Converts to the backend `FileReportDto` JSON body.
   Map<String, dynamic> toRequestBody() => {

@@ -16,6 +16,26 @@ export const MODERATION_SEVERITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] as co
 /** Appeal-outcome tokens (mirror `AppealStatus`). */
 export const APPEAL_OUTCOMES = ['UPHELD', 'OVERTURNED'] as const;
 
+/** Appeal lifecycle status tokens (mirror `AppealStatus`). OPEN = awaiting a decision. */
+export const APPEAL_STATUSES = ['OPEN', 'UPHELD', 'OVERTURNED'] as const;
+
+/**
+ * A moderator appeals-queue row (`GET /moderation/appeals`) — mirrors the backend `AppealSummaryDto`. Lean,
+ * moderator-only; never leaks the moderated content, the appellant's PII, or the appeal grounds.
+ */
+export interface AppealSummary {
+  /** The appeal's public id (UUID). */
+  publicId: string;
+  /** The kind of content the appealed action targeted (e.g. `REPORT`, `COMMENT`, `QUESTION`). */
+  subjectType: string;
+  /** The appellant's account public id (opaque cross-module reference; never PII). */
+  appellant: string;
+  /** Appeal lifecycle status token (`OPEN`/`UPHELD`/`OVERTURNED`). */
+  status: string;
+  /** Filed-at instant (ISO-8601). */
+  filedAt: string;
+}
+
 /** A moderation queue item (`GET /moderation/items`). One per flagged subject. */
 export interface ModerationItem {
   /** The item's public id (UUID). */

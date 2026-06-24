@@ -4,66 +4,67 @@ import { Observable } from 'rxjs';
 import { ApiClient } from '../../core/api/api-client.service';
 import { Page } from '../../core/api/api-response.model';
 import {
+  AdminReportDetail,
+  AdminReportSummary,
+  AdminStats,
   AssignCaseRequest,
-  CaseEvent,
   EscalateCaseRequest,
-  PublicReport,
   Report,
   ResolveCaseRequest,
 } from './reporting.models';
 
 /**
- * Data access for the official report queue + case management (PRD Epic M3, §12.1; UC-D05/D11-13, D21).
+ * Data access for the official report queue + case management (M14, Epic M3, §12.1; UC-D05/D11-13, D21).
  *
- * <p>Responsibility: the feature's typed gateway over the reporting + responders report surfaces. The
- * console queue list reads the PII-free paged `GET /public/reports` (the only paged report-list endpoint
- * the backend exposes today — there is no admin "list all reports" endpoint; see CENTRAL NEEDS). Case
- * detail/timeline read the owner-grade `GET /reports/{id}` + `/timeline`. The status actions (assign,
- * start, resolve, escalate) hit the responder lifecycle endpoints under `/responders/admin/reports/...`,
- * which drive reporting's §12.1 state machine; authorization is enforced SERVER-side
- * (ADMIN/MODERATOR/RESPONDER_*). Envelope/error handling is delegated to {@link ApiClient} (DRY,
- * CLAUDE.md §8).</p>
+ * <p>Responsibility: the feature's typed gateway over the admin reporting surfaces. The console queue reads
+ * the owner-grade paged `GET /admin/reports` with SERVER-side filtering by status/category/area/SLA — no
+ * client-side filtering over a partial page. Case detail reads `GET /admin/reports/{id}`, which carries the
+ * full internal+public timeline (US-3.4) inline, so the detail screen needs no separate timeline call. The
+ * dashboard reads aggregate counts from `GET /admin/stats`. The status actions (assign/start/resolve/
+ * escalate) hit the responder lifecycle endpoints under `/responders/admin/reports/...`, which drive
+ * reporting's §12.1 state machine; authorization is enforced SERVER-side (ADMIN/MODERATOR/RESPONDER_*).
+ * Both admin reads are PII-minimised — no reporter identity, no precise geo-point (PRD §18, PDPA, D-Q1).
+ * Envelope/error handling is delegated to {@link ApiClient} (DRY, CLAUDE.md §8).</p>
  */
 @Injectable({ providedIn: 'root' })
 export class ReportingService {
   private readonly api = inject(ApiClient);
 
   /**
-   * Lists reports for the console queue, paged. `GET /public/reports`.
+   * Lists the owner-grade report queue, filtered and paged. `GET /admin/reports`.
    *
-   * <p>Server-side filtering by `wardId` is supported by the backend; status/category/priority/SLA
-   * filtering is applied client-side over the page until an admin queue endpoint with those filters
-   * exists (CENTRAL NEEDS).</p>
+   * <p>All filters are applied SERVER-side; an unknown `status` yields an empty page (never an error). The
+   * sort is fixed server-side (newest-filed first).</p>
    *
-   * @param params optional `wardId`, plus `page`/`size`/`sort`.
-   * @returns a {@link Page} of {@link PublicReport}.
+   * @param params optional `status`/`categoryId`/`areaId`/`slaBreached` filters plus `page`/`size`.
+   * @returns a {@link Page} of {@link AdminReportSummary}.
    */
   listQueue(params: {
-    wardId?: string;
+    status?: string;
+    categoryId?: string;
+    areaId?: string;
+    slaBreached?: boolean;
     page?: number;
     size?: number;
-    sort?: string;
-  }): Observable<Page<PublicReport>> {
-    return this.api.getPage<PublicReport>('/public/reports', params);
+  }): Observable<Page<AdminReportSummary>> {
+    return this.api.getPage<AdminReportSummary>('/admin/reports', params);
   }
 
   /**
-   * Fetches one report's public case view. `GET /public/reports/{id}`.
+   * Fetches one case's staff detail incl. the full internal+public timeline. `GET /admin/reports/{id}`.
    * @param id the report's public id.
-   * @returns the {@link PublicReport}.
+   * @returns the {@link AdminReportDetail}.
    */
-  getPublic(id: string): Observable<PublicReport> {
-    return this.api.get<PublicReport>(`/public/reports/${id}`);
+  getAdminDetail(id: string): Observable<AdminReportDetail> {
+    return this.api.get<AdminReportDetail>(`/admin/reports/${id}`);
   }
 
   /**
-   * Fetches a report's public timeline, paged. `GET /public/reports/{id}/timeline`.
-   * @param id the report's public id.
-   * @param params optional `page`/`size`/`sort`.
-   * @returns a {@link Page} of {@link CaseEvent}.
+   * Fetches the dashboard overview aggregate counts. `GET /admin/stats`.
+   * @returns the {@link AdminStats} snapshot.
    */
-  getTimeline(id: string, params: { page?: number; size?: number; sort?: string }): Observable<Page<CaseEvent>> {
-    return this.api.getPage<CaseEvent>(`/public/reports/${id}/timeline`, params);
+  getStats(): Observable<AdminStats> {
+    return this.api.get<AdminStats>('/admin/stats');
   }
 
   /**

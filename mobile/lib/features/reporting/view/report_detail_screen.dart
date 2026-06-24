@@ -15,6 +15,7 @@ import '../../../core/widgets/status_views.dart';
 import '../../../l10n/app_localizations.dart';
 import '../bloc/report_detail_cubit.dart';
 import '../data/reporting_models.dart';
+import 'report_status_style.dart';
 
 /// The tracking/detail view for one of the caller's own reports.
 class ReportDetailScreen extends StatefulWidget {
@@ -86,11 +87,23 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
           children: [
             Text('${l10n.reportStatusLabel}: '),
             Chip(
-              label: Text(report.status),
+              avatar: Icon(
+                ReportStatusStyle.icon(report.status),
+                size: 18,
+                color: ReportStatusStyle.color(context, report.status),
+              ),
+              label: Text(ReportStatusStyle.label(l10n, report.status)),
               visualDensity: VisualDensity.compact,
             ),
           ],
         ),
+        if (report.dueAt != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            l10n.reportDueLabel(formatRelativeTime(l10n, report.dueAt)),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
         if (report.description != null && report.description!.isNotEmpty) ...[
           const SizedBox(height: 12),
           Text(report.description!),
@@ -114,7 +127,11 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
         if (state.timeline.isEmpty)
           Text(l10n.reportTimelineEmpty)
         else
-          for (final e in state.timeline) _TimelineTile(event: e),
+          for (var i = 0; i < state.timeline.length; i++)
+            _TimelineTile(
+              event: state.timeline[i],
+              isLast: i == state.timeline.length - 1,
+            ),
         const SizedBox(height: 16),
         _commentBlock(context, l10n, state),
       ],
@@ -219,20 +236,71 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
   }
 }
 
-/// One timeline entry (icon by public/internal, message + relative time).
+/// One timeline entry: a left rail connector + a localised event label, the
+/// citizen-readable message, and a relative timestamp ("dakika 5 zilizopita").
 class _TimelineTile extends StatelessWidget {
-  const _TimelineTile({required this.event});
+  const _TimelineTile({required this.event, required this.isLast});
 
   final CaseEvent event;
 
+  /// Whether this is the final entry (no trailing connector line).
+  final bool isLast;
+
   @override
-  Widget build(BuildContext context) => ListTile(
-    dense: true,
-    leading: Icon(
-      event.publicEvent ? Icons.event_note : Icons.lock_outline,
-      size: 20,
-    ),
-    title: Text(event.message ?? event.eventType),
-    subtitle: Text(event.eventType),
-  );
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final eventLabel = ReportStatusStyle.eventLabel(l10n, event.eventType);
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // The vertical timeline rail: a dot with a connecting line below it.
+          Column(
+            children: [
+              Icon(
+                event.publicEvent ? Icons.circle : Icons.lock_outline,
+                size: 12,
+                color: scheme.primary,
+              ),
+              if (!isLast)
+                Expanded(
+                  child: Container(width: 2, color: scheme.outlineVariant),
+                ),
+            ],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          eventLabel,
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                      ),
+                      Text(
+                        formatRelativeTime(l10n, event.createdAt),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                  if (event.message != null && event.message!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(event.message!),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -1,33 +1,100 @@
-<!-- Appeals: decide by appeal id (UPHELD/OVERTURNED). Independence enforced server-side. -->
-<section style="max-width: 640px">
-  <a routerLink="/moderation" class="btn btn-sm btn-link px-0 mb-2">&laquo; {{ 'moderation.backToQueue' | translate }}</a>
-  <h1 class="h3 mb-3">{{ 'moderation.appeals' | translate }}</h1>
+<!-- Appeals queue: list (status-filtered) + inline decide (UPHELD/OVERTURNED). Independence enforced server-side. -->
+<section>
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <h1 class="h3 mb-0">{{ 'moderation.appeals' | translate }}</h1>
+    <a routerLink="/moderation" class="btn btn-outline-secondary btn-sm">{{ 'moderation.backToQueue' | translate }}</a>
+  </div>
 
   <p class="text-muted small">{{ 'moderation.appealsHint' | translate }}</p>
 
-  <div class="mb-3">
-    <label class="form-label" for="appeal-id">{{ 'moderation.appealId' | translate }}</label>
-    <input id="appeal-id" type="text" class="form-control" [ngModel]="appealId()" (ngModelChange)="appealId.set($event)" />
-  </div>
-  <div class="mb-3">
-    <label class="form-label" for="appeal-outcome">{{ 'moderation.appealOutcome' | translate }}</label>
-    <select id="appeal-outcome" class="form-select" [ngModel]="outcome()" (ngModelChange)="outcome.set($event)">
-      @for (o of outcomes; track o) {
-        <option [value]="o">{{ 'moderation.outcomeValue.' + o | translate }}</option>
+  <div class="mb-3" style="max-width: 280px">
+    <label class="visually-hidden" for="appeal-status">{{ 'moderation.status' | translate }}</label>
+    <select id="appeal-status" class="form-select form-select-sm" [ngModel]="statusFilter()" (ngModelChange)="onStatusChange($event)">
+      @for (s of statuses; track s) {
+        <option [value]="s">{{ 'moderation.outcomeValue.' + s | translate }}</option>
       }
     </select>
   </div>
-  <div class="mb-3">
-    <label class="form-label" for="appeal-note">{{ 'moderation.decisionNote' | translate }}</label>
-    <textarea id="appeal-note" class="form-control" rows="3" [ngModel]="decisionNote()" (ngModelChange)="decisionNote.set($event)"></textarea>
-  </div>
-  <button type="button" class="btn btn-primary" [disabled]="deciding() || !appealId().trim()" (click)="decide()">
-    {{ (deciding() ? 'common.loading' : 'moderation.decide') | translate }}
-  </button>
 
-  @if (decided(); as appeal) {
-    <div class="alert alert-success mt-4" role="status">
-      {{ 'moderation.appealDecided' | translate }} — {{ 'moderation.outcomeValue.' + appeal.status | translate }}
+  @if (loading()) {
+    <div class="text-center py-5" role="status" aria-live="polite">
+      <span class="spinner-border" aria-hidden="true"></span>
+      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
     </div>
+  } @else if (errored()) {
+    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+      <span>{{ 'common.errorLoading' | translate }}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger" (click)="loadPage(0)">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else if (rows().length === 0) {
+    <div class="alert alert-info" role="status">{{ 'moderation.noAppeals' | translate }}</div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th scope="col">{{ 'moderation.subject' | translate }}</th>
+            <th scope="col">{{ 'moderation.appellant' | translate }}</th>
+            <th scope="col">{{ 'moderation.status' | translate }}</th>
+            <th scope="col">{{ 'moderation.filed' | translate }}</th>
+            <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (appeal of rows(); track appeal.publicId) {
+            <tr>
+              <td><span class="badge text-bg-light">{{ appeal.subjectType }}</span></td>
+              <td><code class="small">{{ appeal.appellant }}</code></td>
+              <td>
+                <span
+                  class="badge"
+                  [class.text-bg-secondary]="appeal.status === 'OPEN'"
+                  [class.text-bg-success]="appeal.status === 'OVERTURNED'"
+                  [class.text-bg-dark]="appeal.status === 'UPHELD'"
+                  >{{ 'moderation.outcomeValue.' + appeal.status | translate }}</span
+                >
+              </td>
+              <td><small class="text-muted">{{ appeal.filedAt | date: 'short' }}</small></td>
+              <td class="text-end">
+                @if (appeal.status === 'OPEN') {
+                  <button type="button" class="btn btn-sm btn-outline-primary" (click)="toggleDecide(appeal.publicId)">
+                    {{ 'moderation.decide' | translate }}
+                  </button>
+                } @else {
+                  <span class="text-muted small">—</span>
+                }
+              </td>
+            </tr>
+            @if (activeAppealId() === appeal.publicId) {
+              <tr>
+                <td colspan="5" class="bg-light">
+                  <div class="row g-2 align-items-end">
+                    <div class="col-md-3">
+                      <label class="form-label small" [attr.for]="'app-outcome-' + appeal.publicId">{{ 'moderation.appealOutcome' | translate }}</label>
+                      <select [id]="'app-outcome-' + appeal.publicId" class="form-select form-select-sm" [ngModel]="outcome()" (ngModelChange)="outcome.set($event)">
+                        @for (o of outcomes; track o) {
+                          <option [value]="o">{{ 'moderation.outcomeValue.' + o | translate }}</option>
+                        }
+                      </select>
+                    </div>
+                    <div class="col-md-7">
+                      <label class="form-label small" [attr.for]="'app-note-' + appeal.publicId">{{ 'moderation.decisionNote' | translate }}</label>
+                      <input [id]="'app-note-' + appeal.publicId" type="text" class="form-control form-control-sm" [ngModel]="decisionNote()" (ngModelChange)="decisionNote.set($event)" />
+                    </div>
+                    <div class="col-md-2">
+                      <button type="button" class="btn btn-sm btn-primary w-100" [disabled]="deciding()" (click)="decide()">
+                        {{ 'common.confirm' | translate }}
+                      </button>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="loadPage($event)" />
   }
 </section>

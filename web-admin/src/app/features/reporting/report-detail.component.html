@@ -28,28 +28,44 @@
       <dd class="col-8 col-md-4">{{ 'reports.priorityValue.' + r.priority | translate }}</dd>
       <dt class="col-4 col-md-2">{{ 'reports.sla' | translate }}</dt>
       <dd class="col-8 col-md-4">
-        @if (r.dueAt) {
+        @if (r.slaBreached) {
+          <span class="badge text-bg-danger">{{ 'reports.breached' | translate }}</span>
+        } @else if (r.dueAt) {
           {{ r.dueAt | date: 'short' }}
         } @else {
           —
         }
       </dd>
+      <dt class="col-4 col-md-2">{{ 'reports.assignedResponder' | translate }}</dt>
+      <dd class="col-8 col-md-4"><code class="small">{{ r.assignedResponderId || '—' }}</code></dd>
       <dt class="col-4 col-md-2">{{ 'reports.filed' | translate }}</dt>
       <dd class="col-8 col-md-4">{{ r.createdAt | date: 'short' }}</dd>
     </dl>
+
+    @if (r.description) {
+      <div class="mb-4">
+        <h2 class="h6">{{ 'reports.description' | translate }}</h2>
+        <p class="small mb-0">{{ r.description }}</p>
+      </div>
+    }
 
     <div class="row g-4">
       <!-- Timeline -->
       <div class="col-12 col-lg-7">
         <h2 class="h6">{{ 'reports.timeline' | translate }}</h2>
-        @if (events().length === 0) {
+        @if (r.timeline.length === 0) {
           <p class="text-muted small">{{ 'reports.noEvents' | translate }}</p>
         } @else {
           <ul class="list-group list-group-flush">
-            @for (event of events(); track event.id) {
+            @for (event of r.timeline; track event.id) {
               <li class="list-group-item px-0">
                 <div class="d-flex justify-content-between">
-                  <strong class="small">{{ 'reports.eventType.' + event.eventType | translate }}</strong>
+                  <strong class="small">
+                    {{ 'reports.eventType.' + event.eventType | translate }}
+                    @if (!event.publicEvent) {
+                      <span class="badge text-bg-light ms-1">{{ 'reports.internal' | translate }}</span>
+                    }
+                  </strong>
                   <small class="text-muted">{{ event.createdAt | date: 'short' }}</small>
                 </div>
                 @if (event.message) {

@@ -1,0 +1,18 @@
+# =============================================================================
+# Taarifu — Grafana datasource provisioning (Prometheus).
+# Auto-provisions the Prometheus datasource so the bundled dashboard renders with
+# zero click-ops. Internal-network only (deploy/README §10). No credentials here.
+# =============================================================================
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: taarifu-prometheus
+    type: prometheus
+    access: proxy
+    # Compose service name; override for k8s/standalone via env or a patched copy.
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 15s          # matches the scrape_interval so rate() windows align
+      httpMethod: POST

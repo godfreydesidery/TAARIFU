@@ -48,6 +48,7 @@
   "navEngage": "Engage",
   "navProfile": "Profile",
   "navNotifications": "Notifications",
+  "navSettings": "Settings",
   "menuTitle": "Menu",
   "cancelButton": "Cancel",
   "saveButton": "Save",
@@ -65,6 +66,10 @@
   "reportUseGpsButton": "Use my location (GPS)",
   "reportPhotoLabel": "Photos (optional)",
   "reportAddPhotoButton": "Add photo",
+  "reportTakePhotoButton": "Take photo",
+  "reportPickPhotoButton": "Choose photo",
+  "reportAttachUnavailable": "Attaching photos is coming soon.",
+  "reportAttachQueuedNote": "Photos will be sent with your report.",
   "reportVisibilityLabel": "Who can see this report",
   "reportVisibilityPublic": "Public (others can see)",
   "reportVisibilityPrivate": "Private (authorities only)",
@@ -86,7 +91,12 @@
   "myReportsSyncing": "Sending…",
   "draftPending": "Waiting for network",
   "draftFailed": "Failed — will retry",
+  "draftSending": "Sending…",
   "draftDiscard": "Discard draft",
+  "draftAttachmentCount": "{count} photos",
+  "draftRetryNote": "Tried {attempts} times.",
+  "draftAutoSyncNote": "Drafts send automatically when you're back online — no duplicates.",
+  "draftSyncedFeedback": "{count} reports sent.",
 
   "reportDetailTitle": "Report tracking",
   "reportStatusLabel": "Status",
@@ -98,6 +108,29 @@
   "reportConfirmButton": "Yes, resolved",
   "reportDisputeButton": "No, not yet",
   "reportDisputeReasonLabel": "Reason (optional)",
+  "reportDueLabel": "Response due: {time}",
+
+  "statusNew": "New",
+  "statusAssigned": "Received",
+  "statusInProgress": "In progress",
+  "statusAwaitingInfo": "Awaiting your info",
+  "statusResolved": "Resolved",
+  "statusClosed": "Closed",
+  "statusReopened": "Reopened",
+  "statusRejected": "Rejected",
+
+  "eventStatusChange": "Status changed",
+  "eventComment": "Comment",
+  "eventAssignment": "Assigned",
+  "eventResolution": "Resolution",
+  "eventReopened": "Reopened",
+  "eventConfirmation": "Citizen confirmation",
+  "eventCreated": "Report submitted",
+
+  "timeJustNow": "just now",
+  "timeMinutesAgo": "{count} minutes ago",
+  "timeHoursAgo": "{count} hours ago",
+  "timeDaysAgo": "{count} days ago",
 
   "engageTitle": "Engage",
   "engagePetitionsTab": "Petitions",
@@ -179,5 +212,13 @@
   "wardPickerChangeButton": "Change ward",
 
   "announcementDetailTitle": "Announcement",
-  "announcementNotFound": "This announcement is unavailable or has expired."
+  "announcementNotFound": "This announcement is unavailable or has expired.",
+
+  "settingsTitle": "Settings",
+  "settingsLanguageHeader": "Language",
+  "settingsDataHeader": "Data usage",
+  "settingsDataSaverLabel": "Data saver",
+  "settingsDataSaverSubtitle": "Reduce heavy images and sync lightly on metered networks.",
+  "settingsVersionLabel": "App version",
+  "settingsSignOutConfirm": "Are you sure you want to sign out? You'll need to sign in again."
 }

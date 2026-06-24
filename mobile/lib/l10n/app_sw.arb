@@ -87,6 +87,8 @@
   "@navProfile": { "description": "Menu label for the profile + verification screen." },
   "navNotifications": "Arifa",
   "@navNotifications": { "description": "Menu label for notifications." },
+  "navSettings": "Mipangilio",
+  "@navSettings": { "description": "Menu label for the settings screen." },
   "menuTitle": "Menyu",
   "@menuTitle": { "description": "Title of the navigation drawer." },
   "cancelButton": "Ghairi",
@@ -120,6 +122,14 @@
   "@reportPhotoLabel": { "description": "Label for the optional photo-attach section." },
   "reportAddPhotoButton": "Ongeza picha",
   "@reportAddPhotoButton": { "description": "Button to attach a photo to the report." },
+  "reportTakePhotoButton": "Piga picha",
+  "@reportTakePhotoButton": { "description": "Button to capture a photo with the camera." },
+  "reportPickPhotoButton": "Chagua picha",
+  "@reportPickPhotoButton": { "description": "Button to pick a photo from the gallery." },
+  "reportAttachUnavailable": "Kuambatisha picha kutapatikana hivi karibuni.",
+  "@reportAttachUnavailable": { "description": "Shown when the photo picker is not wired yet (graceful, not faked)." },
+  "reportAttachQueuedNote": "Picha zitatumwa pamoja na ripoti yako.",
+  "@reportAttachQueuedNote": { "description": "Explains attachments are sent with the report (queued until upload)." },
   "reportVisibilityLabel": "Nani aone ripoti hii",
   "@reportVisibilityLabel": { "description": "Label for the visibility choice." },
   "reportVisibilityPublic": "Ya wazi (wengine waone)",
@@ -167,8 +177,27 @@
   "@draftPending": { "description": "Status chip for a pending offline draft." },
   "draftFailed": "Imeshindikana — itajaribiwa tena",
   "@draftFailed": { "description": "Status chip for a draft whose last send failed." },
+  "draftSending": "Inatumwa…",
+  "@draftSending": { "description": "Status badge while a draft is being sent." },
   "draftDiscard": "Futa rasimu",
   "@draftDiscard": { "description": "Action to discard a queued draft." },
+  "draftAttachmentCount": "Picha {count}",
+  "@draftAttachmentCount": {
+    "description": "Badge showing how many attachments a draft carries.",
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "draftRetryNote": "Imejaribiwa mara {attempts}.",
+  "@draftRetryNote": {
+    "description": "Note showing how many send attempts a failed draft has had.",
+    "placeholders": { "attempts": { "type": "int" } }
+  },
+  "draftAutoSyncNote": "Rasimu zitatumwa zenyewe utakapopata mtandao — bila kurudiwa.",
+  "@draftAutoSyncNote": { "description": "Reassures the citizen drafts auto-sync on reconnect, no duplicates." },
+  "draftSyncedFeedback": "Ripoti {count} zimetumwa.",
+  "@draftSyncedFeedback": {
+    "description": "Snackbar after a sync flush sends N drafts.",
+    "placeholders": { "count": { "type": "int" } }
+  },
 
   "reportDetailTitle": "Ufuatiliaji wa ripoti",
   "@reportDetailTitle": { "description": "Title of the report tracking/detail screen." },
@@ -190,6 +219,61 @@
   "@reportDisputeButton": { "description": "Dispute-resolution button (→ reopened)." },
   "reportDisputeReasonLabel": "Sababu (si lazima)",
   "@reportDisputeReasonLabel": { "description": "Label for the optional dispute reason." },
+  "reportDueLabel": "Muda wa jibu: {time}",
+  "@reportDueLabel": {
+    "description": "Shows the SLA due time on the report detail.",
+    "placeholders": { "time": { "type": "String" } }
+  },
+
+  "statusNew": "Mpya",
+  "@statusNew": { "description": "Report status: newly filed." },
+  "statusAssigned": "Imepokelewa",
+  "@statusAssigned": { "description": "Report status: assigned/acknowledged." },
+  "statusInProgress": "Inashughulikiwa",
+  "@statusInProgress": { "description": "Report status: in progress." },
+  "statusAwaitingInfo": "Inasubiri maelezo yako",
+  "@statusAwaitingInfo": { "description": "Report status: awaiting info from the citizen." },
+  "statusResolved": "Imetatuliwa",
+  "@statusResolved": { "description": "Report status: resolved." },
+  "statusClosed": "Imefungwa",
+  "@statusClosed": { "description": "Report status: closed." },
+  "statusReopened": "Imefunguliwa upya",
+  "@statusReopened": { "description": "Report status: reopened (after dispute)." },
+  "statusRejected": "Imekataliwa",
+  "@statusRejected": { "description": "Report status: rejected/duplicate." },
+
+  "eventStatusChange": "Hali imebadilika",
+  "@eventStatusChange": { "description": "Timeline event: status change." },
+  "eventComment": "Maelezo",
+  "@eventComment": { "description": "Timeline event: a comment." },
+  "eventAssignment": "Imekabidhiwa",
+  "@eventAssignment": { "description": "Timeline event: assignment." },
+  "eventResolution": "Suluhisho",
+  "@eventResolution": { "description": "Timeline event: resolution." },
+  "eventReopened": "Imefunguliwa upya",
+  "@eventReopened": { "description": "Timeline event: reopened." },
+  "eventConfirmation": "Uthibitisho wa mwananchi",
+  "@eventConfirmation": { "description": "Timeline event: citizen confirmation/dispute." },
+  "eventCreated": "Ripoti imewasilishwa",
+  "@eventCreated": { "description": "Timeline event: report created/submitted." },
+
+  "timeJustNow": "sasa hivi",
+  "@timeJustNow": { "description": "Relative time: within the last minute." },
+  "timeMinutesAgo": "dakika {count} zilizopita",
+  "@timeMinutesAgo": {
+    "description": "Relative time in minutes.",
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "timeHoursAgo": "saa {count} zilizopita",
+  "@timeHoursAgo": {
+    "description": "Relative time in hours.",
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "timeDaysAgo": "siku {count} zilizopita",
+  "@timeDaysAgo": {
+    "description": "Relative time in days.",
+    "placeholders": { "count": { "type": "int" } }
+  },
 
   "engageTitle": "Shiriki",
   "@engageTitle": { "description": "Title of the engagement hub." },
@@ -352,5 +436,20 @@
   "announcementDetailTitle": "Tangazo",
   "@announcementDetailTitle": { "description": "Title of the announcement-detail screen." },
   "announcementNotFound": "Tangazo hili halipatikani au limeisha muda.",
-  "@announcementNotFound": { "description": "Shown when an announcement is missing/expired (404)." }
+  "@announcementNotFound": { "description": "Shown when an announcement is missing/expired (404)." },
+
+  "settingsTitle": "Mipangilio",
+  "@settingsTitle": { "description": "Title of the settings screen." },
+  "settingsLanguageHeader": "Lugha",
+  "@settingsLanguageHeader": { "description": "Section header for language choice." },
+  "settingsDataHeader": "Matumizi ya data",
+  "@settingsDataHeader": { "description": "Section header for data-usage settings." },
+  "settingsDataSaverLabel": "Okoa data",
+  "@settingsDataSaverLabel": { "description": "Data-saver toggle label." },
+  "settingsDataSaverSubtitle": "Punguza picha nzito na usawazishe kidogo kwenye mtandao wa malipo.",
+  "@settingsDataSaverSubtitle": { "description": "Explains what data-saver does (low-data audience)." },
+  "settingsVersionLabel": "Toleo la programu",
+  "@settingsVersionLabel": { "description": "Label for the app version row." },
+  "settingsSignOutConfirm": "Una uhakika unataka kutoka? Utahitaji kuingia tena.",
+  "@settingsSignOutConfirm": { "description": "Confirmation prompt before signing out." }
 }

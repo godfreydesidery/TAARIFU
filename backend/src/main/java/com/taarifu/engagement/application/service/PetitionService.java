@@ -1,5 +1,7 @@
 package com.taarifu.engagement.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.audit.AuditOutcome;
@@ -7,6 +9,8 @@ import com.taarifu.common.audit.domain.model.AuditEvent;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.engagement.api.dto.PetitionDto;
 import com.taarifu.engagement.application.mapper.EngagementMapper;
@@ -64,6 +68,7 @@ public class PetitionService {
     private final RepresentativeQueryApi representativeQueryApi;
     private final ElectoralScopeApi electoralScopeApi;
     private final AuditEventService audit;
+    private final OutboxWriter outboxWriter;
 
     /**
      * @param petitions              petition persistence port.
@@ -74,6 +79,10 @@ public class PetitionService {
      * @param representativeQueryApi institutions' published port resolving a target rep's constituency (D13).
      * @param electoralScopeApi      identity's published port checking the signer's electoral scope (D13).
      * @param audit                  append-only audit writer (binding-action + denial evidence, L-1).
+     * @param outboxWriter           the transactional-outbox port; {@link #sign} appends a petition_signed
+     *                               analytics fact in the sign transaction so the analytics sink records it
+     *                               asynchronously, off the signer's path (Appendix E, M15). The token ledger is
+     *                               NEVER consulted on this path (the integrity fence, D18/§23.5).
      */
     public PetitionService(PetitionRepository petitions,
                            PetitionSignatureRepository signatures,
@@ -81,7 +90,8 @@ public class PetitionService {
                            ScopeGuard scopeGuard,
                            RepresentativeQueryApi representativeQueryApi,
                            ElectoralScopeApi electoralScopeApi,
-                           AuditEventService audit) {
+                           AuditEventService audit,
+                           OutboxWriter outboxWriter) {
         this.petitions = petitions;
         this.signatures = signatures;
         this.mapper = mapper;
@@ -89,6 +99,7 @@ public class PetitionService {
         this.representativeQueryApi = representativeQueryApi;
         this.electoralScopeApi = electoralScopeApi;
         this.audit = audit;
+        this.outboxWriter = outboxWriter;
     }
 
     /**
@@ -249,6 +260,31 @@ public class PetitionService {
                 .subject(petition.getPublicId())
                 .reason(petition.getTargetType().name())
                 .build());
+
+        // ANALYTICS (Appendix E, M15): emit a petition_signed civic-activity fact on the outbox in THIS
+        // transaction; the analytics sink records it ASYNCHRONOUSLY, off the signer's path. The signer signs at
+        // T3 (the controller's @RequiresTier gate), so tier is T3; activeRole is CITIZEN; the petition target
+        // type is the controlled `outcome` code. Ids/codes ONLY — NO signer identity, NO comment (PRD §18,
+        // PDPA, ADR-0014 §1). WHY this does NOT breach the fence (D18/§23.5): analytics is a passive side-record
+        // emitted AFTER the binding act completes; it neither reads the token balance nor influences the
+        // signature count — the count bump above is a derived counter, never a token-weighted value.
+        outboxWriter.append(EventEnvelope.of(
+                AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED,
+                AnalyticsEventTypes.AGGREGATE_CIVIC_ACTIVITY,
+                petition.getPublicId(),
+                new CivicActivityRecorded(
+                        AnalyticsEventTypes.PETITION_SIGNED,
+                        Instant.now(),
+                        null,                                 // actorRef: no pseudonymous hash resolved here
+                        null,                                 // geoAreaId: petition is not ward-scoped here
+                        null,                                 // categoryId: n/a
+                        "T3",                                 // tier (string — petition-sign is a T3 binding act)
+                        null,                                 // channel: not resolved at this layer
+                        "CITIZEN",                            // activeRole name (string — NOT the analytics enum)
+                        null,                                 // latencySeconds: n/a
+                        null,                                 // breachType: n/a
+                        petition.getTargetType().name()),     // outcome = REPRESENTATIVE / OFFICE (controlled vocab)
+                Instant.now()));
 
         return mapper.toPetitionDto(petition);
     }

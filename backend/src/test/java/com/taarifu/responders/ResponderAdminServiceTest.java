@@ -5,6 +5,7 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.reporting.api.IssueCategoryQueryApi;
 import com.taarifu.reporting.api.ReportLifecycleApi;
@@ -62,6 +63,7 @@ class ResponderAdminServiceTest {
     private ReportLifecycleApi reportLifecycleApi;
     private ScopeGuard scopeGuard;
     private AuditEventService audit;
+    private OutboxWriter outboxWriter;
     private ResponderAdminService service;
 
     private final UUID reportId = UUID.randomUUID();
@@ -82,10 +84,11 @@ class ResponderAdminServiceTest {
         reportLifecycleApi = mock(ReportLifecycleApi.class);
         scopeGuard = mock(ScopeGuard.class);
         audit = mock(AuditEventService.class);
+        outboxWriter = mock(OutboxWriter.class);
         ClockPort clock = () -> Instant.parse("2026-06-23T09:00:00Z");
         service = new ResponderAdminService(organisationRepository, responderRepository,
                 routingRuleRepository, assignmentRepository, reportQueryApi, issueCategoryQueryApi,
-                reportLifecycleApi, scopeGuard, audit, new ResponderMapper(), clock);
+                reportLifecycleApi, scopeGuard, audit, new ResponderMapper(), clock, outboxWriter);
 
         Organisation org = Organisation.create("TANESCO", OrganisationType.PARASTATAL);
         responder = Responder.create(org, "TANESCO — Kilimanjaro", ResponderType.UTILITY,

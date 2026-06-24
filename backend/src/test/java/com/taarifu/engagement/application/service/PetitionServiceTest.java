@@ -3,6 +3,7 @@ package com.taarifu.engagement.application.service;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.engagement.application.mapper.EngagementMapper;
 import com.taarifu.engagement.domain.model.Petition;
@@ -58,6 +59,8 @@ class PetitionServiceTest {
     private ElectoralScopeApi electoralScopeApi;
     @Mock
     private AuditEventService audit;
+    @Mock
+    private OutboxWriter outboxWriter;
 
     private final EngagementMapper mapper = new EngagementMapper();
     private PetitionService service;
@@ -68,7 +71,7 @@ class PetitionServiceTest {
     @BeforeEach
     void setUp() {
         service = new PetitionService(petitions, signatures, mapper, scopeGuard,
-                representativeQueryApi, electoralScopeApi, audit);
+                representativeQueryApi, electoralScopeApi, audit, outboxWriter);
     }
 
     private Petition activeOfficePetition() {
@@ -89,6 +92,24 @@ class PetitionServiceTest {
 
         assertThat(dto.signatureCount()).isEqualTo(1);
         verify(signatures).save(any(PetitionSignature.class));
+
+        // ANALYTICS (M15): a petition_signed civic-activity fact is appended to the outbox with the right
+        // dimensions — eventType=PETITION_SIGNED, tier=T3 (binding act), activeRole=CITIZEN, outcome=the target
+        // type, and NO PII (no signer id, no "ndio" comment). This assertion fails if the analytics emit is
+        // removed or carries the wrong dimensions. It also re-proves the fence: the fact is a passive record
+        // and there is still no token collaborator on this service.
+        ArgumentCaptor<com.taarifu.common.outbox.EventEnvelope<?>> env =
+                ArgumentCaptor.forClass(com.taarifu.common.outbox.EventEnvelope.class);
+        verify(outboxWriter).append(env.capture());
+        assertThat(env.getValue().eventType())
+                .isEqualTo(com.taarifu.analytics.api.event.AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED);
+        var fact = (com.taarifu.analytics.api.event.CivicActivityRecorded) env.getValue().payload();
+        assertThat(fact.analyticsEventType())
+                .isEqualTo(com.taarifu.analytics.api.event.AnalyticsEventTypes.PETITION_SIGNED);
+        assertThat(fact.tier()).isEqualTo("T3");
+        assertThat(fact.activeRole()).isEqualTo("CITIZEN");
+        assertThat(fact.outcome()).isEqualTo(PetitionTargetType.OFFICE.name());
+        assertThat(fact.actorRef()).isNull(); // no PII
     }
 
     @Test

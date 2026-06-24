@@ -213,16 +213,35 @@ class RoutingHandlerTest {
                 new ReportRouted(reportId, categoryId, wardId, now), now);
     }
 
-    /** Captures the single RESPONDER_ASSIGNED back-event payload appended to the outbox. */
+    /**
+     * Captures the RESPONDER_ASSIGNED back-event payload appended to the outbox. On a successful OWNER creation
+     * the handler appends TWO events: (1) RESPONDER_ASSIGNED (closes the routing loop) and (2) the analytics
+     * CIVIC_ACTIVITY_RECORDED report_routed fact (M15). This filters to the RESPONDER_ASSIGNED one and also
+     * asserts the analytics fact carries the routed ward/category dimensions (ids only — no PII).
+     */
     private ResponderAssignedEvent captureBackEvent() {
         @SuppressWarnings({"unchecked", "rawtypes"})
         ArgumentCaptor<EventEnvelope<?>> captor =
                 (ArgumentCaptor<EventEnvelope<?>>) (ArgumentCaptor) ArgumentCaptor.forClass(EventEnvelope.class);
-        verify(outboxWriter).append(captor.capture());
-        EventEnvelope<?> envelope = captor.getValue();
-        assertThat(envelope.eventType()).isEqualTo(ResponderEventTypes.RESPONDER_ASSIGNED);
-        assertThat(envelope.payload()).isInstanceOf(ResponderAssignedEvent.class);
-        return (ResponderAssignedEvent) envelope.payload();
+        verify(outboxWriter, org.mockito.Mockito.times(2)).append(captor.capture());
+
+        // ANALYTICS (M15): one of the two appends is the report_routed civic-activity fact, with ward + category.
+        EventEnvelope<?> analytics = captor.getAllValues().stream()
+                .filter(e -> e.eventType().equals(
+                        com.taarifu.analytics.api.event.AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED))
+                .findFirst().orElseThrow();
+        var fact = (com.taarifu.analytics.api.event.CivicActivityRecorded) analytics.payload();
+        assertThat(fact.analyticsEventType())
+                .isEqualTo(com.taarifu.analytics.api.event.AnalyticsEventTypes.REPORT_ROUTED);
+        assertThat(fact.geoAreaId()).isEqualTo(wardId);
+        assertThat(fact.categoryId()).isEqualTo(categoryId);
+        assertThat(fact.activeRole()).isEqualTo("SYSTEM");
+
+        EventEnvelope<?> back = captor.getAllValues().stream()
+                .filter(e -> e.eventType().equals(ResponderEventTypes.RESPONDER_ASSIGNED))
+                .findFirst().orElseThrow();
+        assertThat(back.payload()).isInstanceOf(ResponderAssignedEvent.class);
+        return (ResponderAssignedEvent) back.payload();
     }
 
     /** Builds an ACTIVE responder (under an active+verified org) handling the category, with a publicId. */

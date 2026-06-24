@@ -4,6 +4,8 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.outbox.EventEnvelope;
 import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.persistence.CodeGenerator;
@@ -197,6 +199,14 @@ public class ReportService implements ReportLifecycleApi {
                 new ReportRouted(report.getPublicId(), category.getPublicId(),
                         report.getReporterWardId(), clock.now()),
                 clock.now()));
+
+        // ANALYTICS (Appendix E, M15): emit a report_filed civic-activity fact on the SAME outbox in THIS
+        // transaction, consumed asynchronously by the analytics sink — off the citizen's critical path
+        // (Appendix E "never on the critical path"). Dimensions are ids/codes ONLY (ward, category, role) —
+        // NO reporter, NO title/description, NO geo-point (PRD §18, ADR-0014 §1). A null reporter (anonymous
+        // filing) carries no actorRef — analytics still counts the volume without a person.
+        emitAnalytics(report.getPublicId(), AnalyticsEventTypes.REPORT_FILED,
+                report.getReporterWardId(), category.getPublicId());
 
         return mapper.toReportDto(report);
     }
@@ -409,6 +419,10 @@ public class ReportService implements ReportLifecycleApi {
         report.resolve(resolutionNote);
         appendEvent(report, CaseEventType.STATUS_CHANGE, true, actorPublicId,
                 "%s → %s".formatted(from, ReportStatus.RESOLVED));
+        // ANALYTICS (Appendix E, M15): a report reached RESOLVED — the loop-closure / TTR metric. Emitted on
+        // the outbox in THIS transaction; recorded asynchronously by the analytics sink (off the actor path).
+        emitAnalytics(report.getPublicId(), AnalyticsEventTypes.REPORT_RESOLVED,
+                report.getReporterWardId(), report.getCategory().getPublicId());
         return mapper.toReportDto(report);
     }
 
@@ -449,6 +463,11 @@ public class ReportService implements ReportLifecycleApi {
         guardTransition(report.getStatus(), target, report.getCode());
         report.setStatus(target);
         appendEvent(report, CaseEventType.STATUS_CHANGE, true, actorProfileId, message);
+        // ANALYTICS (Appendix E, M15): every case state transition is a report_status_changed fact powering the
+        // state-machine analytics. Single emit point because EVERY lifecycle move (assign/start/escalate/the
+        // AWAITING_INFO resume) routes through here. Ids/codes only (ward, category) — no actor PII, no message.
+        emitAnalytics(report.getPublicId(), AnalyticsEventTypes.REPORT_STATUS_CHANGED,
+                report.getReporterWardId(), report.getCategory().getPublicId());
     }
 
     /**
@@ -469,6 +488,29 @@ public class ReportService implements ReportLifecycleApi {
     private CaseEvent appendEvent(Report report, CaseEventType type, boolean publicEvent, UUID actorProfileId,
                                   String message) {
         return caseEventRepository.save(new CaseEvent(report, type, publicEvent, actorProfileId, message));
+    }
+
+    /**
+     * Emits one civic-activity analytics fact to the transactional outbox in the <b>caller's</b> transaction
+     * (Appendix E, M15; ADR-0013 §2 — analytics is event-driven; ADR-0014 §2). The analytics sink consumes it
+     * <b>asynchronously</b> off the citizen path, so a failed/slow analytics write never rolls back the report
+     * write. WHY ids/codes only: the {@link CivicActivityRecorded} payload carries the report (as the outbox
+     * {@code aggregateId}), ward, and category public ids and a controlled event-type code — <b>never</b> the
+     * reporter, title, description, or geo-point (PRD §18, PDPA, ADR-0014 §1). The {@code activeRole} is left
+     * {@code null} here (the reporting service does not resolve the actor's hat; the dimension is optional).
+     *
+     * @param reportPublicId     the report the fact concerns (the outbox aggregate id).
+     * @param analyticsEventType the analytics catalogue value (see {@link AnalyticsEventTypes}).
+     * @param wardId             the report's ward (Kata) public id — a ward-or-coarser geo dimension.
+     * @param categoryId         the report's issue-category public id.
+     */
+    private void emitAnalytics(UUID reportPublicId, String analyticsEventType, UUID wardId, UUID categoryId) {
+        outboxWriter.append(EventEnvelope.of(
+                AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED,
+                AnalyticsEventTypes.AGGREGATE_CIVIC_ACTIVITY,
+                reportPublicId,
+                CivicActivityRecorded.of(analyticsEventType, wardId, categoryId, null, clock.now()),
+                clock.now()));
     }
 
     /**

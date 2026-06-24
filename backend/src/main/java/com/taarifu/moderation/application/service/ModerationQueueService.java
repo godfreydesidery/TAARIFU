@@ -1,5 +1,7 @@
 package com.taarifu.moderation.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.audit.AuditEventService;
 import com.taarifu.common.audit.AuditEventType;
 import com.taarifu.common.audit.AuditOutcome;
@@ -7,6 +9,8 @@ import com.taarifu.common.audit.domain.model.AuditEvent;
 import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.moderation.api.dto.ModerationActionDto;
 import com.taarifu.moderation.api.dto.ModerationItemDto;
@@ -53,6 +57,7 @@ public class ModerationQueueService {
     private final ScopeGuard scopeGuard;
     private final AuditEventService audit;
     private final ClockPort clock;
+    private final OutboxWriter outboxWriter;
 
     /**
      * @param itemRepository   queue store.
@@ -61,19 +66,24 @@ public class ModerationQueueService {
      * @param scopeGuard       {@code @taarifuAuthz} — supplies the D16 {@code isNotSelf} conflict check.
      * @param audit            append-only audit writer (denial + decision evidence).
      * @param clock            time source (testable).
+     * @param outboxWriter     the transactional-outbox port; {@link #takeAction} appends a
+     *                         {@code moderation_action_taken} analytics fact in the action transaction so the
+     *                         analytics sink records it asynchronously, off the moderator's path (Appendix E, M15).
      */
     public ModerationQueueService(ModerationItemRepository itemRepository,
                                   ModerationActionRepository actionRepository,
                                   FlagRepository flagRepository,
                                   ScopeGuard scopeGuard,
                                   AuditEventService audit,
-                                  ClockPort clock) {
+                                  ClockPort clock,
+                                  OutboxWriter outboxWriter) {
         this.itemRepository = itemRepository;
         this.actionRepository = actionRepository;
         this.flagRepository = flagRepository;
         this.scopeGuard = scopeGuard;
         this.audit = audit;
         this.clock = clock;
+        this.outboxWriter = outboxWriter;
     }
 
     /**
@@ -151,9 +161,30 @@ public class ModerationQueueService {
                 .reason(request.type().name())
                 .detailRef(item.getPublicId().toString())
                 .build());
-        // TODO(wiring): also emit `moderation_action_taken` {host_type, host_ref, action, action_latency_s}
-        // via the transactional outbox; and, for SUSPEND/VERIFY_REQUEST, an identity-module sanction event —
-        // never by reaching into identity from here (ARCHITECTURE.md §3.2, §8).
+        // ANALYTICS (Appendix E, M15): emit a moderation_action_taken civic-activity fact on the outbox in
+        // THIS transaction — the analytics sink records it ASYNCHRONOUSLY, off the moderator's path. The
+        // action taken is carried as the controlled-vocabulary `outcome` code (e.g. APPROVE/HIDE/REMOVE); the
+        // active role is MODERATOR. Ids/codes ONLY — NO content body, NO author identity, NO flag text
+        // (PRD §18, PDPA, ADR-0014 §1). The aggregate is the moderation item's public id.
+        outboxWriter.append(EventEnvelope.of(
+                AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED,
+                AnalyticsEventTypes.AGGREGATE_CIVIC_ACTIVITY,
+                item.getPublicId(),
+                new CivicActivityRecorded(
+                        AnalyticsEventTypes.MODERATION_ACTION_TAKEN,
+                        clock.now(),
+                        null,                       // actorRef: no pseudonymous actor hash resolved here
+                        null,                       // geoAreaId: moderation is not geo-scoped
+                        null,                       // categoryId: n/a for a moderation action
+                        null,                       // tier: n/a
+                        null,                       // channel: n/a (server-side action)
+                        "MODERATOR",                // activeRole name (string — NOT the analytics enum; ADR-0013 §3)
+                        null,                       // latencySeconds: action latency is a later refinement
+                        null,                       // breachType: n/a
+                        request.type().name()),     // outcome = the moderation action taken (controlled vocab)
+                clock.now()));
+        // TODO(wiring): for SUSPEND/VERIFY_REQUEST, also emit an identity-module sanction event — never by
+        // reaching into identity from here (ARCHITECTURE.md §3.2, §8).
         return ModerationActionDto.from(saved);
     }
 

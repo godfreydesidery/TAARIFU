@@ -1,8 +1,12 @@
 package com.taarifu.engagement.application.service;
 
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.common.outbox.EventEnvelope;
+import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.engagement.api.dto.SurveyDto;
 import com.taarifu.engagement.application.mapper.EngagementMapper;
 import com.taarifu.engagement.domain.model.Survey;
@@ -49,18 +53,25 @@ public class SurveyService {
     private final SurveyRepository surveys;
     private final SurveyResponseRepository responses;
     private final EngagementMapper mapper;
+    private final OutboxWriter outboxWriter;
 
     /**
-     * @param surveys   survey persistence port.
-     * @param responses response persistence port (one-per-person pre-check).
-     * @param mapper    entity→DTO mapper.
+     * @param surveys      survey persistence port.
+     * @param responses    response persistence port (one-per-person pre-check).
+     * @param mapper       entity→DTO mapper.
+     * @param outboxWriter the transactional-outbox port; {@link #respond} appends a survey_responded analytics
+     *                     fact in the response transaction so the analytics sink records it asynchronously, off
+     *                     the responder's path (Appendix E, M15). The token ledger is NEVER consulted here (the
+     *                     integrity fence, D18/§23.5).
      */
     public SurveyService(SurveyRepository surveys,
                          SurveyResponseRepository responses,
-                         EngagementMapper mapper) {
+                         EngagementMapper mapper,
+                         OutboxWriter outboxWriter) {
         this.surveys = surveys;
         this.responses = responses;
         this.mapper = mapper;
+        this.outboxWriter = outboxWriter;
     }
 
     /**
@@ -151,6 +162,30 @@ public class SurveyService {
             // Concurrent double-response hit the unique index — the fence held; surface a clean conflict.
             throw new ApiException(ErrorCode.CONFLICT, dup);
         }
+
+        // ANALYTICS (Appendix E, M15): emit a survey_responded civic-activity fact on the outbox in THIS
+        // transaction; the analytics sink records it ASYNCHRONOUSLY, off the responder's path. activeRole is
+        // CITIZEN; the `outcome` carries whether this was a binding poll vs a non-binding survey (controlled
+        // vocab). Ids/codes ONLY — NO responder identity, NO answers payload (PRD §18, PDPA, ADR-0014 §1). WHY
+        // this does NOT breach the fence (D18/§23.5): analytics is a passive side-record emitted AFTER the act
+        // completes; it neither reads the token balance nor affects the one-per-person guarantee above.
+        outboxWriter.append(EventEnvelope.of(
+                AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED,
+                AnalyticsEventTypes.AGGREGATE_CIVIC_ACTIVITY,
+                survey.getPublicId(),
+                new CivicActivityRecorded(
+                        AnalyticsEventTypes.SURVEY_RESPONDED,
+                        Instant.now(),
+                        null,                                          // actorRef: no pseudonymous hash here
+                        null,                                          // geoAreaId: n/a
+                        null,                                          // categoryId: n/a
+                        null,                                          // tier: not resolved at this layer
+                        null,                                          // channel: not resolved at this layer
+                        "CITIZEN",                                     // activeRole name (string — NOT the enum)
+                        null,                                          // latencySeconds: n/a
+                        null,                                          // breachType: n/a
+                        survey.isBinding() ? "BINDING" : "SURVEY"),    // outcome = binding-ness (controlled vocab)
+                Instant.now()));
         return mapper.toSurveyDto(survey);
     }
 

@@ -2,6 +2,8 @@ package com.taarifu.responders.application.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.taarifu.analytics.api.event.AnalyticsEventTypes;
+import com.taarifu.analytics.api.event.CivicActivityRecorded;
 import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.outbox.DomainEventHandler;
 import com.taarifu.common.outbox.EventEnvelope;
@@ -143,7 +145,7 @@ public class RoutingHandler implements DomainEventHandler {
             return;
         }
 
-        createOwnerAssignment(routed.reportId(), responder.get(), event.eventId());
+        createOwnerAssignment(routed, responder.get(), event.eventId());
     }
 
     /**
@@ -155,7 +157,8 @@ public class RoutingHandler implements DomainEventHandler {
      * @param responder   the resolved responsible responder.
      * @param eventId     the delivering event's idempotency key (for diagnostics only).
      */
-    private void createOwnerAssignment(UUID reportId, Responder responder, UUID eventId) {
+    private void createOwnerAssignment(ReportRouted routed, Responder responder, UUID eventId) {
+        UUID reportId = routed.reportId();
         Instant assignedAt = clock.now();
         ResponderAssignment assignment = ResponderAssignment.create(
                 reportId, responder, AssignmentRole.OWNER, null, assignedAt);
@@ -180,6 +183,28 @@ public class RoutingHandler implements DomainEventHandler {
                 assignment.getPublicId(),
                 new ResponderAssignedEvent(assignment.getPublicId(), reportId, responder.getPublicId(),
                         AssignmentRole.OWNER, assignedAt, assignedAt),
+                assignedAt));
+        // ANALYTICS (Appendix E, M15): the system-routed OWNER assignment is a routing/ops fact. Emitted on the
+        // outbox in THIS handler's transaction; recorded ASYNCHRONOUSLY by the analytics sink. We enrich it with
+        // the ward + category from the routed payload (ids only — no report PII; ADR-0014 §1) so the routing
+        // dashboards can segment by area×category. Idempotent: a redelivery that loses the OWNER race returns
+        // above before this emit, so the fact is appended exactly once per successful OWNER creation.
+        outboxWriter.append(EventEnvelope.of(
+                AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED,
+                AnalyticsEventTypes.AGGREGATE_CIVIC_ACTIVITY,
+                assignment.getPublicId(),
+                new CivicActivityRecorded(
+                        AnalyticsEventTypes.REPORT_ROUTED,
+                        assignedAt,
+                        null,                       // actorRef: system routing, no human actor
+                        routed.wardId(),            // ward-or-coarser geo dimension (id only)
+                        routed.categoryId(),        // issue-category dimension (id only)
+                        null,                       // tier: n/a (system)
+                        null,                       // channel: n/a (server-side)
+                        "SYSTEM",                   // activeRole name (string — NOT the analytics enum; ADR-0013 §3)
+                        null,                       // latencySeconds: n/a
+                        null,                       // breachType: n/a
+                        AssignmentRole.OWNER.name()), // outcome = OWNER (controlled vocab)
                 assignedAt));
         log.info("REPORT_ROUTED eventId={} report={} → OWNER responder={} (D21); RESPONDER_ASSIGNED emitted",
                 eventId, reportId, responder.getPublicId());

@@ -33,6 +33,17 @@
 # TAARIFU_VERIFICATION_PROVIDER=operator-assisted  # or 'auto-stub' (dev/E2E); no NIDA dependency at launch
 # TAARIFU_ELECTORAL_COOLDOWN_DAYS=183    # ~6-month manual isElectoral change cooldown (voter-ID bypasses)
 
+# --- Prod-safe first-admin bootstrap (threat-model E / TR-5 / G16) ---
+# Turn ON for a SINGLE first-boot of a fresh prod DB (it has zero accounts), then turn OFF and reboot.
+# Idempotent (no-op if any ACTIVE ROOT already exists) and fail-safe (no/weak password => creates nothing;
+# there is NO default credential). The password is BCrypt-hashed + never logged; the staff TOTP enrolment
+# otpauth:// URI is written to a 0600 file (never to the log). Enrol from the file, DELETE it, then log in
+# and ROTATE the password immediately.
+# TAARIFU_BOOTSTRAP_ADMIN_ENABLED=true                 # opt-in; keep unset/false in steady state
+# TAARIFU_BOOTSTRAP_ADMIN_PHONE=+2557XXXXXXXX           # E.164 account key (no default)
+# TAARIFU_BOOTSTRAP_ADMIN_PASSWORD=<strong, >=12 chars, mixed>   # SECRET — env only, never committed
+# TAARIFU_BOOTSTRAP_ADMIN_TOTP_FILE=/var/run/taarifu/root-totp-enrollment.txt  # 0600; delete after enrolling
+
 # --- CORS allow-list (PRD §18) ---
 # Comma-separated EXACT origins. Never use '*' with credentials.
 # TAARIFU_CORS_ORIGINS=https://admin.taarifu.example,https://app.taarifu.example

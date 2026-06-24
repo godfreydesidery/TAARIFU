@@ -1,0 +1,60 @@
+# =============================================================================
+# Taarifu — Alertmanager routing skeleton.
+#
+# Grounding: ARCHITECTURE.md §9 (alerting), deploy/README.md §10. Routes by the
+# `severity` label the alert rules set: critical -> page on-call; warning -> chat.
+#
+# NO real receivers / webhooks / creds here (PRD §18, CLAUDE.md §12). Wire the
+# actual Slack/PagerDuty/SMS webhook URLs from the secret manager at deploy time,
+# NEVER commit them. The `webhook_configs` below point at a no-op placeholder.
+#
+# Election-period note (deploy/README §9): during a change freeze, raise (do not
+# lower) sensitivity and ensure the on-call rotation has headroom; route nothing
+# to channels that could be read as partisan.
+# =============================================================================
+
+global:
+  resolve_timeout: 5m
+
+# Group, throttle, and route. Tune group_wait/interval to your noise tolerance.
+route:
+  receiver: default
+  group_by: ["alertname", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # Critical -> page the on-call rotation immediately (PagerDuty/Opsgenie/SMS).
+    - matchers:
+        - severity = "critical"
+      receiver: oncall-page
+      group_wait: 10s
+      repeat_interval: 1h
+    # Warning -> chat channel; no paging.
+    - matchers:
+        - severity = "warning"
+      receiver: chat-warnings
+
+receivers:
+  # Placeholder receivers. Replace `url` with secret-managed webhook endpoints at
+  # deploy time. Left as a local sink so the bundled stack starts without secrets.
+  - name: default
+    webhook_configs:
+      - url: "http://127.0.0.1:5001/noop"
+        send_resolved: true
+  - name: oncall-page
+    webhook_configs:
+      # e.g. PagerDuty Events API / Opsgenie webhook — inject the real URL from Vault.
+      - url: "http://127.0.0.1:5001/noop-page"
+        send_resolved: true
+  - name: chat-warnings
+    webhook_configs:
+      # e.g. Slack/Teams incoming webhook — inject the real URL from the secret manager.
+      - url: "http://127.0.0.1:5001/noop-chat"
+        send_resolved: true
+
+# Suppress lower-severity alerts for the same component when a critical is firing.
+inhibit_rules:
+  - source_matchers: [severity = "critical"]
+    target_matchers: [severity = "warning"]
+    equal: ["alertname"]

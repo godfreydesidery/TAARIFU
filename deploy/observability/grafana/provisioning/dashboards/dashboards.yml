@@ -1,0 +1,17 @@
+# =============================================================================
+# Taarifu — Grafana dashboard provider. Loads every JSON under the mounted
+# dashboards dir so the Taarifu overview appears automatically (no click-ops).
+# =============================================================================
+apiVersion: 1
+
+providers:
+  - name: taarifu
+    orgId: 1
+    folder: Taarifu
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      # Path INSIDE the Grafana container (see docker-compose volume mount).
+      path: /var/lib/grafana/dashboards

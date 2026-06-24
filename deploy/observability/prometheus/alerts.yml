@@ -1,0 +1,156 @@
+# =============================================================================
+# Taarifu — Prometheus alerting rules.
+#
+# Grounding: ARCHITECTURE.md §9 ("Alerts: 5xx, latency SLO burn, ... DLQ non-empty,
+# circuit-open"), deploy/README.md §10 (alert list), PRD §15 (SLOs: API 99.9%
+# monthly availability, reads p95 < 500ms, writes p95 < 1s).
+#
+# Metric names (Prometheus dot->underscore convention applied to the Micrometer names):
+#   - taarifu_outbox_failed                  -> DLQ depth gauge (OutboxMaintenance.FAILED_GAUGE)
+#   - http_server_requests_seconds_*         -> Spring HTTP server timer (RED)
+#   - jvm_memory_used_bytes / _max_bytes     -> JVM heap
+#   - jvm_threads_*, process_cpu_usage       -> runtime saturation
+#   - up{job="taarifu-backend"}              -> scrape liveness
+#
+# Every alert carries a `runbook` annotation pointing at deploy/observability/RUNBOOK.md
+# so a tired on-call at 3am has the next step in hand (Peter's rule: runbooks an
+# exhausted engineer can follow on a flaky connection).
+# =============================================================================
+
+groups:
+  # ===========================================================================
+  # 1) Availability & scrape health
+  # ===========================================================================
+  - name: taarifu-availability
+    rules:
+      - alert: BackendDown
+        # The scraper cannot reach the backend's /actuator/prometheus for 2m.
+        # NOTE: also fires if `micrometer-registry-prometheus` is missing (CENTRAL NEED) —
+        # in that case the endpoint 404s and `up` is 0 even though the JVM is alive.
+        expr: up{job="taarifu-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "Taarifu backend scrape target is DOWN"
+          description: "Prometheus has not scraped {{ $labels.instance }} for >2m. App may be down, OR the prometheus endpoint/micrometer dep is missing."
+          runbook: "deploy/observability/RUNBOOK.md#backenddown"
+
+  # ===========================================================================
+  # 2) HTTP RED — error rate & latency SLO burn (PRD §15)
+  # ===========================================================================
+  - name: taarifu-http-slo
+    rules:
+      # --- 5xx error rate SLO. Page when server-error ratio exceeds 1% over 5m. ---
+      - alert: HttpHigh5xxErrorRate
+        expr: |
+          (
+            sum(rate(http_server_requests_seconds_count{job="taarifu-backend",status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(http_server_requests_seconds_count{job="taarifu-backend"}[5m])), 0.001)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "Backend 5xx error rate > 1% (5m)"
+          description: "Server-error ratio is {{ $value | humanizePercentage }} over 5m — error budget burning (PRD §15: 99.9% monthly)."
+          runbook: "deploy/observability/RUNBOOK.md#http5xx"
+
+      # --- Read latency SLO: p95 of GETs must stay < 500ms (PRD §15). ---
+      - alert: HttpReadLatencyP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(http_server_requests_seconds_bucket{job="taarifu-backend",method="GET"}[5m])) by (le)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "Read p95 latency > 500ms (10m)"
+          description: "GET p95 is {{ $value | humanizeDuration }} (>500ms SLO, PRD §15). Check DB/Redis/adapter latency."
+          runbook: "deploy/observability/RUNBOOK.md#latency"
+
+      # --- Write latency SLO: p95 of mutating verbs must stay < 1s (PRD §15). ---
+      - alert: HttpWriteLatencyP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(http_server_requests_seconds_bucket{job="taarifu-backend",method=~"POST|PUT|PATCH|DELETE"}[5m])) by (le)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "Write p95 latency > 1s (10m)"
+          description: "Mutating-request p95 is {{ $value | humanizeDuration }} (>1s SLO, PRD §15)."
+          runbook: "deploy/observability/RUNBOOK.md#latency"
+
+  # ===========================================================================
+  # 3) Transactional outbox DLQ (ARCHITECTURE §8, §9 "DLQ non-empty")
+  #    Gauge: taarifu.outbox.failed (OutboxMaintenance) — rows in terminal FAILED.
+  # ===========================================================================
+  - name: taarifu-outbox-dlq
+    rules:
+      # Any FAILED row means an event's side-effect was abandoned (notification,
+      # feed fan-out, SLA clock, routing). Warn promptly; the citizen TX already
+      # committed (DI3) but the effect is lost until replayed.
+      - alert: OutboxDlqNonEmpty
+        expr: max(taarifu_outbox_failed{job="taarifu-backend"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "Outbox DLQ is non-empty ({{ $value }} FAILED rows)"
+          description: "{{ $value }} outbox event(s) in terminal FAILED state for >5m. A side-effect was dropped after the attempt cap. Fix the cause, then replay (RUNBOOK)."
+          runbook: "deploy/observability/RUNBOOK.md#dlq-replay"
+
+      # A growing DLQ (or a large backlog) is an escalation — a systemic handler/dependency failure.
+      - alert: OutboxDlqGrowing
+        expr: max(taarifu_outbox_failed{job="taarifu-backend"}) > 50
+        for: 10m
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "Outbox DLQ depth > 50 — systemic handler/dependency failure"
+          description: "DLQ at {{ $value }} FAILED rows. A downstream dependency or handler is broken at scale. Page on-call."
+          runbook: "deploy/observability/RUNBOOK.md#dlq-replay"
+
+  # ===========================================================================
+  # 4) JVM / runtime saturation
+  # ===========================================================================
+  - name: taarifu-jvm
+    rules:
+      - alert: JvmHeapPressure
+        # Heap used / max > 90% (area=heap) sustained — GC thrash / OOM risk.
+        expr: |
+          sum(jvm_memory_used_bytes{job="taarifu-backend",area="heap"})
+          /
+          clamp_min(sum(jvm_memory_max_bytes{job="taarifu-backend",area="heap"}), 1)
+          > 0.9
+        for: 10m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "JVM heap usage > 90% (10m)"
+          description: "Heap at {{ $value | humanizePercentage }} of max for >10m. Risk of GC thrash / OOMKilled — check for a leak or under-provisioned -Xmx."
+          runbook: "deploy/observability/RUNBOOK.md#jvm"
+
+      - alert: ProcessCpuHigh
+        expr: avg(process_cpu_usage{job="taarifu-backend"}) > 0.85
+        for: 15m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "Process CPU > 85% (15m)"
+          description: "Sustained CPU saturation at {{ $value | humanizePercentage }}. Consider scaling out or profiling a hot path."
+          runbook: "deploy/observability/RUNBOOK.md#jvm"

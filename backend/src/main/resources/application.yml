@@ -54,16 +54,45 @@ server:
     include-stacktrace: never          # never leak stack traces to clients (PRD §18)
     include-message: never
 
-# --- Actuator: expose only health/info publicly; everything else stays internal (ARCHITECTURE §9). ---
+# --- Actuator: expose health/info + the metrics scrape surface (ARCHITECTURE §9, deploy/README §10). ---
+# `prometheus` + `metrics` are added for the internal Prometheus scraper. These MUST stay reachable
+# from the monitoring network ONLY — never published to the public internet (deploy/README §10):
+# at the edge, allow /api/v1/actuator/health and /api/v1/actuator/info publicly and restrict
+# /api/v1/actuator/{metrics,prometheus} to the scrape subnet (reverse-proxy/network-policy job, NOT app config).
+#
+# CENTRAL NEED: rendering /actuator/prometheus requires the `micrometer-registry-prometheus` runtime
+# dependency on the backend classpath (NOT yet in backend/pom.xml — see report). With only
+# spring-boot-starter-actuator present, the `prometheus` endpoint is unavailable even when listed here.
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       probes:
         enabled: true                  # liveness/readiness groups
+      group:
+        # Readiness includes external deps (DB/Redis); liveness stays cheap so a slow dep never kills the pod.
+        readiness:
+          include: readinessState,db
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  # Micrometer metric tuning. Percentile histograms for HTTP server timings let Prometheus compute
+  # p95/p99 latency SLOs (PRD §15: reads p95 < 500ms, writes p95 < 1s) via histogram_quantile() on
+  # the scraped buckets, rather than relying on client-side, non-aggregatable percentiles.
+  metrics:
+    tags:
+      # Stamp every metric with the app so dashboards/alerts can slice per deployment (ARCHITECTURE §9).
+      application: taarifu-backend
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      slo:
+        # Buckets aligned to the PRD §15 latency SLOs (ms) so burn can be read straight off the histogram.
+        http.server.requests: 250ms,500ms,1s
 
 # --- springdoc / OpenAPI: serve the spec + Swagger UI (paths are relative to context-path). ---
 springdoc:

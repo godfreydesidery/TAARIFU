@@ -1,0 +1,196 @@
+{
+  "__comment": "Taarifu backend overview dashboard SKELETON. Grounding: ARCHITECTURE.md §9 (RED per endpoint, DLQ-non-empty, JVM), PRD §15 (SLOs). Panels query the Micrometer/Prometheus metrics the backend exposes at /api/v1/actuator/prometheus once micrometer-registry-prometheus is on the classpath (CENTRAL NEED). Import via provisioning; extend with per-adapter rows (SMS/NIDA/FCM/payments) as those adapters land (DI6).",
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "tags": ["taarifu", "backend", "slo"],
+  "title": "Taarifu Backend — Overview",
+  "uid": "taarifu-backend-overview",
+  "timezone": "utc",
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "taarifu-prometheus" },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Availability & RED (PRD §15)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Target up",
+      "description": "1 = backend /actuator/prometheus is scraped. 0 = down OR micrometer-registry-prometheus missing (CENTRAL NEED).",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        }
+      },
+      "targets": [
+        { "refId": "A", "expr": "max(up{job=\"taarifu-backend\"})" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate by status class (req/s)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 9, "x": 6, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "2xx", "expr": "sum(rate(http_server_requests_seconds_count{job=\"taarifu-backend\",status=~\"2..\"}[5m]))" },
+        { "refId": "B", "legendFormat": "4xx", "expr": "sum(rate(http_server_requests_seconds_count{job=\"taarifu-backend\",status=~\"4..\"}[5m]))" },
+        { "refId": "C", "legendFormat": "5xx", "expr": "sum(rate(http_server_requests_seconds_count{job=\"taarifu-backend\",status=~\"5..\"}[5m]))" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "5xx error ratio (SLO < 1%)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 9, "x": 15, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.01 } ] }
+        }
+      },
+      "targets": [
+        { "refId": "A", "legendFormat": "5xx ratio", "expr": "sum(rate(http_server_requests_seconds_count{job=\"taarifu-backend\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{job=\"taarifu-backend\"}[5m])), 0.001)" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Latency SLOs",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Read p95 (GET) — SLO < 500ms",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.5 } ] }
+        }
+      },
+      "targets": [
+        { "refId": "A", "legendFormat": "GET p95", "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"taarifu-backend\",method=\"GET\"}[5m])) by (le))" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Write p95 (POST/PUT/PATCH/DELETE) — SLO < 1s",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        }
+      },
+      "targets": [
+        { "refId": "A", "legendFormat": "write p95", "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"taarifu-backend\",method=~\"POST|PUT|PATCH|DELETE\"}[5m])) by (le))" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Outbox DLQ (ARCHITECTURE §8/§9)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Outbox DLQ depth (FAILED rows)",
+      "description": "taarifu.outbox.failed gauge. >0 means a side-effect was dropped after the attempt cap — fix cause, then replay (RUNBOOK).",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 50 } ] }
+        }
+      },
+      "targets": [
+        { "refId": "A", "expr": "max(taarifu_outbox_failed{job=\"taarifu-backend\"})" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Outbox DLQ depth over time",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "FAILED rows", "expr": "max(taarifu_outbox_failed{job=\"taarifu-backend\"})" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "JVM / Runtime",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "JVM heap used / max",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 23 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.9 } ] }
+        }
+      },
+      "targets": [
+        { "refId": "A", "legendFormat": "heap used/max", "expr": "sum(jvm_memory_used_bytes{job=\"taarifu-backend\",area=\"heap\"}) / clamp_min(sum(jvm_memory_max_bytes{job=\"taarifu-backend\",area=\"heap\"}), 1)" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Process CPU usage",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 23 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.85 } ] }
+        }
+      },
+      "targets": [
+        { "refId": "A", "legendFormat": "process cpu", "expr": "avg(process_cpu_usage{job=\"taarifu-backend\"})" }
+      ]
+    }
+  ]
+}

@@ -16,9 +16,10 @@ import java.util.UUID;
  * Live implementation of {@link RepresentativeQueryApi} — the institutions-owned resolution of a
  * representative's existence and constituency for cross-module binding-action scoping (ADR-0013 §1; D13).
  *
- * <p>Responsibility: validate the representative exists (else {@code NOT_FOUND}) and return the public id of
- * the constituency they hold (constituency-mandate MP) or the ward they hold (councillor/ward-exec) — the
- * two-tier electoral mapping the binding-action fence gates on (D13/F1). It is
+ * <p>Responsibility: validate the representative exists ({@link #exists} returns a boolean for the
+ * curated-authoring guard; {@link #constituencyOf}/{@link #wardOf} throw {@code NOT_FOUND}) and return the
+ * public id of the constituency they hold (constituency-mandate MP) or the ward they hold
+ * (councillor/ward-exec) — the two-tier electoral mapping the binding-action fence gates on (D13/F1). It is
  * {@code @Transactional(readOnly = true)} and exposes only DTO-grade {@code UUID}s — never the
  * {@link Representative}/{@link Constituency}/{@link Location} entities — to the caller (boundary
  * discipline, CLAUDE.md §8).</p>
@@ -30,10 +31,21 @@ public class RepresentativeQueryService implements RepresentativeQueryApi {
     private final RepresentativeRepository representativeRepository;
 
     /**
-     * @param representativeRepository representative persistence port (existence + constituency read).
+     * @param representativeRepository representative persistence port (existence guard + constituency/ward read).
      */
     public RepresentativeQueryService(RepresentativeRepository representativeRepository) {
         this.representativeRepository = representativeRepository;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean exists(UUID representativePublicId) {
+        // A null id can never reference a real row — short-circuit to false (the port contract is
+        // "missing referent ⇒ false, never throw"; the caller turns false into its own rejection shape).
+        if (representativePublicId == null) {
+            return false;
+        }
+        return representativeRepository.existsByPublicId(representativePublicId);
     }
 
     /** {@inheritDoc} */

@@ -9,9 +9,10 @@ package com.taarifu.accountability.domain.model.enums;
  *
  * <p>WHY the subject is referenced by {@code subjectType + UUID} rather than a real FK: the rated
  * subjects live in <b>other modules</b> (representatives/offices in institutions, projects in the
- * projects module) which this module must not import (module-boundary isolation). The pair is resolved
- * through those modules' public APIs at the wiring step; here it is an opaque, validated public id
- * (// TODO(wiring)).</p>
+ * projects module) which this module must not import (module-boundary isolation). A
+ * {@link #REPRESENTATIVE} subject is resolved through institutions' published {@code RepresentativeQueryApi}
+ * (existence + electoral scope) in {@code RatingService}; {@link #OFFICE}/{@link #PROJECT} have no owning
+ * module/port yet, so their existence is not yet validated.</p>
  */
 public enum RatingSubjectType {
 

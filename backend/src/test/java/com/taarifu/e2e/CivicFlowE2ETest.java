@@ -149,6 +149,10 @@ class CivicFlowE2ETest extends AbstractPostgisIntegrationTest {
     /** Test rep-seat port: every target rep is a constituency-MP for the fixed test constituency. */
     static final class TestRepresentativeQueryApi implements RepresentativeQueryApi {
         volatile UUID constituencyId = UUID.randomUUID();
+        @Override public boolean exists(UUID representativePublicId) {
+            // The e2e flow targets a real, existing rep — every non-null id resolves as present.
+            return representativePublicId != null;
+        }
         @Override public Optional<UUID> constituencyOf(UUID representativePublicId) {
             return Optional.of(constituencyId);
         }

@@ -31,6 +31,18 @@ public interface RepresentativeRepository extends JpaRepository<Representative, 
     Optional<Representative> findByPublicId(UUID publicId);
 
     /**
+     * Lightweight existence guard by public id — backs {@link
+     * com.taarifu.institutions.api.RepresentativeQueryApi#exists(UUID)} so a cross-module caller
+     * (accountability curated-authoring) can reject a reference to a non-existent representative without
+     * loading the aggregate. Soft-deleted rows are excluded by the entity's {@code @SQLRestriction}, so a
+     * retired/removed representative reads as absent here, exactly as intended.
+     *
+     * @param publicId the representative's public id.
+     * @return {@code true} if a live (non-soft-deleted) representative with that public id exists.
+     */
+    boolean existsByPublicId(UUID publicId);
+
+    /**
      * Finds the representatives mapped to a constituency in a given status (typically the single
      * {@link RepresentativeStatus#SITTING} MP for "find my rep").
      *

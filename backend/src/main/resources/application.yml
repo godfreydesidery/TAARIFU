@@ -60,9 +60,9 @@ server:
 # at the edge, allow /api/v1/actuator/health and /api/v1/actuator/info publicly and restrict
 # /api/v1/actuator/{metrics,prometheus} to the scrape subnet (reverse-proxy/network-policy job, NOT app config).
 #
-# CENTRAL NEED: rendering /actuator/prometheus requires the `micrometer-registry-prometheus` runtime
-# dependency on the backend classpath (NOT yet in backend/pom.xml — see report). With only
-# spring-boot-starter-actuator present, the `prometheus` endpoint is unavailable even when listed here.
+# Rendering /actuator/prometheus requires the `micrometer-registry-prometheus` runtime dependency on
+# the backend classpath (now present in backend/pom.xml). With only spring-boot-starter-actuator and no
+# Prometheus registry the `prometheus` endpoint would be unavailable even when listed here.
 management:
   endpoints:
     web:
@@ -144,3 +144,35 @@ taarifu:
   geography:
     # Active Geocoder adapter: 'postgis' (default, source of truth) or 'stub' (dev/test).
     geocoder: ${TAARIFU_GEOCODER:postgis}
+
+  # --- Communications channels (SMS / push / email) — outbound adapter selectors + endpoints. ---
+  # Each channel selects exactly ONE adapter bean via @ConditionalOnProperty on the `provider` key.
+  # The default is the safe LOGGING stub (matchIfMissing=true on the stubs), so dev/test AND a
+  # no-profile production context boot with zero external calls (PRD §21 EI-3/5/6, ARCHITECTURE §7).
+  # To enable a real provider, set the provider AND its required endpoints via the environment.
+  # ALL secrets (SMS api-key, FCM service-account JSON, SMTP user/pass) come from env/secret-mounts —
+  # NONE are committed (PRD §18, CLAUDE.md §12). See application-sample.yml for the env placeholders.
+  communications:
+    sms:
+      # 'logging' (default, safe no-op) or 'http' (the HTTPS-submit aggregator adapter). When 'http',
+      # submit-url + sender-id are required (the adapter fails fast at boot if either is absent).
+      provider: ${TAARIFU_SMS_PROVIDER:logging}
+      submit-url: ${TAARIFU_SMS_SUBMIT_URL:}          # aggregator HTTPS submit endpoint (provider=http)
+      sender-id: ${TAARIFU_SMS_SENDER_ID:}            # TCRA-registered sender-id / shortcode (D-Q7)
+      api-key: ${TAARIFU_SMS_API_KEY:}                # SECRET — env/secret-mount only, never committed
+      auth-header: ${TAARIFU_SMS_AUTH_HEADER:Authorization}  # header the api-key is sent in
+      request-timeout: ${TAARIFU_SMS_REQUEST_TIMEOUT:5s}     # per-request timeout (degrade, don't crash)
+    push:
+      # 'logging' (default) or 'fcm' (FCM HTTP v1 adapter). When 'fcm', project-id + credentials-file
+      # are required (the adapter fails fast at boot if either is absent).
+      provider: ${TAARIFU_PUSH_PROVIDER:logging}
+      project-id: ${TAARIFU_FCM_PROJECT_ID:}          # Firebase/GCP project id (provider=fcm)
+      credentials-file: ${TAARIFU_FCM_CREDENTIALS_FILE:}  # path to the GCP service-account JSON (SECRET mount)
+      request-timeout: ${TAARIFU_PUSH_REQUEST_TIMEOUT:5s}
+    email:
+      # 'logging' (default) or 'smtp' (Spring Mail / SMTP adapter). When 'smtp', `from` is required and
+      # the transport (host/port/user/pass) comes from spring.mail.* (env), never from source.
+      provider: ${TAARIFU_EMAIL_PROVIDER:logging}
+      from: ${TAARIFU_EMAIL_FROM:}                    # SPF/DKIM/DMARC-aligned sender address (provider=smtp)
+      from-name: ${TAARIFU_EMAIL_FROM_NAME:Taarifu}   # optional From display name
+      reply-to: ${TAARIFU_EMAIL_REPLY_TO:}            # optional Reply-To address

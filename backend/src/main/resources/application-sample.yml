@@ -44,6 +44,35 @@
 # 'postgis' (default; requires seeded ward boundaries) or 'stub' (dev/test, no geometry needed).
 # TAARIFU_GEOCODER=postgis
 
+# --- Communications channels (PRD §21 EI-3/5/6) ---
+# Each channel defaults to the safe LOGGING stub (no external calls). Set the provider AND its
+# required endpoints to enable a real adapter. Secrets are env/secret-mount only — NEVER committed.
+#
+# SMS (HTTPS-submit aggregator). When provider=http, submit-url + sender-id are required.
+# TAARIFU_SMS_PROVIDER=http
+# TAARIFU_SMS_SUBMIT_URL=https://aggregator.example/sms/submit
+# TAARIFU_SMS_SENDER_ID=TAARIFU            # TCRA-registered sender-id / shortcode (D-Q7)
+# TAARIFU_SMS_API_KEY=<set-in-env>         # SECRET — aggregator API key, never committed
+# TAARIFU_SMS_AUTH_HEADER=Authorization    # or X-API-Key etc. per the aggregator
+# TAARIFU_SMS_REQUEST_TIMEOUT=5s
+#
+# Push (FCM HTTP v1). When provider=fcm, project-id + credentials-file are required.
+# TAARIFU_PUSH_PROVIDER=fcm
+# TAARIFU_FCM_PROJECT_ID=my-firebase-project
+# TAARIFU_FCM_CREDENTIALS_FILE=/var/run/secrets/fcm/service-account.json   # SECRET mount path
+# TAARIFU_PUSH_REQUEST_TIMEOUT=5s
+#
+# Email (Spring Mail / SMTP). When provider=smtp, `from` is required and the SMTP transport comes
+# from spring.mail.* (set via SPRING_MAIL_* env). The from address must be SPF/DKIM/DMARC-aligned at the ESP.
+# TAARIFU_EMAIL_PROVIDER=smtp
+# TAARIFU_EMAIL_FROM=no-reply@taarifu.example
+# TAARIFU_EMAIL_FROM_NAME=Taarifu
+# TAARIFU_EMAIL_REPLY_TO=support@taarifu.example
+# SPRING_MAIL_HOST=smtp.esp.example
+# SPRING_MAIL_PORT=587
+# SPRING_MAIL_USERNAME=<set-in-env>        # SECRET — SMTP user
+# SPRING_MAIL_PASSWORD=<set-in-env>        # SECRET — SMTP password
+
 # Notes:
 # - In production, TAARIFU_JWT_SECRET / TAARIFU_CRYPTO_DEV_KEY are replaced by
 #   KMS-backed signing keys and KMS envelope encryption respectively (ADR-0007, EI-19).

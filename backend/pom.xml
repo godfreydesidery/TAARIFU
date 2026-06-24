@@ -108,6 +108,20 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!--
+          Micrometer Prometheus registry — RENDERS the /actuator/prometheus scrape surface
+          (ARCHITECTURE §9, deploy/README §10). application.yml exposes the `prometheus`
+          actuator endpoint, but with only spring-boot-starter-actuator on the classpath that
+          endpoint is unavailable (no PrometheusMeterRegistry). This runtime dependency supplies
+          the registry so the scraper renders the text exposition format. Runtime scope: it is a
+          telemetry sink, not a compile-time API. The endpoint stays internal-only at the edge
+          (reverse-proxy/network-policy job, NOT app config).
+        -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
 
         <!-- ============================ Database ============================= -->
         <dependency>

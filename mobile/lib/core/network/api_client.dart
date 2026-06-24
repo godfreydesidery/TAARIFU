@@ -12,6 +12,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../config/app_config.dart';
 import '../storage/token_store.dart';
@@ -54,10 +55,20 @@ class ApiClient {
       ..receiveTimeout = const Duration(seconds: 30)
       ..sendTimeout = const Duration(seconds: 30)
       ..responseType = ResponseType.json
-      ..headers[HttpHeaders.acceptEncodingHeader] = 'gzip'
       // The envelope itself carries success/failure; let us inspect non-2xx
       // bodies (e.g. 403 TIER_TOO_LOW) rather than have Dio throw first.
       ..validateStatus = (_) => true;
+
+    // Request gzip explicitly on NATIVE platforms (Android/iOS) to shrink
+    // payloads on a tight data budget (PRD §15). On Flutter WEB the browser owns
+    // content-negotiation and FORBIDS scripts from setting `Accept-Encoding`
+    // (it throws "Refused to set unsafe header"); the browser already negotiates
+    // gzip/br itself, so we simply skip the header there. WHY guard rather than
+    // drop: the citizen app's real target is low-end Android over 2G/3G, where the
+    // explicit gzip request still matters; web is the secondary PWA surface.
+    if (!kIsWeb) {
+      _dio.options.headers[HttpHeaders.acceptEncodingHeader] = 'gzip';
+    }
 
     _dio.interceptors.add(
       InterceptorsWrapper(

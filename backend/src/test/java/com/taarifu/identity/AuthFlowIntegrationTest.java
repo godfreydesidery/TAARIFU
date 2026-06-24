@@ -288,31 +288,29 @@ class AuthFlowIntegrationTest extends AbstractPostgisIntegrationTest {
         TokenService.TokenPair rotated = tokenService.rotate(firstRefresh);
         assertThat(rotated.refreshToken()).isNotBlank().isNotEqualTo(firstRefresh);
 
-        // Re-present the now-consumed first refresh → reuse-detection → 403 (S-3). The reuse-detection
-        // branch runs revokeFamily(...) and audits AUTH_REFRESH_REUSE_DETECTED + AUTH_FAMILY_REVOKED, then
-        // throws FORBIDDEN.
+        // Re-present the now-consumed first refresh → reuse-detection → 403 (S-3). The reuse-detection branch
+        // revokes the whole family INLINE (under the row lock rotate already holds) and audits
+        // AUTH_REFRESH_REUSE_DETECTED + AUTH_FAMILY_REVOKED, then throws RefreshTokenReuseException (FORBIDDEN),
+        // which rotate's @Transactional(noRollbackFor = ...) lets COMMIT rather than roll back.
         assertThatThrownBy(() -> tokenService.rotate(firstRefresh))
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getErrorCode())
                 .isEqualTo(ErrorCode.FORBIDDEN);
 
-        // WHY the reuse-detection + family-revoke AUDIT survives but the DB family-revoke is rolled back.
-        // The reuse-detection branch revokes the family AND throws FORBIDDEN within ONE @Transactional
-        // rotate(...) call, so that throw rolls the business transaction back — the revoke flags on the
-        // family rows are undone with it. The two audit rows, however, are written by AuditEventWriter under
-        // Propagation.REQUIRES_NEW, so they COMMIT in their own transactions and persist regardless of the
-        // rollback (the intentional auth-audit trade-off documented on AuditEventWriter). The security
-        // signal — that a stolen, replayed refresh token was detected and a family kill-switch fired — is
-        // therefore durably recorded even though the row-level revoke did not commit on this path.
+        // The reuse-detection + family-revoke security signal is durably recorded. Both audits are written by
+        // AuditEventWriter under Propagation.REQUIRES_NEW, so they commit in their own transactions.
         assertThat(auditCount(AuditEventType.AUTH_REFRESH_REUSE_DETECTED)).isGreaterThanOrEqualTo(1);
         assertThat(auditCount(AuditEventType.AUTH_FAMILY_REVOKED)).isGreaterThanOrEqualTo(1);
 
-        // Because the family-revoke was rolled back with the FORBIDDEN throw, the sibling token issued by
-        // the first (committed) rotation is still live and unused — so presenting it rotates successfully,
-        // yielding a fresh, distinct pair. (This asserts the real, observed post-reuse behaviour; it is NOT
-        // a claim that the family stays killed in the DB on this path.)
-        TokenService.TokenPair afterReuse = tokenService.rotate(rotated.refreshToken());
-        assertThat(afterReuse.refreshToken()).isNotBlank().isNotEqualTo(rotated.refreshToken());
+        // S-3 KILL-SWITCH (the fix): the family revocation now COMMITS (rotate marks RefreshTokenReuseException
+        // noRollbackFor, so the FORBIDDEN throw no longer rolls the revoke back). Therefore the still-live
+        // sibling issued by the first rotation is now REVOKED too — re-presenting it must fail closed as
+        // UNAUTHENTICATED (a revoked token), NOT rotate. Before the fix this rotated successfully because the
+        // revoke was rolled back with the throw; that was the broken kill-switch this test now guards against.
+        assertThatThrownBy(() -> tokenService.rotate(rotated.refreshToken()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.UNAUTHENTICATED);
     }
 
     @Test

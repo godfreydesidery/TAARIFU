@@ -102,11 +102,15 @@ public interface TopUpRepository extends JpaRepository<TopUp, Long> {
      * @param pageable the bounded page (size capped by {@code PageRequestFactory}).
      * @return the matching page of top-ups.
      */
+    // NOTE: :from/:to are ALWAYS non-null here — PaymentQueryService coalesces an absent bound to a typed
+    // sentinel. They must NOT use the `:p is null or ...` idiom: a NULL temporal bind in an IS NULL position
+    // is untyped and PostgreSQL rejects the whole statement ("could not determine data type of parameter").
+    // The nullable varchar status/provider filters keep the idiom safely.
     @Query("select t from TopUp t where "
             + "(:status   is null or t.status   = :status) and "
             + "(:provider is null or t.provider = :provider) and "
-            + "(:from     is null or t.createdAt >= :from) and "
-            + "(:to       is null or t.createdAt <= :to)")
+            + "t.createdAt >= :from and "
+            + "t.createdAt <= :to")
     Page<TopUp> search(@Param("status") TopUpStatus status,
                        @Param("provider") MobileMoneyProvider provider,
                        @Param("from") Instant from,
@@ -129,8 +133,8 @@ public interface TopUpRepository extends JpaRepository<TopUp, Long> {
     @Query("select coalesce(sum(t.amountMinor), 0) from TopUp t where "
             + "t.status = :status and "
             + "(:provider is null or t.provider = :provider) and "
-            + "(:from is null or t.createdAt >= :from) and "
-            + "(:to   is null or t.createdAt <= :to)")
+            + "t.createdAt >= :from and "
+            + "t.createdAt <= :to")
     long sumAmountMinorByStatus(@Param("status") TopUpStatus status,
                                 @Param("provider") MobileMoneyProvider provider,
                                 @Param("from") Instant from,
@@ -149,8 +153,8 @@ public interface TopUpRepository extends JpaRepository<TopUp, Long> {
     @Query("select count(t) from TopUp t where "
             + "t.status = :status and "
             + "(:provider is null or t.provider = :provider) and "
-            + "(:from is null or t.createdAt >= :from) and "
-            + "(:to   is null or t.createdAt <= :to)")
+            + "t.createdAt >= :from and "
+            + "t.createdAt <= :to")
     long countByStatus(@Param("status") TopUpStatus status,
                        @Param("provider") MobileMoneyProvider provider,
                        @Param("from") Instant from,

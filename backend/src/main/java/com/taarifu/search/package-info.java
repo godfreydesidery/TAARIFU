@@ -41,21 +41,19 @@
  * A status read ({@code GET /search/admin/reindex/status}) reports the live index size + last-run receipt
  * (ADR-0017 backfill follow-up).</p>
  *
- * <p><b>// TODO(wiring) — CENTRAL / cross-module (owned outside this module; parallel-build isolation):</b></p>
+ * <p><b>Cross-module wiring status (CENTRAL; owned by each producing module, not search):</b></p>
  * <ul>
  *   <li><b>Producer calls:</b> each owning module invokes {@link com.taarifu.search.api.SearchIndexApi#upsert}
  *       on its write path (DONE for representatives/orgs/announcements/categories/public-reports/petitions/
  *       polls/questions, phase-2 waves 1-3) and {@code remove} on delete/unpublish.</li>
- *   <li><b>Backfill source adapters:</b> each owning module must ship a {@code @Component} implementing
+ *   <li><b>Backfill source adapters (DONE):</b> each owning module ships a {@code @Component} implementing
  *       {@link com.taarifu.search.domain.port.SearchBackfillSource} that pages its own PUBLISHED, public-listable
  *       rows and re-pushes each via {@code SearchIndexApi.upsert}, REUSING its live producer's projection/
  *       visibility logic (never re-deriving the fence in search). One adapter per {@code SearchEntityType}:
  *       REPRESENTATIVE (institutions), ORGANISATION (responders), ANNOUNCEMENT (communications), ISSUE_CATEGORY +
- *       PUBLIC_REPORT (reporting), PETITION + POLL + QUESTION (engagement). Until an owner ships its adapter, the
- *       reindex covers every OTHER source and that one contributes nothing (correct-but-incomplete, never a leak).
- *       The needed read is a PUBLISHED public-bulk-list read port on each owner (a {@code Page}/stream of its
- *       public rows); where one is missing the adapter cannot be built without reaching into the owner's
- *       {@code domain} — that is the CENTRAL ask, not a search-module change.</li>
+ *       PUBLIC_REPORT (reporting), PETITION + POLL + QUESTION (engagement) — all wired. The orchestrator
+ *       ({@code SearchBackfillService}) discovers every registered source and reindexes each; an owner that ever
+ *       lacks an adapter simply contributes nothing (correct-but-incomplete, never a leak).</li>
  *   <li><b>Security allow-list:</b> {@code "/search/**"} is in {@code SecurityConfig.PUBLIC_GET_PATTERNS} (DONE,
  *       phase-2). The admin reindex endpoints are gated by {@code @PreAuthorize} method security regardless of
  *       the URL filter (admin surfaces are never merely URL-public — SecurityConfig §42).</li>

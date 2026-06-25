@@ -154,8 +154,17 @@ public class Petition extends BaseEntity {
         }
     }
 
-    /** Marks the petition {@code ACTIVE} (post-moderation, UC-E02). */
+    /**
+     * Marks the petition {@code ACTIVE} (post-moderation, UC-E02 — the moderation-before-public gate,
+     * US-9.1). Guarded to run only from {@code DRAFT} (a petition becomes public exactly once, by a
+     * moderator); the lifecycle service maps the guard to a localised conflict.
+     *
+     * @throws IllegalStateException if the petition is not in {@code DRAFT}.
+     */
     public void activate() {
+        if (this.status != PetitionStatus.DRAFT) {
+            throw new IllegalStateException("Petition can only be activated from DRAFT (was " + status + ")");
+        }
         this.status = PetitionStatus.ACTIVE;
     }
 

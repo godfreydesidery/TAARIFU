@@ -1,0 +1,50 @@
+.rep-h {
+  font-size: 1.4rem;
+  font-weight: 800;
+  margin-bottom: 0.1rem;
+}
+.rep-picker {
+  padding: 1rem;
+  margin-top: 0.75rem;
+}
+.rep-ward {
+  font-weight: 700;
+  margin: 1rem 0 0.25rem;
+}
+.rep-section-h {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--tz-green-deep);
+  margin: 0.5rem 0;
+}
+.rep-card {
+  padding: 0.9rem 1rem;
+}
+.rep-card__role {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+.rep-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--tz-ink-muted);
+  margin-top: 0.25rem;
+}
+.rep-card__party {
+  background: rgba(11, 110, 79, 0.12);
+  color: var(--tz-green-deep);
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.8rem;
+}
+.rep-card__mandate {
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+}
+.rep-empty {
+  padding: 1rem;
+  text-align: center;
+}

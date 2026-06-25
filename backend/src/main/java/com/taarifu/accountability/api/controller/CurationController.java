@@ -5,9 +5,12 @@ import com.taarifu.accountability.api.dto.ContributionDto;
 import com.taarifu.accountability.api.dto.CreateAttendanceDto;
 import com.taarifu.accountability.api.dto.CreateContributionDto;
 import com.taarifu.accountability.api.dto.CreatePromiseDto;
+import com.taarifu.accountability.api.dto.CreateRatingReplyDto;
 import com.taarifu.accountability.api.dto.PromiseDto;
+import com.taarifu.accountability.api.dto.RatingReplyDto;
 import com.taarifu.accountability.api.dto.UpdatePromiseStatusDto;
 import com.taarifu.accountability.application.service.CurationService;
+import com.taarifu.accountability.application.service.RatingReplyService;
 import com.taarifu.common.api.ResponseFactory;
 import com.taarifu.common.api.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -45,14 +48,18 @@ import java.util.UUID;
 public class CurationController {
 
     private final CurationService curationService;
+    private final RatingReplyService ratingReplyService;
     private final ResponseFactory responses;
 
     /**
-     * @param curationService curated-authoring service.
-     * @param responses       envelope builder.
+     * @param curationService    curated-authoring service.
+     * @param ratingReplyService right-of-reply service (used here for the curated on-behalf path).
+     * @param responses          envelope builder.
      */
-    public CurationController(CurationService curationService, ResponseFactory responses) {
+    public CurationController(CurationService curationService, RatingReplyService ratingReplyService,
+                             ResponseFactory responses) {
         this.curationService = curationService;
+        this.ratingReplyService = ratingReplyService;
         this.responses = responses;
     }
 
@@ -119,5 +126,30 @@ public class CurationController {
             @Valid @RequestBody UpdatePromiseStatusDto request) {
         PromiseDto updated = curationService.updatePromiseStatus(promiseId, request);
         return ResponseEntity.ok(responses.ok(updated));
+    }
+
+    /**
+     * Posts (or revises) a representative's right-of-reply to a rating <b>on their behalf</b> (curated —
+     * D-Q4). This is how a representative without a linked account still exercises their right of reply (the
+     * D-rated-fairness rule, US-6.2).
+     *
+     * <p>{@code @PreAuthorize("hasRole('ADMIN')")} is the authority for this path, so the ownership port is
+     * not consulted; the reply is flagged {@code onBehalf=true} and shown attributably. At most one reply per
+     * rating. The reply is never token-gated (§23).</p>
+     *
+     * @param ratingId the rating's public id.
+     * @param request  the validated reply body.
+     * @return {@code 201} + the persisted {@link RatingReplyDto} (flagged on-behalf).
+     */
+    @PostMapping("/ratings/{ratingId}/reply")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Post a right-of-reply on a representative's behalf (curated)",
+            description = "ROLE_ADMIN only (D-Q4). For representatives without a linked account; one reply per "
+                    + "rating; shown attributably (onBehalf).")
+    public ResponseEntity<ApiResponse<RatingReplyDto>> replyOnBehalf(
+            @PathVariable UUID ratingId,
+            @Valid @RequestBody CreateRatingReplyDto request) {
+        RatingReplyDto created = ratingReplyService.replyAsCurator(ratingId, request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(responses.ok(created));
     }
 }

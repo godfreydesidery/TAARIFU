@@ -32,20 +32,37 @@
  * display data + opaque ids only — never a phone, national/voter ID, free GPS, or private body text. Services
  * log counts/ids only, never the corpus (PRD §18, CLAUDE.md §12).</p>
  *
+ * <p><b>Reindex/backfill (admin-triggered):</b> data created before the producers were wired is not in the
+ * index. {@link com.taarifu.search.application.service.SearchBackfillService} (behind
+ * {@code POST /search/admin/reindex}, ADMIN/ROOT) re-populates it by driving every owning module's
+ * {@link com.taarifu.search.domain.port.SearchBackfillSource} adapter — each owner re-pushes its own public
+ * projections through {@link com.taarifu.search.api.SearchIndexApi} (owner→search, same fence as the live path,
+ * idempotent upsert-by-source-key). Search owns no projection/privacy logic for backfill; it just orchestrates.
+ * A status read ({@code GET /search/admin/reindex/status}) reports the live index size + last-run receipt
+ * (ADR-0017 backfill follow-up).</p>
+ *
  * <p><b>// TODO(wiring) — CENTRAL / cross-module (owned outside this module; parallel-build isolation):</b></p>
  * <ul>
  *   <li><b>Producer calls:</b> each owning module invokes {@link com.taarifu.search.api.SearchIndexApi#upsert}
- *       on its write path (institutions on representative create/update; responders on org create/update;
- *       communications on announcement publish/unpublish; reporting on category create + public-report
- *       create/visibility-change) and {@code remove} on delete/unpublish. Until wired, the index is
- *       correct-but-empty (discovery degrades to "no results", never to a leak).</li>
- *   <li><b>Security allow-list:</b> add {@code "/search/**"} to {@code SecurityConfig.PUBLIC_GET_PATTERNS}
- *       (GET) so a guest can reach the public search; {@code @PreAuthorize("permitAll()")} alone does not make
- *       the URL reachable unauthenticated.</li>
- *   <li><b>Follow-ups (ADR-0017 revisit):</b> a one-off backfill job per owner; a per-document
- *       {@code ContentRemoved} hide handler when that event exists; a Swahili dictionary/{@code unaccent} +
- *       synonym thesaurus to replace the {@code simple} FTS config; OpenSearch extraction behind the same
- *       {@code SearchIndexApi} + {@code GET /search} contracts when Postgres FTS is outgrown (ARCHITECTURE §10).</li>
+ *       on its write path (DONE for representatives/orgs/announcements/categories/public-reports/petitions/
+ *       polls/questions, phase-2 waves 1-3) and {@code remove} on delete/unpublish.</li>
+ *   <li><b>Backfill source adapters:</b> each owning module must ship a {@code @Component} implementing
+ *       {@link com.taarifu.search.domain.port.SearchBackfillSource} that pages its own PUBLISHED, public-listable
+ *       rows and re-pushes each via {@code SearchIndexApi.upsert}, REUSING its live producer's projection/
+ *       visibility logic (never re-deriving the fence in search). One adapter per {@code SearchEntityType}:
+ *       REPRESENTATIVE (institutions), ORGANISATION (responders), ANNOUNCEMENT (communications), ISSUE_CATEGORY +
+ *       PUBLIC_REPORT (reporting), PETITION + POLL + QUESTION (engagement). Until an owner ships its adapter, the
+ *       reindex covers every OTHER source and that one contributes nothing (correct-but-incomplete, never a leak).
+ *       The needed read is a PUBLISHED public-bulk-list read port on each owner (a {@code Page}/stream of its
+ *       public rows); where one is missing the adapter cannot be built without reaching into the owner's
+ *       {@code domain} — that is the CENTRAL ask, not a search-module change.</li>
+ *   <li><b>Security allow-list:</b> {@code "/search/**"} is in {@code SecurityConfig.PUBLIC_GET_PATTERNS} (DONE,
+ *       phase-2). The admin reindex endpoints are gated by {@code @PreAuthorize} method security regardless of
+ *       the URL filter (admin surfaces are never merely URL-public — SecurityConfig §42).</li>
+ *   <li><b>Follow-ups (ADR-0017 revisit):</b> a per-document {@code ContentRemoved} hide handler when that event
+ *       exists; a Swahili dictionary/{@code unaccent} + synonym thesaurus to replace the {@code simple} FTS
+ *       config; OpenSearch extraction behind the same {@code SearchIndexApi} + {@code GET /search} contracts when
+ *       Postgres FTS is outgrown (ARCHITECTURE §10).</li>
  * </ul>
  */
 package com.taarifu.search;

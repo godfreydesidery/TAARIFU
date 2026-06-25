@@ -1,0 +1,102 @@
+<section aria-labelledby="file-title">
+  <h1 id="file-title" class="file-h">{{ 'report.title' | translate }}</h1>
+  <p class="text-muted">{{ 'report.subtitle' | translate }}</p>
+
+  <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+    <!-- Category -->
+    <div class="tz-card file-block">
+      <label class="form-label" for="categoryId">{{ 'report.category' | translate }}</label>
+      <select id="categoryId" class="form-select form-select-lg" formControlName="categoryId">
+        <option value="">{{ 'report.chooseCategory' | translate }}</option>
+        @for (c of categories(); track c.id) {
+          <option [value]="c.id">{{ c.name }}</option>
+        }
+      </select>
+      @if (form.controls.categoryId.touched && form.controls.categoryId.invalid) {
+        <div class="invalid-feedback d-block">{{ 'report.categoryRequired' | translate }}</div>
+      }
+      @if (isSensitive()) {
+        <p class="file-sensitive">{{ 'report.sensitiveNote' | translate }}</p>
+      }
+    </div>
+
+    <!-- Title + description -->
+    <div class="tz-card file-block">
+      <label class="form-label" for="title">{{ 'report.titleLabel' | translate }}</label>
+      <input
+        id="title"
+        type="text"
+        maxlength="200"
+        class="form-control form-control-lg"
+        formControlName="title"
+        [placeholder]="'report.titlePlaceholder' | translate"
+      />
+      @if (form.controls.title.touched && form.controls.title.invalid) {
+        <div class="invalid-feedback d-block">{{ 'report.titleRequired' | translate }}</div>
+      }
+      @if (fieldErrors()['title']) {
+        <div class="invalid-feedback d-block">{{ fieldErrors()['title'] }}</div>
+      }
+
+      <label class="form-label mt-3" for="description">{{ 'report.descriptionLabel' | translate }}</label>
+      <textarea
+        id="description"
+        rows="4"
+        maxlength="4000"
+        class="form-control"
+        formControlName="description"
+        [placeholder]="'report.descriptionPlaceholder' | translate"
+      ></textarea>
+      @if (form.controls.description.touched && form.controls.description.invalid) {
+        <div class="invalid-feedback d-block">{{ 'report.descriptionRequired' | translate }}</div>
+      }
+      @if (fieldErrors()['description']) {
+        <div class="invalid-feedback d-block">{{ fieldErrors()['description'] }}</div>
+      }
+    </div>
+
+    <!-- Area (ward) -->
+    <div class="tz-card file-block">
+      <label class="form-label">{{ 'report.area' | translate }}</label>
+      <app-area-picker (wardSelected)="onWardSelected($event)" />
+      @if (ward()) {
+        <p class="file-ward">✓ {{ ward()!.name }} — {{ ward()!.councilName }}</p>
+      }
+    </div>
+
+    <!-- Optional location -->
+    <div class="tz-card file-block">
+      <label class="form-label">{{ 'report.location' | translate }}</label>
+      @if (geo()) {
+        <p class="file-geo">📍 {{ geo()!.lat | number: '1.4-4' }}, {{ geo()!.lng | number: '1.4-4' }}</p>
+        <button type="button" class="btn btn-outline-secondary btn-sm" (click)="clearLocation()">
+          {{ 'report.clearLocation' | translate }}
+        </button>
+      } @else {
+        <button type="button" class="btn btn-outline-info" (click)="useMyLocation()">
+          {{ 'report.useMyLocation' | translate }}
+        </button>
+        <p class="form-text">{{ 'report.locationOptional' | translate }}</p>
+      }
+    </div>
+
+    <!-- Anonymity (sensitive categories only) -->
+    @if (isSensitive()) {
+      <div class="tz-card file-block">
+        <div class="form-check">
+          <input id="anonymous" type="checkbox" class="form-check-input" formControlName="anonymous" />
+          <label class="form-check-label" for="anonymous">{{ 'report.anonymous' | translate }}</label>
+        </div>
+        <p class="form-text">{{ 'report.anonymousHelp' | translate }}</p>
+      </div>
+    }
+
+    <button type="submit" class="btn btn-success btn-lg w-100 mt-2" [disabled]="busy()">
+      @if (busy()) {
+        <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+      }
+      {{ 'report.send' | translate }}
+    </button>
+    <p class="form-text text-center mt-2">{{ 'report.offlineHint' | translate }}</p>
+  </form>
+</section>

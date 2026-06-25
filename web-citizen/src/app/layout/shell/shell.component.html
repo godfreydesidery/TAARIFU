@@ -1,0 +1,86 @@
+<!--
+  Citizen app shell layout. Mobile-first; bottom-nav driven. All labels are i18n keys (SW-first).
+  The skip link + landmark roles support keyboard + screen-reader users (WCAG 2.4.1 / 1.3.1).
+-->
+<a class="skip-link visually-hidden-focusable" href="#main">{{ 'a11y.skipToContent' | translate }}</a>
+
+<header class="tz-topbar" role="banner">
+  <a routerLink="/" class="tz-topbar__brand" [attr.aria-label]="'app.title' | translate">
+    <span class="tz-topbar__mark" aria-hidden="true">T</span>
+    <span class="tz-topbar__name">Taarifu</span>
+  </a>
+  <div class="tz-topbar__actions">
+    <button
+      type="button"
+      class="btn btn-sm btn-outline-light tz-lang"
+      (click)="toggleLanguage()"
+      [attr.aria-label]="'a11y.switchLanguage' | translate"
+    >
+      {{ localeLabel() }}
+    </button>
+    @if (isAuthed()) {
+      <a routerLink="/track" class="btn btn-sm btn-outline-light" [attr.aria-label]="'nav.track' | translate">
+        <span aria-hidden="true">👤</span>
+      </a>
+    } @else {
+      <a routerLink="/auth" class="btn btn-sm btn-light">{{ 'auth.signIn' | translate }}</a>
+    }
+  </div>
+</header>
+
+<app-offline-banner />
+
+<main id="main" class="tz-main" role="main" tabindex="-1">
+  <router-outlet />
+</main>
+
+<nav class="tz-bottomnav" role="navigation" [attr.aria-label]="'nav.primary' | translate">
+  <a
+    routerLink="/feed"
+    routerLinkActive="is-active"
+    class="tz-bottomnav__item"
+    [attr.aria-label]="'nav.home' | translate"
+  >
+    <span class="tz-bottomnav__icon" aria-hidden="true">🏠</span>
+    <span class="tz-bottomnav__label">{{ 'nav.home' | translate }}</span>
+  </a>
+  <a
+    routerLink="/representatives"
+    routerLinkActive="is-active"
+    class="tz-bottomnav__item"
+    [attr.aria-label]="'nav.reps' | translate"
+  >
+    <span class="tz-bottomnav__icon" aria-hidden="true">🏛️</span>
+    <span class="tz-bottomnav__label">{{ 'nav.reps' | translate }}</span>
+  </a>
+
+  <!-- Centre, dominant primary action: file a report. -->
+  <a routerLink="/report" class="tz-bottomnav__fab" [attr.aria-label]="'nav.report' | translate">
+    <span class="tz-bottomnav__fab-icon" aria-hidden="true">＋</span>
+    <span class="tz-bottomnav__fab-label">{{ 'nav.report' | translate }}</span>
+  </a>
+
+  <a
+    routerLink="/track"
+    routerLinkActive="is-active"
+    class="tz-bottomnav__item"
+    [attr.aria-label]="'nav.track' | translate"
+  >
+    <span class="tz-bottomnav__icon" aria-hidden="true">📋</span>
+    <span class="tz-bottomnav__label">{{ 'nav.track' | translate }}</span>
+    @if (drafts.pendingCount() > 0) {
+      <span class="tz-bottomnav__badge" [attr.aria-label]="'offline.draftsPendingShort' | translate">{{
+        drafts.pendingCount()
+      }}</span>
+    }
+  </a>
+  <a
+    routerLink="/feed/search"
+    routerLinkActive="is-active"
+    class="tz-bottomnav__item"
+    [attr.aria-label]="'nav.search' | translate"
+  >
+    <span class="tz-bottomnav__icon" aria-hidden="true">🔍</span>
+    <span class="tz-bottomnav__label">{{ 'nav.search' | translate }}</span>
+  </a>
+</nav>

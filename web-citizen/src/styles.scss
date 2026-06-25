@@ -1,0 +1,158 @@
+/**
+ * Global styles for the Taarifu citizen PWA.
+ *
+ * Visual language mirrors the Flutter citizen app (mobile/lib/core/theme/app_theme.dart):
+ *   - Primary civic green #0B6E4F, amber accent #F4A828, teal #1C7C8C, danger #C0392B.
+ * Mobile-first, large touch targets (WCAG 2.1 AA min 44px), high-contrast text, low-data
+ * (Bootstrap utilities only; no heavy CSS frameworks). All chrome is bottom-nav driven for
+ * one-handed use on a low-end Android (persona P1 Amina).
+ */
+
+/* Bootstrap variable overrides MUST precede the Bootstrap import. */
+$primary: #0b6e4f;
+$success: #0b6e4f;
+$warning: #f4a828;
+$info: #1c7c8c;
+$danger: #c0392b;
+$border-radius: 0.85rem;
+$border-radius-lg: 1.1rem;
+$body-color: #1b211f;
+$body-bg: #f7f9f8;
+$min-contrast-ratio: 4.5;
+
+@import 'bootstrap/scss/bootstrap';
+
+:root {
+  --tz-green: #0b6e4f;
+  --tz-green-deep: #064e38;
+  --tz-amber: #f4a828;
+  --tz-teal: #1c7c8c;
+  --tz-danger: #c0392b;
+  --tz-surface: #ffffff;
+  --tz-bg: #f7f9f8;
+  --tz-ink: #1b211f;
+  --tz-ink-muted: #5c6b64;
+  --tz-bottom-nav-h: 64px;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--tz-bg);
+  color: var(--tz-ink);
+  font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* Reserve room for the fixed bottom nav so content is never hidden behind it. */
+  padding-bottom: calc(var(--tz-bottom-nav-h) + env(safe-area-inset-bottom, 0px));
+}
+
+/* Larger base type aids low-literacy / low-vision readers (a11y). */
+.lead-tz {
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
+
+/* ----- Boot app-shell (shown before Angular hydrates, and offline from SW cache) ----- */
+.boot-shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  background: var(--tz-green);
+  color: #fff;
+}
+.boot-shell__mark {
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.16);
+  display: grid;
+  place-items: center;
+  font-size: 2.25rem;
+  font-weight: 800;
+}
+.boot-shell__text {
+  margin: 0;
+  font-size: 0.95rem;
+  opacity: 0.9;
+}
+
+/* ----- Reusable civic card ----- */
+.tz-card {
+  background: var(--tz-surface);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: var(--bs-border-radius-lg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+/* ----- Big tappable list/action rows (one-handed, low-literacy: icon + label) ----- */
+.tz-tap {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+/* ----- Status pills ----- */
+.tz-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* Generous, accessible focus ring for keyboard users (WCAG 2.4.7). */
+:focus-visible {
+  outline: 3px solid rgba(11, 110, 79, 0.55);
+  outline-offset: 2px;
+}
+
+/* Honour the user's reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Screen-reader-only helper (Bootstrap ships .visually-hidden too; alias kept for clarity). */
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skeleton shimmer for loading states (cheap; respects reduced motion above). */
+.tz-skeleton {
+  background: linear-gradient(90deg, #eceeed 25%, #f4f6f5 37%, #eceeed 63%);
+  background-size: 400% 100%;
+  animation: tz-shimmer 1.3s ease infinite;
+  border-radius: 0.5rem;
+}
+@keyframes tz-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}

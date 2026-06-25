@@ -10,6 +10,7 @@ import com.taarifu.engagement.api.dto.CreatePetitionRequest;
 import com.taarifu.engagement.api.dto.PetitionDto;
 import com.taarifu.engagement.api.dto.SignPetitionRequest;
 import com.taarifu.engagement.application.service.PetitionService;
+import com.taarifu.engagement.domain.model.enums.PetitionTargetType;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -90,13 +91,14 @@ public class PetitionController {
      */
     @GetMapping
     @PreAuthorize("permitAll()")
-    @Operation(summary = "List public petitions")
+    @Operation(summary = "List public petitions", description = "Optionally filter by targetType.")
     public ApiResponse<List<PetitionDto>> list(
+            @RequestParam(required = false) PetitionTargetType targetType,
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             @RequestParam(required = false) String sort) {
         Pageable pageable = pageRequests.of(page, size, sort);
-        Page<PetitionDto> result = petitionService.listPublic(pageable);
+        Page<PetitionDto> result = petitionService.listPublic(targetType, pageable);
         return responses.paged(result.getContent(), pageMapper.toMeta(result));
     }
 
@@ -127,6 +129,31 @@ public class PetitionController {
         PetitionDto dto = petitionService.create(
                 request.title(), request.body(), request.targetType(), request.targetId(),
                 request.signatureGoal(), request.deadline(), CurrentUser.requirePublicId());
+        return responses.ok(dto);
+    }
+
+    /**
+     * Approves a {@code DRAFT} petition into {@code ACTIVE} — the moderation-before-public review gate
+     * (UC-E02, US-9.1).
+     *
+     * <p><b>Authorization:</b> {@code hasRole('MODERATOR')} — only moderation staff may make a petition public
+     * (ADMIN/ROOT inherit via {@code ROOT > ADMIN > MODERATOR}). The URL is already authentication-gated (the
+     * public allow-list is GET-only), so a citizen/anonymous caller can never reach it. The reviewing moderator
+     * is taken from the security context (never the body) and recorded as the audit actor.</p>
+     *
+     * <p>WHY a {@code POST} to a sub-resource ({@code /activation}) not a status {@code PATCH}: activation is a
+     * named, audited domain approval, not a free-form field edit — modelling it as its own endpoint keeps the
+     * state machine server-authoritative (a client can never set an arbitrary status).</p>
+     *
+     * @param petitionId the petition to approve/activate.
+     * @return an envelope carrying the now-ACTIVE {@link PetitionDto}.
+     */
+    @PostMapping("/{petitionId}/activation")
+    @PreAuthorize("hasRole('MODERATOR')")
+    @Operation(summary = "Approve a petition (DRAFT → ACTIVE)",
+            description = "ROLE_MODERATOR. The moderation-before-public gate (UC-E02).")
+    public ApiResponse<PetitionDto> activate(@PathVariable UUID petitionId) {
+        PetitionDto dto = petitionService.activate(petitionId, CurrentUser.requirePublicId());
         return responses.ok(dto);
     }
 

@@ -10,6 +10,7 @@ import com.taarifu.common.error.ResourceNotFoundException;
 import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.engagement.api.dto.QuestionDto;
 import com.taarifu.engagement.application.mapper.EngagementMapper;
+import com.taarifu.engagement.domain.model.Answer;
 import com.taarifu.engagement.domain.model.Question;
 import com.taarifu.engagement.domain.model.enums.QuestionStatus;
 import com.taarifu.engagement.domain.repository.AnswerRepository;
@@ -18,6 +19,7 @@ import com.taarifu.search.api.SearchIndexApi;
 import com.taarifu.search.api.dto.SearchDocumentUpsert;
 import com.taarifu.search.domain.model.enums.SearchEntityType;
 import com.taarifu.search.domain.model.enums.SearchVisibility;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -147,20 +149,67 @@ public class QuestionService {
     }
 
     /**
-     * Marks a question {@code ANSWERED} (when the targeted representative publishes an answer, UC-E10) and
-     * refreshes its discovery projection. An ANSWERED question stays publicly visible, so the projection is
-     * re-upserted (idempotent) through the single {@link #reindexForDiscovery(Question)} fence.
+     * Publishes a representative's answer to an {@code OPEN} question (UC-E10, US-10.2) — records the
+     * {@link Answer} and flips the question to {@code ANSWERED} in one transaction, then refreshes the
+     * discovery projection through the single {@link #reindexForDiscovery(Question)} fence (an ANSWERED
+     * question stays publicly visible).
      *
-     * @param questionPublicId the question to mark answered.
-     * @return the now-ANSWERED {@link QuestionDto} (without the answer body — the detail read carries it).
+     * <p><b>Authorization / integrity (D13/D16).</b> Only the <b>targeted</b> representative may answer their
+     * own Q&amp;A inbox: the answering principal (taken from {@code CurrentUser}, never the body) must equal the
+     * question's {@code targetRepId}. A caller who is not the target is {@link ErrorCode#FORBIDDEN}, audited —
+     * the same boundary discipline as {@code ask} (the actor is the authenticated principal, referenced by
+     * account public id; mapping account → institutions rep id is the documented cross-module wiring step,
+     * // TODO(wiring)). One answer per question is guaranteed by the {@link Answer} unique constraint and the
+     * {@code OPEN}-only {@link Question#markAnswered()} guard; a second answer is a clean
+     * {@link ErrorCode#CONFLICT}. No token balance is read on this path — answering is a representative duty,
+     * never a paid/weighted action.</p>
+     *
+     * <p>WHY this is the trigger for {@code markAnswered}: the wave-3 {@code markAnswered()} transition is only
+     * coherent alongside a published answer (an ANSWERED question with no answer body would be a contradiction),
+     * so answering is the single public path that reaches {@code ANSWERED} — it both persists the answer and
+     * advances the lifecycle.</p>
+     *
+     * @param questionPublicId the question to answer.
+     * @param answeringRepId   the answering representative's account public id (from {@code CurrentUser}); must
+     *                         equal the question's {@code targetRepId}.
+     * @param body             the answer text.
+     * @return the now-ANSWERED {@link QuestionDto}, including the answer body.
      * @throws ResourceNotFoundException if the question does not exist.
+     * @throws ApiException {@link ErrorCode#FORBIDDEN} if the answerer is not the targeted representative
+     *                      (audited); {@link ErrorCode#CONFLICT} if the question is not {@code OPEN} / already
+     *                      answered.
      */
-    public QuestionDto markAnswered(UUID questionPublicId) {
+    public QuestionDto answer(UUID questionPublicId, UUID answeringRepId, String body) {
         Question question = require(questionPublicId);
-        question.markAnswered();
+
+        // D13/D16: only the TARGETED representative may answer this question. The answerer is the authenticated
+        // principal (not the body), so a caller can only answer questions addressed to them.
+        if (!answeringRepId.equals(question.getTargetRepId())) {
+            audit.record(AuditEvent.Builder
+                    .of(AuditEventType.AUTHZ_SELF_ACTION_BLOCKED, AuditOutcome.DENIED)
+                    .actor(answeringRepId)
+                    .subject(question.getTargetRepId())
+                    .reason("ANSWER_QUESTION_NOT_TARGET_REP")
+                    .build());
+            throw new ApiException(ErrorCode.FORBIDDEN);
+        }
+
+        Answer answer = Answer.of(question, answeringRepId, body);
+        try {
+            answers.save(answer);
+        } catch (DataIntegrityViolationException dup) {
+            // Concurrent double-answer hit uq_qa_answer_question — one answer per question held; clean conflict.
+            throw new ApiException(ErrorCode.CONFLICT, dup);
+        }
+        try {
+            question.markAnswered();
+        } catch (IllegalStateException notOpen) {
+            // DECLINED / MODERATED / already ANSWERED: not answerable now — surface a clean conflict.
+            throw new ApiException(ErrorCode.CONFLICT, notOpen);
+        }
         // Still publicly visible (ANSWERED) → keep the discovery row fresh (ADR-0017 §1).
         reindexForDiscovery(question);
-        return mapper.toQuestionDto(question, null);
+        return mapper.toQuestionDto(question, answer);
     }
 
     /** Loads a question by public id or throws a localised not-found. */

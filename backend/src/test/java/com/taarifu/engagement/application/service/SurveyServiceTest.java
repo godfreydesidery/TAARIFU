@@ -133,11 +133,12 @@ class SurveyServiceTest {
     void open_indexesPublicProjection_neverQuestionsJsonOrResponses() {
         // DRAFT -> OPEN makes the survey public-safe → it is upserted (under POLL for both SurveyTypes). Only
         // the title + description snippet are indexed; the questions JSON and any response payload never are.
+        // The caller is the survey's author (responder == creatorProfileId), satisfying the author-or-staff gate.
         Survey draft = Survey.create("Maoni ya Maji", "Tafadhali toa maoni.", SurveyType.SURVEY, false,
                 null, "[{\"prompt\":\"secret question\"}]", null, null, false, responder, null);
         when(surveys.findByPublicId(surveyId)).thenReturn(Optional.of(draft));
 
-        service.open(surveyId);
+        service.open(surveyId, responder);
 
         ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
         verify(searchIndex).upsert(captor.capture());
@@ -150,5 +151,23 @@ class SurveyServiceTest {
         assertThat(pushed.snippetSw()).doesNotContain("secret question");
         assertThat(pushed.snippetEn()).doesNotContain("secret question");
         assertThat(pushed.keywords()).doesNotContain("secret question");
+    }
+
+    @Test
+    void openRejectsNonAuthorNonStaff_asForbidden_andDoesNotOpenOrIndex() {
+        // Author-or-staff gate: a caller who is neither the survey's creator nor staff cannot open it. With no
+        // security context in this unit test callerIsStaff() is false, so a stranger caller is 403 — and the
+        // survey must NOT be opened or indexed (the gate fired before any side effect).
+        Survey draft = Survey.create("Poll", null, SurveyType.POLL, true,
+                null, null, null, null, false, UUID.randomUUID(), null); // creator != stranger
+        when(surveys.findByPublicId(surveyId)).thenReturn(Optional.of(draft));
+
+        assertThatThrownBy(() -> service.open(surveyId, UUID.randomUUID()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.FORBIDDEN);
+
+        assertThat(draft.getStatus()).isEqualTo(com.taarifu.engagement.domain.model.enums.SurveyStatus.DRAFT);
+        verify(searchIndex, never()).upsert(any());
     }
 }

@@ -286,6 +286,29 @@ public class Profile extends BaseEntity {
         return this.idNo == null && this.idHash == null && this.idType == null;
     }
 
+    /**
+     * Composes the profile's <b>public display name</b> — the non-sensitive, human-recognisable label other
+     * surfaces show for this identity: a person's {@code firstName + " " + lastName} (trimmed), or an
+     * organisation's name (carried in {@code firstName}). Single source of truth for "what name do we show?",
+     * reused by the admin user view and the cross-module {@code ProfileLookupApi}/{@code SubjectContentQueryApi}
+     * read ports so the composition rule never drifts (DRY).
+     *
+     * <p><b>🔒 PII discipline (PRD §18, PDPA):</b> the display name is civic display data deliberately collected
+     * to be shown — it is <b>not</b> sensitive ID PII. This method exposes only names; it <b>never</b> touches the
+     * national/voter {@link #idNo} (encrypted), the {@link #idHash} blind index, phone, or any other PII. After
+     * an erasure {@link #anonymise(String)} the first name holds the {@code anonymized_user_<short>} tombstone
+     * label and the last name is null, so this correctly returns the tombstone — never resurrected PII.</p>
+     *
+     * @return the trimmed display name, or {@code null} if no name has been set yet (a profile that has not
+     *         completed its details) — callers treat {@code null} as "name unknown", never as an error.
+     */
+    public String displayName() {
+        String first = firstName == null ? "" : firstName;
+        String last = lastName == null ? "" : lastName;
+        String name = (first + " " + last).trim();
+        return name.isEmpty() ? null : name;
+    }
+
     /** @return the owning account. */
     public User getUser() {
         return user;

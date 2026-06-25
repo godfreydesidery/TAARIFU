@@ -338,15 +338,13 @@ public class UserAdminService implements UserAdminQueryApi, UserAdminApi {
                 ra.getEffectiveTo());
     }
 
-    /** @return the profile's display name (first + last, trimmed), or {@code null} if unset/no profile. */
+    /**
+     * @return the profile's display name (first + last, trimmed), or {@code null} if unset/no profile.
+     *         Delegates to {@link Profile#displayName()} so the "what name do we show?" composition is defined
+     *         once on the entity and reused by the admin view and the cross-module read ports (DRY).
+     */
     private String displayName(Profile profile) {
-        if (profile == null) {
-            return null;
-        }
-        String first = profile.getFirstName();
-        String last = profile.getLastName();
-        String name = ((first == null ? "" : first) + " " + (last == null ? "" : last)).trim();
-        return name.isEmpty() ? null : name;
+        return profile == null ? null : profile.displayName();
     }
 
     /**

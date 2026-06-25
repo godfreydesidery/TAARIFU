@@ -1,0 +1,56 @@
+<section aria-labelledby="rep-title">
+  <h1 id="rep-title" class="rep-h">{{ 'reps.title' | translate }}</h1>
+  <p class="text-muted">{{ 'reps.subtitle' | translate }}</p>
+
+  <div class="tz-card rep-picker">
+    <app-area-picker (wardSelected)="onWardSelected($event)" />
+  </div>
+
+  @if (loading()) {
+    <div class="tz-skeleton mt-3" style="height: 6rem"></div>
+  } @else if (result()) {
+    <p class="rep-ward">{{ 'reps.forWard' | translate: { ward: wardLabel() } }}</p>
+
+    <!-- MP / Mbunge -->
+    <h2 class="rep-section-h">{{ 'reps.mp' | translate }}</h2>
+    @if (result()?.mp) {
+      <article class="tz-card rep-card">
+        <div class="rep-card__role">{{ 'reps.roleMp' | translate }}</div>
+        <div class="rep-card__meta">
+          @if (result()!.mp!.partyAbbrev) {
+            <span class="rep-card__party">{{ result()!.mp!.partyAbbrev }}</span>
+          }
+          <span>{{ result()!.constituencyName || ('reps.unknownArea' | translate) }}</span>
+        </div>
+        @if (result()!.mp!.mandate) {
+          <p class="rep-card__mandate">{{ result()!.mp!.mandate }}</p>
+        }
+      </article>
+    } @else {
+      <div class="tz-card rep-empty"><p class="mb-0 text-muted">{{ 'reps.noMp' | translate }}</p></div>
+    }
+
+    <!-- Councillor / Diwani -->
+    <h2 class="rep-section-h mt-3">{{ 'reps.councillor' | translate }}</h2>
+    @if (result()?.councillor) {
+      <article class="tz-card rep-card">
+        <div class="rep-card__role">{{ 'reps.roleCouncillor' | translate }}</div>
+        <div class="rep-card__meta">
+          @if (result()!.councillor!.partyAbbrev) {
+            <span class="rep-card__party">{{ result()!.councillor!.partyAbbrev }}</span>
+          }
+          <span>{{ result()!.wardName || ('reps.unknownArea' | translate) }}</span>
+        </div>
+        @if (result()!.councillor!.mandate) {
+          <p class="rep-card__mandate">{{ result()!.councillor!.mandate }}</p>
+        }
+      </article>
+    } @else {
+      <div class="tz-card rep-empty"><p class="mb-0 text-muted">{{ 'reps.noCouncillor' | translate }}</p></div>
+    }
+  } @else {
+    <div class="tz-card rep-empty mt-3">
+      <p class="mb-0 text-muted">{{ 'reps.pickPrompt' | translate }}</p>
+    </div>
+  }
+</section>

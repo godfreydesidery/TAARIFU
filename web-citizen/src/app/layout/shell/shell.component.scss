@@ -1,0 +1,148 @@
+:host {
+  display: block;
+}
+
+.skip-link {
+  position: absolute;
+  left: 0.5rem;
+  top: 0.5rem;
+  z-index: 1100;
+  background: #fff;
+  color: var(--tz-green);
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+}
+
+/* ----- Top bar ----- */
+.tz-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 1030;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  padding-top: calc(0.6rem + env(safe-area-inset-top, 0px));
+  background: var(--tz-green);
+  color: #fff;
+}
+.tz-topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #fff;
+  text-decoration: none;
+  font-weight: 700;
+}
+.tz-topbar__mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.18);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+}
+.tz-topbar__name {
+  font-size: 1.1rem;
+}
+.tz-topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.tz-lang {
+  font-weight: 700;
+  min-width: 44px;
+}
+
+/* ----- Main content area ----- */
+.tz-main {
+  min-height: calc(100vh - 56px - var(--tz-bottom-nav-h));
+  padding: 0.9rem;
+  max-width: 720px;
+  margin: 0 auto;
+  outline: none;
+}
+
+/* ----- Bottom navigation ----- */
+.tz-bottomnav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1040;
+  height: calc(var(--tz-bottom-nav-h) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: center;
+  background: #fff;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+.tz-bottomnav__item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: var(--tz-bottom-nav-h);
+  color: var(--tz-ink-muted);
+  text-decoration: none;
+  font-size: 0.7rem;
+}
+.tz-bottomnav__item.is-active {
+  color: var(--tz-green);
+  font-weight: 700;
+}
+.tz-bottomnav__icon {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+.tz-bottomnav__label {
+  line-height: 1;
+}
+.tz-bottomnav__badge {
+  position: absolute;
+  top: 6px;
+  right: 18px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--tz-amber);
+  color: #3a2a00;
+  font-size: 0.7rem;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+}
+
+/* Centre FAB (file a report) — lifted, amber, dominant. */
+.tz-bottomnav__fab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  justify-self: center;
+  width: 60px;
+  height: 60px;
+  margin-top: -18px;
+  border-radius: 50%;
+  background: var(--tz-amber);
+  color: #3a2a00;
+  text-decoration: none;
+  box-shadow: 0 6px 16px rgba(244, 168, 40, 0.45);
+}
+.tz-bottomnav__fab-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+  font-weight: 800;
+}
+.tz-bottomnav__fab-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+}

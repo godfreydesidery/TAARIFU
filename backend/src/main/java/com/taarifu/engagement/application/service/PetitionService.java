@@ -124,14 +124,23 @@ public class PetitionService {
     }
 
     /**
-     * Lists publicly-visible petitions (non-DRAFT), paged.
+     * Lists publicly-visible petitions (non-DRAFT), paged, optionally filtered to a target type.
      *
-     * @param pageable bounded paging/sorting.
+     * <p>Read-depth (citizen-facing): an optional {@code targetType} ({@code REPRESENTATIVE}/{@code OFFICE})
+     * narrows the public list so a constituent can browse, e.g., only petitions addressed to representatives.
+     * A {@code null} filter returns all public statuses (the prior behaviour). Drafts are never returned
+     * (the {@link #PUBLIC_STATUSES} set is the visibility fence — PRD §22.6).</p>
+     *
+     * @param targetType optional target-type filter, or {@code null} for all.
+     * @param pageable   bounded paging/sorting.
      * @return a page of {@link PetitionDto}.
      */
     @Transactional(readOnly = true)
-    public Page<PetitionDto> listPublic(Pageable pageable) {
-        return petitions.findByStatusIn(PUBLIC_STATUSES, pageable).map(mapper::toPetitionDto);
+    public Page<PetitionDto> listPublic(PetitionTargetType targetType, Pageable pageable) {
+        Page<Petition> page = (targetType == null)
+                ? petitions.findByStatusIn(PUBLIC_STATUSES, pageable)
+                : petitions.findByTargetTypeAndStatusIn(targetType, PUBLIC_STATUSES, pageable);
+        return page.map(mapper::toPetitionDto);
     }
 
     /**
@@ -321,20 +330,49 @@ public class PetitionService {
     }
 
     /**
-     * Marks a petition {@code ACTIVE} (post-moderation, UC-E02) and makes it discoverable.
+     * Approves a {@code DRAFT} petition into {@code ACTIVE} — the <b>moderation-before-public</b> review gate
+     * (UC-E02, US-9.1) — and makes it discoverable.
+     *
+     * <p><b>WHY this is the moderation gate (and why it is a staff endpoint, not an event consumer).</b> The
+     * PRD models a petition as {@code DRAFT → (moderation) → ACTIVE}: it must be reviewed before the public
+     * ever sees it (US-9.1 "moderation before public"). The moderation module's pipeline is a <i>reactive
+     * takedown</i> flow (flag → queue → hide/remove) and publishes no "approved → publish" event, so the
+     * pre-publication approval is implemented as this staff-gated review action — the controller restricts it
+     * to {@code ROLE_MODERATOR} (ADMIN/ROOT inherit via the role hierarchy). This keeps the gate entirely
+     * server-side and inside the owning module; a future event-driven hand-off (a moderation-published outbox
+     * event consumed here) is recorded as a CENTRAL NEED, not built across the boundary now.</p>
      *
      * <p>WHY this lives here (not only on the entity): activation is the {@code DRAFT -> ACTIVE} visibility
      * change, so it is the moment the petition first becomes public-safe and must enter discovery. Routing it
      * through the single {@link #reindexForDiscovery(Petition)} fence keeps the index-vs-no-index decision in
-     * one place (DRY), exactly as reporting re-indexes on every lifecycle move.</p>
+     * one place (DRY). The {@link Petition#activate()} aggregate guard enforces "only from DRAFT"; a
+     * re-activation attempt is surfaced as a clean {@link ErrorCode#CONFLICT}.</p>
      *
-     * @param petitionPublicId the petition to activate.
+     * @param petitionPublicId  the petition to approve/activate.
+     * @param moderatorPublicId the reviewing moderator's account public id (from {@code CurrentUser}, never the
+     *                          body) — recorded as the audit actor.
      * @return the now-ACTIVE {@link PetitionDto}.
      * @throws ResourceNotFoundException if the petition does not exist.
+     * @throws ApiException {@link ErrorCode#CONFLICT} if the petition is not in {@code DRAFT}.
      */
-    public PetitionDto activate(UUID petitionPublicId) {
+    public PetitionDto activate(UUID petitionPublicId, UUID moderatorPublicId) {
         Petition petition = require(petitionPublicId);
-        petition.activate();
+        try {
+            petition.activate();
+        } catch (IllegalStateException notDraft) {
+            // Already public (or terminal): re-approving is a no-op conflict, surfaced as a clean 409.
+            throw new ApiException(ErrorCode.CONFLICT, notDraft);
+        }
+        // L-1: a petition becoming public is a state-changing moderation decision — append it to the unified
+        // audit store as MODERATION_ACTION_TAKEN with reason APPROVE (the same code the moderation queue uses
+        // for an approve action), actor = reviewing moderator, subject = the petition. References only — never
+        // the petition body or any PII (PRD §18, §25.8).
+        audit.record(AuditEvent.Builder
+                .of(AuditEventType.MODERATION_ACTION_TAKEN, AuditOutcome.SUCCESS)
+                .actor(moderatorPublicId)
+                .subject(petition.getPublicId())
+                .reason("APPROVE")
+                .build());
         // Now publicly visible (ACTIVE) → upsert the public projection into discovery (ADR-0017 §1).
         reindexForDiscovery(petition);
         return mapper.toPetitionDto(petition);

@@ -159,18 +159,44 @@ class PetitionServiceTest {
     }
 
     @Test
-    void activate_upsertsPublicDiscoveryProjection() {
-        // DRAFT -> ACTIVE is the moment a petition becomes public-safe → it is upserted into discovery.
+    void activate_upsertsPublicDiscoveryProjection_andAuditsApproval() {
+        // DRAFT -> ACTIVE is the moment a petition becomes public-safe → it is upserted into discovery, and the
+        // moderation approval is audited as MODERATION_ACTION_TAKEN/APPROVE (actor = the reviewing moderator).
+        UUID moderator = UUID.randomUUID();
         Petition draft = Petition.create("Diwani", "body", PetitionTargetType.OFFICE,
                 UUID.randomUUID(), 10, null, signer, null);
         when(petitions.findByPublicId(petitionId)).thenReturn(Optional.of(draft));
 
-        service.activate(petitionId);
+        service.activate(petitionId, moderator);
 
         ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
         verify(searchIndex).upsert(captor.capture());
         assertThat(captor.getValue().entityType()).isEqualTo(SearchEntityType.PETITION);
         assertThat(captor.getValue().visibility()).isEqualTo(SearchVisibility.PUBLIC);
+
+        ArgumentCaptor<com.taarifu.common.audit.domain.model.AuditEvent> ev =
+                ArgumentCaptor.forClass(com.taarifu.common.audit.domain.model.AuditEvent.class);
+        verify(audit).record(ev.capture());
+        assertThat(ev.getValue().getEventType())
+                .isEqualTo(com.taarifu.common.audit.AuditEventType.MODERATION_ACTION_TAKEN);
+        assertThat(ev.getValue().getActorPublicId()).isEqualTo(moderator);
+        assertThat(ev.getValue().getReasonCode()).isEqualTo("APPROVE");
+    }
+
+    @Test
+    void activate_rejectsNonDraft_asConflict_andDoesNotReindex() {
+        // The moderation gate runs ONCE, only from DRAFT. Approving an already-ACTIVE petition is a clean 409
+        // and must not re-index or re-audit (the aggregate guard fired before any side effect).
+        Petition active = activeOfficePetition();
+        when(petitions.findByPublicId(petitionId)).thenReturn(Optional.of(active));
+
+        assertThatThrownBy(() -> service.activate(petitionId, UUID.randomUUID()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.CONFLICT);
+
+        verify(searchIndex, never()).upsert(any());
+        verify(audit, never()).record(any());
     }
 
     @Test
@@ -376,15 +402,33 @@ class PetitionServiceTest {
 
     @Test
     void listPublicExcludesDrafts_byStatusFilter() {
-        // The service must query only the public (non-DRAFT) statuses; proven by the captured arg.
+        // The service must query only the public (non-DRAFT) statuses; proven by the captured arg. A null
+        // targetType uses the status-only finder (the unfiltered public list).
         when(petitions.findByStatusIn(any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
-        service.listPublic(org.springframework.data.domain.PageRequest.of(0, 20));
+        service.listPublic(null, org.springframework.data.domain.PageRequest.of(0, 20));
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<java.util.Collection<PetitionStatus>> statuses =
                 ArgumentCaptor.forClass(java.util.Collection.class);
         verify(petitions).findByStatusIn(statuses.capture(), any());
+        assertThat(statuses.getValue()).doesNotContain(PetitionStatus.DRAFT);
+    }
+
+    @Test
+    void listPublicByTargetType_usesTheFilteredFinder() {
+        // A non-null targetType narrows to the type-scoped finder (read-depth) and still excludes drafts.
+        when(petitions.findByTargetTypeAndStatusIn(eq(PetitionTargetType.REPRESENTATIVE), any(), any()))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+        service.listPublic(PetitionTargetType.REPRESENTATIVE,
+                org.springframework.data.domain.PageRequest.of(0, 20));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Collection<PetitionStatus>> statuses =
+                ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(petitions).findByTargetTypeAndStatusIn(eq(PetitionTargetType.REPRESENTATIVE),
+                statuses.capture(), any());
+        verify(petitions, never()).findByStatusIn(any(), any());
         assertThat(statuses.getValue()).doesNotContain(PetitionStatus.DRAFT);
     }
 

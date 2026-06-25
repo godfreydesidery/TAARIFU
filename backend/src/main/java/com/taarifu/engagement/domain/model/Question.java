@@ -93,8 +93,18 @@ public class Question extends BaseEntity {
         return q;
     }
 
-    /** Marks the question {@code ANSWERED} (called when an {@link Answer} is published, UC-E10). */
+    /**
+     * Marks the question {@code ANSWERED} (called when an {@link Answer} is published, UC-E10). Guarded to run
+     * only while {@code OPEN}: a {@code DECLINED}/{@code MODERATED} question is no longer answerable and an
+     * already-{@code ANSWERED} one must not be re-answered (one answer per question — the {@link Answer} unique
+     * constraint is the hard guarantee). The answer service maps the guard to a localised conflict.
+     *
+     * @throws IllegalStateException if the question is not {@code OPEN}.
+     */
     public void markAnswered() {
+        if (this.status != QuestionStatus.OPEN) {
+            throw new IllegalStateException("Question can only be answered while OPEN (was " + status + ")");
+        }
         this.status = QuestionStatus.ANSWERED;
     }
 

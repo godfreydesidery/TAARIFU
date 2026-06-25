@@ -107,18 +107,46 @@ class QuestionServiceTest {
     }
 
     @Test
-    void markAnswered_keepsPublicProjectionFresh() {
-        // An ANSWERED question stays public → it is re-upserted (idempotent) through the same single fence.
+    void answerByTargetRep_savesAnswer_marksAnswered_keepsProjectionFresh() {
+        // The TARGETED rep answers their OPEN question → an Answer is saved, the question flips to ANSWERED, and
+        // the (still public) discovery row is re-upserted with the ANSWERED keyword. No token balance is read.
         UUID targetRep = UUID.randomUUID();
         UUID questionId = UUID.randomUUID();
         Question q = Question.ask(asker, targetRep, "Why the delay?");
         when(questions.findByPublicId(questionId)).thenReturn(java.util.Optional.of(q));
 
-        service.markAnswered(questionId);
+        var dto = service.answer(questionId, targetRep, "Tunafanya kazi.");
+
+        assertThat(dto.status()).isEqualTo("ANSWERED");
+        assertThat(dto.answerBody()).isEqualTo("Tunafanya kazi.");
+        assertThat(dto.answeredByRepId()).isEqualTo(targetRep);
+        verify(answers).save(any(com.taarifu.engagement.domain.model.Answer.class));
 
         ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
         verify(searchIndex).upsert(captor.capture());
         assertThat(captor.getValue().entityType()).isEqualTo(SearchEntityType.QUESTION);
         assertThat(captor.getValue().keywords()).contains("ANSWERED");
+    }
+
+    @Test
+    void answerByNonTargetRep_isForbidden_andAudits_andSavesNothing() {
+        // D13/D16: only the TARGETED rep may answer. A different principal answering → FORBIDDEN, audited, and
+        // no Answer is saved and no markAnswered/index side effect happens.
+        UUID targetRep = UUID.randomUUID();
+        UUID stranger = UUID.randomUUID();
+        UUID questionId = UUID.randomUUID();
+        Question q = Question.ask(asker, targetRep, "Why the delay?");
+        when(questions.findByPublicId(questionId)).thenReturn(java.util.Optional.of(q));
+
+        assertThatThrownBy(() -> service.answer(questionId, stranger, "I am not the target"))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.FORBIDDEN);
+
+        verify(answers, never()).save(any());
+        verify(searchIndex, never()).upsert(any());
+        verify(audit).record(any());
+        assertThat(q.getStatus())
+                .isEqualTo(com.taarifu.engagement.domain.model.enums.QuestionStatus.OPEN);
     }
 }

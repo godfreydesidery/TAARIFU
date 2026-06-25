@@ -7,6 +7,7 @@ import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
 import com.taarifu.common.outbox.EventEnvelope;
 import com.taarifu.common.outbox.OutboxWriter;
+import com.taarifu.common.security.CurrentUser;
 import com.taarifu.engagement.api.dto.SurveyDto;
 import com.taarifu.engagement.application.mapper.EngagementMapper;
 import com.taarifu.engagement.domain.model.Survey;
@@ -55,6 +56,13 @@ public class SurveyService {
             SurveyStatus.CLOSED, SurveyStatus.ARCHIVED);
 
     /**
+     * Platform-wide staff role names (un-prefixed, as carried on {@code CurrentUser}) that may open any
+     * survey/poll regardless of authorship — the staff half of the author-or-staff open gate
+     * (SecurityConfig role hierarchy {@code ROOT > ADMIN > MODERATOR}; the names match the JWT role claims).
+     */
+    private static final List<String> STAFF_ROLES = List.of("MODERATOR", "ADMIN", "ROOT");
+
+    /**
      * Max characters of the survey description carried in the public discovery snippet — a lean public
      * preview only (PRD §15 data budget; well under ADR-0017's {@code snippet_*} 1024-char column).
      */
@@ -100,8 +108,11 @@ public class SurveyService {
      * @return a page of {@link SurveyDto}.
      */
     @Transactional(readOnly = true)
-    public Page<SurveyDto> listPublic(Pageable pageable) {
-        return surveys.findByStatusIn(PUBLIC_STATUSES, pageable).map(mapper::toSurveyDto);
+    public Page<SurveyDto> listPublic(SurveyType type, Pageable pageable) {
+        Page<Survey> page = (type == null)
+                ? surveys.findByStatusIn(PUBLIC_STATUSES, pageable)
+                : surveys.findByTypeAndStatusIn(type, PUBLIC_STATUSES, pageable);
+        return page.map(mapper::toSurveyDto);
     }
 
     /**
@@ -215,21 +226,53 @@ public class SurveyService {
     }
 
     /**
-     * Opens a survey/poll for responses (post-schedule) and makes it discoverable. Opening is the
+     * Opens a survey/poll for responses (UC-E06) and makes it discoverable. Opening is the
      * {@code DRAFT/SCHEDULED -> OPEN} visibility change, so it is when the survey first becomes public-safe and
      * must enter discovery; routing it through the single {@link #reindexForDiscovery(Survey)} fence keeps the
      * index-vs-no-index decision in one place (DRY).
      *
+     * <p><b>Authorization (author-or-staff).</b> A survey/poll is opened by its <b>author</b> (the
+     * Authority/Representative/Org that drafted it — US-8.1) or by platform <b>staff</b>
+     * (MODERATOR/ADMIN/ROOT). The controller's {@code @PreAuthorize} only proves the caller is authenticated;
+     * the author-or-staff decision is data-dependent (it compares the survey's {@code creatorProfileId} to the
+     * caller), so it is enforced here — deny-by-default: a caller who is neither is {@link ErrorCode#FORBIDDEN}.
+     * The caller is taken from {@code CurrentUser}, never the body.</p>
+     *
      * @param surveyPublicId the survey to open.
+     * @param callerPublicId the authenticated caller's account public id (from {@code CurrentUser}).
      * @return the now-OPEN {@link SurveyDto}.
      * @throws ResourceNotFoundException if the survey does not exist.
+     * @throws ApiException {@link ErrorCode#FORBIDDEN} if the caller is neither the author nor staff;
+     *                      {@link ErrorCode#CONFLICT} if the survey is not {@code DRAFT}/{@code SCHEDULED}.
      */
-    public SurveyDto open(UUID surveyPublicId) {
+    public SurveyDto open(UUID surveyPublicId, UUID callerPublicId) {
         Survey survey = require(surveyPublicId);
-        survey.open();
+
+        // Author-or-staff gate (deny-by-default). Author = the survey's creator profile id; staff = any
+        // platform staff role on the live principal (the established CurrentUser role-read pattern).
+        boolean isAuthor = callerPublicId != null && callerPublicId.equals(survey.getCreatorProfileId());
+        if (!isAuthor && !callerIsStaff()) {
+            throw new ApiException(ErrorCode.FORBIDDEN);
+        }
+
+        try {
+            survey.open();
+        } catch (IllegalStateException notOpenable) {
+            // Already OPEN/CLOSED/ARCHIVED: re-opening is a clean conflict (never resurrect a finished poll).
+            throw new ApiException(ErrorCode.CONFLICT, notOpenable);
+        }
         // Now publicly visible (OPEN) → upsert the public projection into discovery (ADR-0017 §1).
         reindexForDiscovery(survey);
         return mapper.toSurveyDto(survey);
+    }
+
+    /**
+     * @return whether the live authenticated principal holds a platform staff role
+     *         (MODERATOR/ADMIN/ROOT) — the staff half of the author-or-staff open gate.
+     */
+    private boolean callerIsStaff() {
+        List<String> roles = CurrentUser.current().map(CurrentUser::roles).orElse(List.of());
+        return roles.stream().anyMatch(STAFF_ROLES::contains);
     }
 
     /** Loads a survey by public id or throws a localised not-found. */

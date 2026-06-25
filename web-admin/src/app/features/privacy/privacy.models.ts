@@ -5,9 +5,9 @@
  * <p>WHY these shapes: under the Tanzania PDPA (2022/2023) a data subject may request a copy of their data
  * (access/export) or its erasure. The platform's policy (PRD §25.1) is "erasure = anonymisation, not deletion
  * of the civic record": PII is severed and replaced with a tombstone while counts/audit persist. These shapes
- * back the operator console that lists and actions those requests against the privacy/admin endpoints. The
- * SLA is fixed in policy — acknowledge ≤72h, complete ≤30 days (§25.1) — and surfaced here as a derived due
- * date so an operator can triage overdue requests.</p>
+ * back the operator console that lists and actions those requests against the {@code /privacy/dsr} admin
+ * endpoints. The SLA is fixed in policy — acknowledge ≤72h, complete ≤30 days (§25.1) — and surfaced here as
+ * a derived due date so an operator can triage overdue requests.</p>
  *
  * <p>PII discipline (PRD §18, PDPA): a DSR row identifies the SUBJECT only by their account public id and a
  * MASKED contact — never a raw phone/email or national/voter ID. The console acts on the immutable
@@ -69,23 +69,22 @@ export interface DsrRequest {
   legalHold: boolean;
 }
 
-/** Request body for `POST /privacy/admin/dsr/{id}/acknowledge` — record acknowledgement (starts the SLA clock). */
+/**
+ * Optional body for `POST /privacy/dsr/{id}/acknowledge` — record acknowledgement (starts the SLA clock).
+ * The backend action currently takes no body; this shape is kept for forward compatibility with an
+ * operator note and so {@link ApiClient.post}'s body argument is typed rather than `unknown`.
+ */
 export interface AcknowledgeDsrRequest {
   /** Optional internal note (never the subject's PII). */
   note?: string;
 }
 
 /**
- * Request body for `POST /privacy/admin/dsr/{id}/complete` — mark the export delivered / anonymisation done.
+ * Optional body for `POST /privacy/dsr/{id}/complete` — mark the export delivered / anonymisation done.
  * The actual export/anonymisation job runs server-side (UC-S09); this records the operator's completion.
+ * The backend action currently takes no body; kept for forward compatibility (see {@link AcknowledgeDsrRequest}).
  */
 export interface CompleteDsrRequest {
   /** Optional internal note (e.g. delivery channel), never the subject's PII. */
   note?: string;
-}
-
-/** Request body for `POST /privacy/admin/dsr/{id}/reject` — reject with a required machine reason code. */
-export interface RejectDsrRequest {
-  /** Machine reason for rejection (e.g. `IDENTITY_UNVERIFIED`, `LEGAL_HOLD`); ≤64 chars, never PII. */
-  reasonCode: string;
 }

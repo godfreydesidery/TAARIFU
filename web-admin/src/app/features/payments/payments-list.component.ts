@@ -18,8 +18,8 @@ import { maskMsisdn } from './payments.util';
  * Mobile-money payments admin view — Phase-2 token-purchase ledger (D19; PRD §23, §21 EI-20).
  *
  * <p>Responsibility: the reconciliation console for mobile-money payments (M-Pesa / Tigo Pesa / Airtel
- * Money / HaloPesa / card). It lists payments paged from {@code GET /payments/admin} with server-side filters
- * by provider, status, and date window, and shows an aggregate TOTALS strip ({@code GET /payments/admin/
+ * Money / HaloPesa / card). It lists payments paged from {@code GET /admin/payments} with server-side filters
+ * by provider, status, and date window, and shows an aggregate TOTALS strip ({@code GET /admin/payments/
  * totals}) — collected / pending / failed / refunded — so the operator sees the money picture without
  * summing pages. Each row shows a MASKED payer MSISDN (defence-in-depth client mask over the server's, PRD
  * §18/DI5), the provider, amount, and the tokens credited. The totals strip degrades to hidden if its

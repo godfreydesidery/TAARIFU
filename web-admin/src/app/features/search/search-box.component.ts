@@ -59,7 +59,9 @@ export class SearchBoxComponent {
 
   /** Hits grouped by type for the dropdown, capped per group so the panel stays compact. */
   readonly groups = computed<BoxGroup[]>(() => {
-    const all = this.hits();
+    // Defensive: never assume `hits()` is a populated array — a malformed/empty wire payload must degrade to
+    // "no groups", not throw inside the template's change detection (guards the prior `undefined.filter` bug).
+    const all = this.hits() ?? [];
     return SEARCH_GROUP_ORDER.map((g) => ({
       type: g.type,
       labelKey: g.labelKey,

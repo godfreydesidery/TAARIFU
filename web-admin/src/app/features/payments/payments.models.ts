@@ -79,7 +79,7 @@ export interface PaymentTotals {
   refundedAmount: number;
 }
 
-/** Filters for the payments list (`GET /payments/admin`); every field optional (`undefined` = no constraint). */
+/** Filters for the payments list (`GET /admin/payments`); every field optional (`undefined` = no constraint). */
 export interface PaymentListFilter {
   /** Provider filter. */
   provider?: string;

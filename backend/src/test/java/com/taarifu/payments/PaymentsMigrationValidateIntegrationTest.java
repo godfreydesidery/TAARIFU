@@ -1,10 +1,14 @@
 package com.taarifu.payments;
 
+import com.taarifu.payments.api.PaymentQueryApi;
+import com.taarifu.payments.api.dto.PaymentTotalsDto;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -60,6 +64,32 @@ class PaymentsMigrationValidateIntegrationTest {
 
     @PersistenceContext
     private EntityManager em;
+
+    @Autowired
+    private PaymentQueryApi paymentQuery;
+
+    /**
+     * Regression for the admin payment query 500: {@code GET /admin/payments} with no filters threw
+     * "could not determine data type of parameter" because the {@code (:from is null or ...)} idiom bound a
+     * NULL temporal parameter PostgreSQL could not type. With null bounds coalesced to typed sentinels the
+     * search must run against real PostgreSQL and return an (empty) page — never throw. Only a real datasource
+     * reproduces this (a mocked-repo unit test cannot).
+     */
+    @Test
+    @Transactional
+    void adminPaymentSearch_withNullFilters_runsAgainstPostgres_andDoesNotThrow() {
+        assertThat(paymentQuery.search(null, null, null, null, PageRequest.of(0, 20)).getTotalElements())
+                .isZero();
+    }
+
+    /** Companion: the totals aggregate (count + sum queries) must also survive null time-window bounds. */
+    @Test
+    @Transactional
+    void adminPaymentTotals_withNullFilters_runsAgainstPostgres_andDoesNotThrow() {
+        PaymentTotalsDto totals = paymentQuery.totals(null, null, null);
+        assertThat(totals.succeededCount()).isZero();
+        assertThat(totals.settledAmountMinor()).isZero();
+    }
 
     @Test
     @Transactional

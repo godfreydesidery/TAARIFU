@@ -1,5 +1,7 @@
 package com.taarifu.payments.infrastructure.adapter;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.taarifu.payments.domain.model.enums.MobileMoneyProvider;
 import com.taarifu.payments.domain.port.MobileMoneyGateway;
 import com.taarifu.payments.infrastructure.config.PaymentsGatewayProperties;
@@ -46,6 +48,13 @@ abstract class AbstractHmacMobileMoneyGateway implements MobileMoneyGateway {
 
     private static final Logger log = LoggerFactory.getLogger(AbstractHmacMobileMoneyGateway.class);
     private static final String HMAC_ALGO = "HmacSHA256";
+
+    /**
+     * Parses a (signature-verified) callback body. A private instance is fine — {@link ObjectMapper} is
+     * thread-safe for reads; the callback parse never trusts the body for crediting (only reconciliation,
+     * after {@link #verifySettled} confirms against the rail, ever credits).
+     */
+    private static final ObjectMapper CALLBACK_MAPPER = new ObjectMapper();
 
     /** Bound gateway settings (base URL, HMAC secret, timeout). */
     protected final PaymentsGatewayProperties config;
@@ -143,6 +152,72 @@ abstract class AbstractHmacMobileMoneyGateway implements MobileMoneyGateway {
                     provider(), ex.getClass().getSimpleName());
             return false;
         }
+    }
+
+    /**
+     * Parses a (already signature-verified) callback body into the {@code (providerRef, settled)} fields
+     * reconciliation needs.
+     *
+     * <p>WHY a tolerant, alias-aware parse over the JSON tree: the TZ rails differ in field naming
+     * (M-Pesa {@code reference}/{@code resultCode}, others {@code ref}/{@code status}), so the shared parser
+     * reads a small set of common aliases rather than binding a vendor DTO per rail (KISS/DRY; vendor-specific
+     * shapes, if they ever truly diverge, override this in the per-rail subclass). The parsed {@code settled}
+     * is the callback's <i>claim</i> only — it never credits; only {@link #verifySettled} (against the rail)
+     * authorises a credit (never-trust-the-callback, PRD §23.5). A malformed body yields a not-settled,
+     * no-reference result so a garbage callback changes nothing.</p>
+     *
+     * @param rawBody the callback body bytes (verified by {@link #verifyCallbackSignature} first).
+     * @return the parsed reference + claimed-settled flag; {@code (null, false)} on any parse failure.
+     */
+    @Override
+    public CallbackResult parseCallback(byte[] rawBody) {
+        if (rawBody == null || rawBody.length == 0) {
+            return new CallbackResult(null, false);
+        }
+        try {
+            JsonNode root = CALLBACK_MAPPER.readTree(rawBody);
+            String providerRef = firstText(root, "providerRef", "reference", "ref", "transactionId");
+            boolean settled = claimedSettled(root);
+            return new CallbackResult(providerRef, settled);
+        } catch (java.io.IOException | RuntimeException ex) {
+            // Never log the body (it may carry an MSISDN/PII). A malformed callback is a benign no-op.
+            log.warn("Callback parse failed: provider={}, reason={}", provider(), ex.getClass().getSimpleName());
+            return new CallbackResult(null, false);
+        }
+    }
+
+    /** Returns the first non-blank text value among the candidate field names, or {@code null}. */
+    private static String firstText(JsonNode root, String... fields) {
+        for (String field : fields) {
+            JsonNode node = root.get(field);
+            if (node != null && node.isValueNode()) {
+                String text = node.asText(null);
+                if (text != null && !text.isBlank()) {
+                    return text.strip();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Reads the callback's <i>claimed</i> settlement outcome from common alias fields: a boolean
+     * {@code settled}, or a status/result code with a success value (e.g. {@code SUCCESS}/{@code COMPLETED} or
+     * a {@code 0} result code, the common M-Pesa success convention). Defaults to {@code false} (claim
+     * nothing) when none is present — the safe default, since the claim never credits on its own.
+     */
+    private static boolean claimedSettled(JsonNode root) {
+        JsonNode settledNode = root.get("settled");
+        if (settledNode != null && settledNode.isBoolean()) {
+            return settledNode.booleanValue();
+        }
+        JsonNode resultCode = root.get("resultCode");
+        if (resultCode != null && resultCode.isNumber()) {
+            return resultCode.asInt() == 0; // M-Pesa convention: resultCode 0 == success.
+        }
+        String status = firstText(root, "status", "state");
+        return status != null && ("SUCCESS".equalsIgnoreCase(status) || "COMPLETED".equalsIgnoreCase(status)
+                || "SETTLED".equalsIgnoreCase(status));
     }
 
     /**

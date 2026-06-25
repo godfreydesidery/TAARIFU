@@ -262,6 +262,23 @@ taarifu:
     #   a stripped dev/CI context that must boot without the tokens module wired. Exactly one bean is active.
     wallet-credit:
       adapter: ${TAARIFU_PAYMENTS_WALLET_CREDIT_ADAPTER:tokens-api}
+    # Which WalletReversalPort adapter REVERSES a refunded top-up from the buyer's wallet (ADR-0015 addendum).
+    # 'logging' (default): LoggingWalletReversalStub — records the reversal intent, moves NO real tokens. This
+    #   stays the default until the tokens module publishes a fence-safe tokens.api REFUND method (CENTRAL NEED).
+    # 'tokens-api': TokensApiWalletReversalAdapter → the fence-safe tokens.api REFUND reversal (D18 — reverses
+    #   convenience tokens only, never democratic weight). Select only once that method has landed.
+    wallet-reversal:
+      adapter: ${TAARIFU_PAYMENTS_WALLET_REVERSAL_ADAPTER:logging}
+    # Scheduled settlement reconciliation job (ADR-0015 addendum; PRD §23.5). Re-checks stale non-terminal
+    # top-ups against the provider (never trust-the-callback) and expires ones stuck past expire-after. Gated
+    # by 'enabled' (mirrors the outbox relay toggle) so it can be paused/pinned/disabled in a test. All values
+    # default — no central config change required.
+    reconciliation:
+      enabled: ${TAARIFU_PAYMENTS_RECONCILIATION_ENABLED:true}      # run the @Scheduled job (default true)
+      batch-size: ${TAARIFU_PAYMENTS_RECONCILIATION_BATCH_SIZE:50}  # max stale rows claimed per tick
+      min-age: ${TAARIFU_PAYMENTS_RECONCILIATION_MIN_AGE:2m}        # skip attempts younger than this (in-flight)
+      expire-after: ${TAARIFU_PAYMENTS_RECONCILIATION_EXPIRE_AFTER:30m}  # expire rows stuck longer than this
+      poll-interval-ms: ${TAARIFU_PAYMENTS_RECONCILIATION_POLL_INTERVAL_MS:300000}  # fixed delay (5m default)
     # Mobile-money rail selector + endpoints. Default 'logging' is the safe no-op (zero external calls, no
     # secrets) so a no-config context boots and NO credit is ever posted until a real rail is configured.
     # All secrets (HMAC callback key, rail credentials) come from env/secret-mounts — NEVER committed

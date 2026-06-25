@@ -2,6 +2,7 @@ package com.taarifu.payments;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -63,9 +64,46 @@ class PaymentsMigrationValidateIntegrationTest {
     @Test
     @Transactional
     void migrationsApplyAndTopUpEntityValidatesAgainstThem() {
-        // If the context started, Flyway applied V130 and Hibernate validated TopUp against the migrated
-        // schema. A spot-check confirms the table exists and is queryable.
+        // If the context started, Flyway applied V130 + V131 and Hibernate validated TopUp against the
+        // migrated schema. A spot-check confirms the table exists and is queryable.
         Number topUps = (Number) em.createNativeQuery("SELECT count(*) FROM top_up").getSingleResult();
         assertThat(topUps.longValue()).isZero();
+    }
+
+    /**
+     * Proves V131 (REFUND/VOID addendum) applied: the two new columns exist and the widened status CHECK
+     * admits VOIDED/REFUNDED. If V131 had not run (or disagreed with the entity), the context would not have
+     * started and this class would be red before reaching here.
+     */
+    @Test
+    @Transactional
+    void v131RefundVoidColumnsAndConstraintExist() {
+        // The two new columns are present (the context already validated the entity mapping against them).
+        Number cols = (Number) em.createNativeQuery(
+                        "SELECT count(*) FROM information_schema.columns "
+                                + "WHERE table_name = 'top_up' "
+                                + "AND column_name IN ('reversal_event_id','reversal_reason')")
+                .getSingleResult();
+        assertThat(cols.intValue()).isEqualTo(2);
+
+        // The widened status CHECK admits a REFUNDED row (would violate ck_top_up_status if V131 had not run)
+        // and the reversal-event-id binding (ck_top_up_reversal_event_id) is satisfied when set together.
+        em.createNativeQuery(
+                        "INSERT INTO top_up (public_id, version, buyer_id, wallet_owner_type, provider, "
+                                + "provider_ref, amount_minor, token_amount, currency, status, idempotency_key, "
+                                + "reversal_event_id, reversal_reason) "
+                                + "VALUES (:pid, 0, :buyer, 'USER', 'MPESA', :ref, 1000, 10, 'TZS', "
+                                + "'REFUNDED', :idem, :rev, 'DUPLICATE_CHARGE')")
+                .setParameter("pid", UUID.randomUUID())
+                .setParameter("buyer", UUID.randomUUID())
+                .setParameter("ref", "REF-" + UUID.randomUUID())
+                .setParameter("idem", "idem-" + UUID.randomUUID())
+                .setParameter("rev", UUID.randomUUID())
+                .executeUpdate();
+
+        Number refunded = (Number) em.createNativeQuery(
+                        "SELECT count(*) FROM top_up WHERE status = 'REFUNDED'")
+                .getSingleResult();
+        assertThat(refunded.intValue()).isEqualTo(1);
     }
 }

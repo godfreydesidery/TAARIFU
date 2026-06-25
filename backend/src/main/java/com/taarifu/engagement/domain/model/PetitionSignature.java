@@ -98,6 +98,26 @@ public class PetitionSignature extends BaseEntity {
         return s;
     }
 
+    /**
+     * De-identifies this signature on a data-subject ERASURE (PRD §25.1; ADR-0016 §5.6) — the signature
+     * <b>survives as a counted civic act</b> while its tie to the now-erased signer is severed.
+     *
+     * <p>WHY a tombstone token rather than {@code null}: {@link #signerProfileId} is {@code NOT NULL} and is
+     * half of the {@code (petition, signer)} one-per-person unique key (UC-E03). Nulling it is impossible;
+     * deleting the row would silently <b>decrement the petition's signature count</b> and rewrite a democratic
+     * tally (§23.5 integrity fence). So the signer is replaced by a caller-supplied <b>deterministic</b>
+     * per-subject tombstone token — the signature still counts, the row stays unique on its petition, and the
+     * erased person is no longer recoverable from it. Determinism makes a redelivery a no-op (the second pass
+     * finds the original signer id already gone, so it matches nothing — at-least-once safe, ADR-0014 §3).
+     * Any free-text {@link #comment} (citizen-supplied PII) is cleared in the same step.</p>
+     *
+     * @param signerTombstone the deterministic, non-account per-subject token replacing the real signer id.
+     */
+    public void anonymiseSigner(UUID signerTombstone) {
+        this.signerProfileId = signerTombstone;
+        this.comment = null;
+    }
+
     /** @return the signed petition. */
     public Petition getPetition() {
         return petition;

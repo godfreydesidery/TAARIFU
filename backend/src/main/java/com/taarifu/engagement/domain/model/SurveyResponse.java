@@ -93,6 +93,23 @@ public class SurveyResponse extends BaseEntity {
         return survey;
     }
 
+    /**
+     * De-identifies this survey response on a data-subject ERASURE (PRD §25.1; ADR-0016 §5.6) — the response
+     * <b>survives as an anonymised data point</b> in the survey's aggregate while its tie to the now-erased
+     * responder is severed.
+     *
+     * <p>WHY a tombstone token rather than {@code null}: {@link #responderProfileId} is {@code NOT NULL} and is
+     * half of the {@code (survey, responder)} one-per-person unique key (UC-E07). The caller supplies a
+     * <b>deterministic</b> per-subject token so the response still counts once, stays unique on its survey, and
+     * the responder is no longer recoverable; a redelivery is a no-op (matches nothing on the original id —
+     * ADR-0014 §3). The {@link #answers} payload is preserved as anonymised aggregate survey data.</p>
+     *
+     * @param responderTombstone the deterministic, non-account per-subject token replacing the real responder.
+     */
+    public void anonymiseResponder(UUID responderTombstone) {
+        this.responderProfileId = responderTombstone;
+    }
+
     /** @return the responder's profile public id. */
     public UUID getResponderProfileId() {
         return responderProfileId;

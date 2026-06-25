@@ -7,6 +7,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -33,4 +34,14 @@ public interface PetitionRepository extends JpaRepository<Petition, Long> {
      * @return a page of petitions.
      */
     Page<Petition> findByStatusIn(Collection<PetitionStatus> statuses, Pageable pageable);
+
+    /**
+     * Lists every petition the subject authored as a natural person, for the PDPA fan-out (data-subject
+     * ACCESS export + ERASURE severing; ADR-0016 §4/§5). Org-authored petitions ({@code creatorProfileId}
+     * null) never match, so an org's petitions are correctly untouched by a person's DSR.
+     *
+     * @param creatorProfileId the authoring person's account public id (the DSR subject).
+     * @return every (non-deleted) petition still authored by this person; empty if none / already severed.
+     */
+    List<Petition> findByCreatorProfileId(UUID creatorProfileId);
 }

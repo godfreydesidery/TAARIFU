@@ -139,6 +139,27 @@ public class Rating extends BaseEntity {
         this.comment = comment;
     }
 
+    /**
+     * De-identifies this rating on a data-subject ERASURE (PRD §18, §25.1, §23.5; ADR-0016 §5.6) — the rating
+     * <b>survives as a counted accountability score</b> while its tie to the now-erased rater is severed and
+     * any free-text comment (citizen PII) is cleared.
+     *
+     * <p>WHY a tombstone token rather than {@code null}: {@link #raterProfileId} is {@code NOT NULL} and is
+     * part of the {@code (subject, rater, period)} one-per-person unique key (D16). Nulling it is impossible;
+     * deleting the row would silently rewrite the representative's aggregate score (the integrity fence in
+     * arithmetic form — wealth/erasure cannot move a democratic tally, §23.5). So the rater is replaced by a
+     * caller-supplied <b>deterministic</b> per-subject token — the rating still counts toward the computed
+     * aggregate, the row stays unique for its subject+period, and the rater is no longer recoverable.
+     * Determinism makes a redelivery a no-op (the second pass matches nothing on the original rater id —
+     * at-least-once safe, ADR-0014 §3).</p>
+     *
+     * @param raterTombstone the deterministic, non-account per-subject token replacing the real rater id.
+     */
+    public void anonymiseRater(UUID raterTombstone) {
+        this.raterProfileId = raterTombstone;
+        this.comment = null;
+    }
+
     /** @return the subject kind. */
     public RatingSubjectType getSubjectType() {
         return subjectType;

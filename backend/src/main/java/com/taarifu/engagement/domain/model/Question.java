@@ -103,6 +103,22 @@ public class Question extends BaseEntity {
         return this.status == QuestionStatus.OPEN || this.status == QuestionStatus.ANSWERED;
     }
 
+    /**
+     * De-identifies this question on a data-subject ERASURE (PRD §25.1; ADR-0016 §5.6) — the question
+     * <b>survives as an anonymised civic record</b> (its body and the rep's published answer are preserved as
+     * public accountability content) while its tie to the now-erased asker is severed.
+     *
+     * <p>WHY a tombstone token rather than {@code null}: {@link #askerProfileId} is {@code NOT NULL}. The
+     * caller supplies a <b>deterministic</b> per-subject token so the asker is no longer recoverable, the row
+     * stays valid, and a redelivery is a no-op (the second pass matches nothing on the original asker id —
+     * at-least-once safe, ADR-0014 §3). The question body is preserved as the anonymised public Q&amp;A record.</p>
+     *
+     * @param askerTombstone the deterministic, non-account per-subject token replacing the real asker id.
+     */
+    public void anonymiseAsker(UUID askerTombstone) {
+        this.askerProfileId = askerTombstone;
+    }
+
     /** @return the asker's profile public id. */
     public UUID getAskerProfileId() {
         return askerProfileId;

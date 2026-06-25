@@ -139,4 +139,32 @@ public interface RepresentativeRepository extends JpaRepository<Representative, 
             WHERE LOWER(COALESCE(r.bio, '')) LIKE LOWER(CONCAT('%', :q, '%'))
             """)
     Page<Representative> search(@Param("q") String q, Pageable pageable);
+
+    /**
+     * Pages <b>every</b> live (non-soft-deleted) representative for the search backfill source
+     * ({@code RepresentativeSearchBackfillSource}), <b>fetch-joining</b> the {@code constituency} and
+     * {@code ward} associations the discovery projection reads for its title/area facet.
+     *
+     * <p>WHY a dedicated query (not the existing {@code findDirectory(null, null, …)}): the backfill iterates the
+     * full directory in pages and builds a projection that touches each row's seat name — relying on the LAZY
+     * {@code constituency}/{@code ward} would fire a {@code SELECT}-per-row (N+1) across the whole corpus. The
+     * {@code LEFT JOIN FETCH} loads both seats in the page query so a page of N reps is N projections with no
+     * extra round-trips (PRD §15 data-budget discipline). Both joins are LEFT because special-seats/nominated
+     * reps legitimately have neither.</p>
+     *
+     * <p>WHY every status (not just SITTING/FORMER): the backfill mirrors the live producer, which indexes a
+     * PENDING_VERIFICATION row at {@code STAFF} visibility (UC-A22) and a SITTING/FORMER row at {@code PUBLIC} —
+     * so all live rows are indexed, each at the visibility the shared projection assigns. Soft-deleted rows are
+     * excluded by the entity's {@code @SQLRestriction}, exactly as the live {@code remove}-on-delete leaves them
+     * out of discovery.</p>
+     *
+     * @param pageable the backfill page window (the source drives this in fixed-size batches).
+     * @return a page of live representatives with {@code constituency}/{@code ward} eagerly loaded.
+     */
+    @Query("""
+            SELECT r FROM Representative r
+            LEFT JOIN FETCH r.constituency
+            LEFT JOIN FETCH r.ward
+            """)
+    Page<Representative> findAllForSearchBackfill(Pageable pageable);
 }

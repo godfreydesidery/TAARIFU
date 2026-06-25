@@ -25,7 +25,8 @@
  * published {@code ..api..} port only (ADR-0013): the representative existence/electoral seat via
  * {@code institutions.api.RepresentativeQueryApi}, the rater's electoral scope via
  * {@code identity.api.ElectoralScopeApi}. ({@code linkedProjectIds} on a promise are not yet validated —
- * no projects module/port exists; that remains a documented {@code // TODO(wiring)}.) Only
+ * no projects module/port exists; // PHASE-3: needs {@code projects.api.ProjectQueryApi} — {@code CurationService}
+ * is the ready receiver.) Only
  * {@code com.taarifu.common}, {@code com.taarifu.geography}, and {@code com.taarifu.identity} (the merged
  * upstream) plus published api ports may be imported.</p>
  *

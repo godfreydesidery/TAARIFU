@@ -60,10 +60,12 @@ import java.util.UUID;
  * (never a body-supplied id), so a caller can never rate as someone else nor stuff the ballot.</p>
  *
  * <p>Rater identity: the rater key is the caller's immutable identity public id from the security context
- * ({@link CurrentUser#requirePublicId()}) — the same axis {@link ScopeGuard#isNotSelf} compares against,
- * so the self-check and the one-per-person key are consistent. // TODO(wiring): if a distinct profile id
- * is ever required, resolve user→profile via the identity module's public API rather than trusting the
- * body.</p>
+ * ({@link CurrentUser#requirePublicId()}) — the same axis {@link ScopeGuard#isNotSelf} compares against, so the
+ * self-check and the one-per-person key are consistent (and a caller can never rate as someone else). This is a
+ * <b>settled design decision</b>, not a pending wiring step: the account public id is the correct, consistent
+ * key, so nothing here trusts a body-supplied id. Should a distinct <i>profile</i> id ever be required, the
+ * mapping is already available via identity's published {@code ProfileLookupApi.profileIdForAccount} (used by
+ * institutions for the ownership guard) — never by trusting the body.</p>
  */
 @Service
 @Transactional

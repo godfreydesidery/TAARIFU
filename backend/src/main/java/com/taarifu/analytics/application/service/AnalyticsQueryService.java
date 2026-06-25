@@ -1,12 +1,16 @@
 package com.taarifu.analytics.application.service;
 
 import com.taarifu.analytics.api.dto.BreakdownDto;
+import com.taarifu.analytics.api.dto.DashboardOverviewDto;
 import com.taarifu.analytics.api.dto.FunnelDto;
 import com.taarifu.analytics.api.dto.LatencyStatsDto;
 import com.taarifu.analytics.api.dto.MetricPointDto;
+import com.taarifu.analytics.api.dto.TimeBucket;
+import com.taarifu.analytics.api.dto.TimeSeriesDto;
 import com.taarifu.analytics.api.dto.VolumeReportDto;
 import com.taarifu.analytics.domain.model.enums.AnalyticsEventType;
 import com.taarifu.analytics.domain.repository.AnalyticsEventRepository;
+import com.taarifu.analytics.domain.repository.projection.CountByBucketProjection;
 import com.taarifu.analytics.domain.repository.projection.CountByKeyProjection;
 import com.taarifu.analytics.domain.repository.projection.LatencyStatsProjection;
 import com.taarifu.common.domain.port.ClockPort;
@@ -199,7 +203,78 @@ public class AnalyticsQueryService {
         return breakdown("OUTCOME", w, points);
     }
 
+    /**
+     * Reports-volume <b>trend</b>: {@code REPORT_FILED} counts per time bucket (day/week/month) over the
+     * window, optionally scoped to an area/category (PRD §3.3 trends; Appendix C).
+     *
+     * @param bucket     the time-bucket granularity ({@code null} defaults to {@link TimeBucket#DAY}).
+     * @param from       optional inclusive window start (UTC); defaults to 30 days before {@code to}.
+     * @param to         optional exclusive window end (UTC); defaults to now.
+     * @param geoAreaId  optional area filter ({@code null} = all).
+     * @param categoryId optional category filter ({@code null} = all).
+     * @return the {@link TimeSeriesDto} labelled {@code REPORT_FILED}, chronologically ordered.
+     */
+    public TimeSeriesDto reportsTrend(TimeBucket bucket, Instant from, Instant to,
+                                      UUID geoAreaId, UUID categoryId) {
+        TimeBucket b = bucket != null ? bucket : TimeBucket.DAY;
+        Window w = resolveWindow(from, to);
+        List<TimeSeriesDto.Point> points = toSeries(events.countByTypeBucketed(
+                AnalyticsEventType.REPORT_FILED.name(), b.truncField(), w.from(), w.to(), geoAreaId, categoryId));
+        return new TimeSeriesDto(AnalyticsEventType.REPORT_FILED.name(), b, w.from(), w.to(), points);
+    }
+
+    /**
+     * SLA-breach <b>trend</b>: {@code REPORT_ESCALATED}-with-breach counts per time bucket over the window,
+     * optionally scoped to an area/category (PRD §3.3; Appendix C "SLA-breach trend").
+     *
+     * @param bucket     the time-bucket granularity ({@code null} defaults to {@link TimeBucket#DAY}).
+     * @param from       optional inclusive window start (UTC).
+     * @param to         optional exclusive window end (UTC).
+     * @param geoAreaId  optional area filter ({@code null} = all).
+     * @param categoryId optional category filter ({@code null} = all).
+     * @return the {@link TimeSeriesDto} labelled {@code SLA_BREACH}, chronologically ordered.
+     */
+    public TimeSeriesDto slaBreachTrend(TimeBucket bucket, Instant from, Instant to,
+                                        UUID geoAreaId, UUID categoryId) {
+        TimeBucket b = bucket != null ? bucket : TimeBucket.DAY;
+        Window w = resolveWindow(from, to);
+        List<TimeSeriesDto.Point> points = toSeries(events.countSlaBreachesBucketed(
+                b.truncField(), w.from(), w.to(), geoAreaId, categoryId));
+        return new TimeSeriesDto("SLA_BREACH", b, w.from(), w.to(), points);
+    }
+
+    /**
+     * Composes the dashboard <b>overview</b> — the headline KPIs in one payload — so a low-bandwidth client
+     * fetches them in a single call (PRD §15; ADR-0020 §2/§3). Reuses the individual tile methods (DRY);
+     * adds no new query logic. The {@code from}/{@code to} are resolved once and threaded through every tile
+     * so the overview is internally consistent (one window).
+     *
+     * @param from      optional inclusive window start (UTC); defaults to 30 days before {@code to}.
+     * @param to        optional exclusive window end (UTC); defaults to now.
+     * @param geoAreaId optional area filter applied to the area-scopable tiles ({@code null} = all).
+     * @return the composed {@link DashboardOverviewDto}.
+     */
+    public DashboardOverviewDto overview(Instant from, Instant to, UUID geoAreaId) {
+        Window w = resolveWindow(from, to);
+        return new DashboardOverviewDto(
+                w.from(), w.to(),
+                events.countByType(AnalyticsEventType.REPORT_FILED, w.from(), w.to(), geoAreaId, null),
+                latency(AnalyticsEventType.REPORT_FIRST_RESPONDED, "TTFR", w.from(), w.to(), geoAreaId, null),
+                latency(AnalyticsEventType.REPORT_RESOLVED, "TTR", w.from(), w.to(), geoAreaId, null),
+                verificationFunnel(w.from(), w.to(), geoAreaId),
+                slaBreaches(w.from(), w.to(), geoAreaId, null),
+                channelMix(AnalyticsEventType.REPORT_FILED, w.from(), w.to()),
+                moderationActions(w.from(), w.to()));
+    }
+
     // --- helpers ---------------------------------------------------------------------------------
+
+    /** Maps the bucketed count projection into the public series point DTO (chronological order preserved). */
+    private List<TimeSeriesDto.Point> toSeries(List<CountByBucketProjection> rows) {
+        return rows.stream()
+                .map(r -> new TimeSeriesDto.Point(r.getBucketStart(), r.getCount()))
+                .toList();
+    }
 
     /** Builds a {@link BreakdownDto} with the summed total over the points. */
     private BreakdownDto breakdown(String dimension, Window w, List<MetricPointDto> points) {

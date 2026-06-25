@@ -64,20 +64,20 @@ class PaymentsMigrationValidateIntegrationTest {
     @Test
     @Transactional
     void migrationsApplyAndTopUpEntityValidatesAgainstThem() {
-        // If the context started, Flyway applied V130 + V131 and Hibernate validated TopUp against the
+        // If the context started, Flyway applied V130 + V166 and Hibernate validated TopUp against the
         // migrated schema. A spot-check confirms the table exists and is queryable.
         Number topUps = (Number) em.createNativeQuery("SELECT count(*) FROM top_up").getSingleResult();
         assertThat(topUps.longValue()).isZero();
     }
 
     /**
-     * Proves V131 (REFUND/VOID addendum) applied: the two new columns exist and the widened status CHECK
-     * admits VOIDED/REFUNDED. If V131 had not run (or disagreed with the entity), the context would not have
+     * Proves V166 (REFUND/VOID addendum) applied: the two new columns exist and the widened status CHECK
+     * admits VOIDED/REFUNDED. If V166 had not run (or disagreed with the entity), the context would not have
      * started and this class would be red before reaching here.
      */
     @Test
     @Transactional
-    void v131RefundVoidColumnsAndConstraintExist() {
+    void v166RefundVoidColumnsAndConstraintExist() {
         // The two new columns are present (the context already validated the entity mapping against them).
         Number cols = (Number) em.createNativeQuery(
                         "SELECT count(*) FROM information_schema.columns "
@@ -86,7 +86,7 @@ class PaymentsMigrationValidateIntegrationTest {
                 .getSingleResult();
         assertThat(cols.intValue()).isEqualTo(2);
 
-        // The widened status CHECK admits a REFUNDED row (would violate ck_top_up_status if V131 had not run)
+        // The widened status CHECK admits a REFUNDED row (would violate ck_top_up_status if V166 had not run)
         // and the reversal-event-id binding (ck_top_up_reversal_event_id) is satisfied when set together.
         em.createNativeQuery(
                         "INSERT INTO top_up (public_id, version, buyer_id, wallet_owner_type, provider, "

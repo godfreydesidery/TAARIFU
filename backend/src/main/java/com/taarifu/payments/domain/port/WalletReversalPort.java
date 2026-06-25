@@ -12,9 +12,9 @@ import java.util.UUID;
  * <p>Responsibility: the mirror of {@link WalletCreditPort} — a single, narrow seam: "remove N convenience
  * tokens that a settled top-up added, idempotently, as a refund reversal". It exists so payments never
  * reaches into the tokens module's tables (ADR-0013): the production adapter delegates to the published
- * {@code tokens.api} refund method (a {@code REFUND}-type ledger entry that reverses the prior
- * {@code PURCHASE} credit); a logging stub adapter lets a tokens-less dev/CI context boot and the refund flow
- * be tested without the tokens module wired.</p>
+ * {@code tokens.api} {@code refund} method (a {@code REFUND}-type ledger entry that debits — reverses — the
+ * prior {@code PURCHASE} credit); a logging stub adapter lets a tokens-less dev/CI context boot and the
+ * refund flow be tested without the tokens module wired.</p>
  *
  * <p><b>🔒 Civic-integrity fence (binding — D18, PRD §23.5):</b> this port can do <b>exactly one</b> thing —
  * reverse convenience tokens a top-up added. It exposes <b>no</b> way to grant or revoke a role, a vote, a
@@ -23,11 +23,11 @@ import java.util.UUID;
  * never touches democratic weight — it only undoes the convenience top-up. The fence is the shape of this
  * interface: the reverse-top-up door exists; the democratic-weight door does not.</p>
  *
- * <p><b>CENTRAL NEED (ADR-0015 addendum):</b> the {@code tokens-api} adapter requires a published
- * {@code tokens.api.TokenLedgerApi.refund(WalletOwnerType, UUID, long, String)} method (a fence-safe
- * {@code REFUND}-type reversal of a prior {@code PURCHASE}, idempotent on the reversal reference). Until that
- * lands the logging stub is the active adapter and the refund flow is exercised end-to-end against this port
- * in tests.</p>
+ * <p><b>CENTRAL NEED (ADR-0015 addendum) — now satisfied:</b> the published
+ * {@code tokens.api.TokenLedgerApi.refund(WalletOwnerType, UUID, long, String reversalEventId, String reason)}
+ * method has landed (a fence-safe {@code REFUND}-type reversal of a prior {@code PURCHASE}, idempotent on the
+ * reversal reference). The {@code tokens-api} adapter now calls it directly (no reflection) and is the wired
+ * default; the logging stub remains only for a tokens-less dev/CI context.</p>
  */
 public interface WalletReversalPort {
 
@@ -43,8 +43,11 @@ public interface WalletReversalPort {
      * @param ownerId        the wallet owner's public id (opaque UUID).
      * @param tokenAmount    positive number of tokens to reverse (the amount the top-up originally credited).
      * @param idempotencyKey unique key for this reversal (the top-up's {@code reversal_event_id}).
+     * @param reason         a redacted machine reason for the reversal (e.g. {@code DUPLICATE_CHARGE}) recorded
+     *                       in the tokens ledger for audit; never PII.
      * @return {@code true} if a reversal was posted by this call; {@code false} if it was an idempotent replay
      *         (already reversed under this key) — both outcomes leave the wallet correctly reversed once.
      */
-    boolean reverseTopUp(WalletOwnerKind ownerType, UUID ownerId, long tokenAmount, String idempotencyKey);
+    boolean reverseTopUp(WalletOwnerKind ownerType, UUID ownerId, long tokenAmount, String idempotencyKey,
+                         String reason);
 }

@@ -10,27 +10,26 @@ import org.springframework.stereotype.Component;
 import java.util.UUID;
 
 /**
- * Default {@link WalletReversalPort} — logs a redacted reversal record and reverses nothing real (ADR-0015
- * addendum: REFUND/VOID; ARCHITECTURE.md §7). The <b>prod-bootable no-op</b> selected while the
- * {@code tokens.api} refund method (the CENTRAL NEED) is not yet wired, so the whole refund flow boots and is
- * testable with <b>zero cross-module wiring</b>.
+ * Opt-in {@link WalletReversalPort} — logs a redacted reversal record and reverses nothing real (ADR-0015
+ * addendum: REFUND/VOID; ARCHITECTURE.md §7). A <b>prod-bootable no-op</b> for a stripped dev/CI context that
+ * must boot the refund flow with <b>zero cross-module wiring</b> (the tokens module not present).
  *
- * <p>Responsibility: satisfies the port so {@code dev}/{@code test} and a no-config production context boot.
- * It records the reversal intent (owner kind, token amount, idempotency-key presence) and reports success,
- * but moves no real tokens. The refund aggregate transition, idempotency, and fence are all exercised against
- * this port in tests.</p>
+ * <p>Responsibility: satisfies the port so a tokens-less {@code dev}/{@code test} context boots. It records
+ * the reversal intent (owner kind, token amount, idempotency-key presence) and reports success, but moves no
+ * real tokens. The refund aggregate transition, idempotency, and fence are all exercised against this port in
+ * tests.</p>
  *
  * <p><b>🔒 Fence (D18):</b> like the real adapter, the only action available is "reverse convenience tokens";
  * there is no path to a role/vote/weight. The stub reverses nothing, which is the integrity-safe default.</p>
  *
- * <p><b>WHY {@code matchIfMissing = true}</b>: with no {@code taarifu.payments.wallet-reversal.adapter} set,
- * this is the one active bean; the real {@code TokensApiWalletReversalAdapter} is selected only by
- * {@code adapter=tokens-api}, and the two are mutually exclusive on the property so exactly one
- * {@link WalletReversalPort} bean exists in every environment.</p>
+ * <p><b>WHY no {@code matchIfMissing}</b>: now that {@code tokens.api.TokenLedgerApi.refund(...)} has landed,
+ * the real {@code TokensApiWalletReversalAdapter} is the wired default ({@code matchIfMissing = true} on
+ * {@code adapter=tokens-api}). This stub is selected only by an explicit
+ * {@code taarifu.payments.wallet-reversal.adapter=logging}; the two are mutually exclusive on the property so
+ * exactly one {@link WalletReversalPort} bean exists in every environment (mirrors the wallet-credit pair).</p>
  */
 @Component
-@ConditionalOnProperty(name = "taarifu.payments.wallet-reversal.adapter", havingValue = "logging",
-        matchIfMissing = true)
+@ConditionalOnProperty(name = "taarifu.payments.wallet-reversal.adapter", havingValue = "logging")
 public class LoggingWalletReversalStub implements WalletReversalPort {
 
     private static final Logger log = LoggerFactory.getLogger(LoggingWalletReversalStub.class);
@@ -42,11 +41,12 @@ public class LoggingWalletReversalStub implements WalletReversalPort {
      * @param ownerId        wallet owner public id.
      * @param tokenAmount    tokens that would be reversed.
      * @param idempotencyKey reversal idempotency key.
+     * @param reason         redacted machine reason (logged only; never PII).
      * @return {@code true} (a stub always "succeeds" so the REFUNDED transition completes in tests).
      */
     @Override
     public boolean reverseTopUp(WalletOwnerKind ownerType, UUID ownerId, long tokenAmount,
-                                String idempotencyKey) {
+                                String idempotencyKey, String reason) {
         log.info("StubWalletReversal: refund reversal recorded (no real tokens moved); ownerType={}, "
                         + "tokenAmount={}, idemKeyPresent={}",
                 ownerType, tokenAmount, idempotencyKey != null);

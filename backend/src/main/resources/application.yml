@@ -263,12 +263,14 @@ taarifu:
     wallet-credit:
       adapter: ${TAARIFU_PAYMENTS_WALLET_CREDIT_ADAPTER:tokens-api}
     # Which WalletReversalPort adapter REVERSES a refunded top-up from the buyer's wallet (ADR-0015 addendum).
-    # 'logging' (default): LoggingWalletReversalStub — records the reversal intent, moves NO real tokens. This
-    #   stays the default until the tokens module publishes a fence-safe tokens.api REFUND method (CENTRAL NEED).
-    # 'tokens-api': TokensApiWalletReversalAdapter → the fence-safe tokens.api REFUND reversal (D18 — reverses
-    #   convenience tokens only, never democratic weight). Select only once that method has landed.
+    # 'tokens-api' (default): TokensApiWalletReversalAdapter → the typed, fence-safe tokens.api
+    #   TokenLedgerApi.refund(...) REFUND debit reversing the prior PURCHASE credit (the real reversal; D18 —
+    #   reverses convenience tokens only, never democratic weight). This is now the wired default since the
+    #   typed refund method has landed (CENTRAL NEED satisfied).
+    # 'logging': LoggingWalletReversalStub — records the reversal intent and moves NO real tokens; use only for
+    #   a stripped dev/CI context that must boot without the tokens module wired. Exactly one bean is active.
     wallet-reversal:
-      adapter: ${TAARIFU_PAYMENTS_WALLET_REVERSAL_ADAPTER:logging}
+      adapter: ${TAARIFU_PAYMENTS_WALLET_REVERSAL_ADAPTER:tokens-api}
     # Scheduled settlement reconciliation job (ADR-0015 addendum; PRD §23.5). Re-checks stale non-terminal
     # top-ups against the provider (never trust-the-callback) and expires ones stuck past expire-after. Gated
     # by 'enabled' (mirrors the outbox relay toggle) so it can be paused/pinned/disabled in a test. All values

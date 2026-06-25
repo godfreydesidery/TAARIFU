@@ -72,6 +72,26 @@ class TokenLedgerApiImplTest {
         verifyNoInteractions(meteringService);
     }
 
+    /** {@code refund} delegates a fence-safe REFUND reversal, idempotent on the reversal id, and never meters. */
+    @Test
+    void refund_delegatesFenceSafeReversal() {
+        TokenTransaction reversed = TokenTransaction.Builder
+                .of(new Wallet(WalletOwnerType.USER, accountId), TokenTransactionType.REFUND, 100)
+                .balanceAfter(0)
+                .idempotencyKey("REV-EVT-1")
+                .build();
+        when(walletService.refund(WalletOwnerType.USER, accountId, 100, "REV-EVT-1", "DUPLICATE_CHARGE"))
+                .thenReturn(reversed);
+
+        boolean result = api.refund(WalletOwnerType.USER, accountId, 100, "REV-EVT-1", "DUPLICATE_CHARGE");
+
+        assertThat(result).isTrue();
+        verify(walletService).refund(eq(WalletOwnerType.USER), eq(accountId), eq(100L), eq("REV-EVT-1"),
+                eq("DUPLICATE_CHARGE"));
+        // 🔒 FENCE: a refund never touches the metering (spend) side — no balance is read for any action.
+        verifyNoInteractions(meteringService);
+    }
+
     /**
      * 🔒 FENCE (D18, PRD §23.5): the published {@link TokenLedgerApi} contract exposes ONLY the
      * convenience-credit/metering doors — there is NO method through which a binding democratic action could
@@ -92,7 +112,8 @@ class TokenLedgerApiImplTest {
                     .doesNotContain("sign")
                     .doesNotContain("rate");
         }
-        // The contract is exactly: meter (convenience spend), reward (capped earn), topUp (purchase credit).
-        assertThat(TokenLedgerApi.class.getDeclaredMethods()).hasSize(3);
+        // The contract is exactly: meter (convenience spend), reward (capped earn), topUp (purchase credit),
+        // refund (purchase reversal — a REFUND debit). All convenience-side; none reads/gates on a balance.
+        assertThat(TokenLedgerApi.class.getDeclaredMethods()).hasSize(4);
     }
 }

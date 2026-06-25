@@ -1,8 +1,10 @@
 -- =============================================================================
--- V131__payments_top_up_refund_void.sql  —  Phase-2 Wave-2: REFUND/VOID support
+-- V166__payments_top_up_refund_void.sql  —  Phase-2 Wave-2: REFUND/VOID support
 --   for the mobile-money TOP-UP lifecycle (payments module, ADR-0015 addendum,
 --   "Revisit trigger (b) refunds/chargebacks"; PRD §23.5, §18, D18).
---   Flyway block V130–V139 reserved for the payments module (ADR-0015 §1).
+--   Numbered V166 (ABOVE the released tail V154): a payments-block number like V131 would
+--   sit BELOW the already-applied wave-1 migrations V140–V154 and fail as an out-of-order
+--   migration on any DB that ran the release. Forward-only ordering is by global version, not module.
 --
 -- Responsibility: extend top_up so a SETTLED top-up can be reversed (refund) and
 -- an UN-SETTLED attempt can be cancelled (void), each idempotently and audited:

@@ -86,8 +86,9 @@ public class RefundService {
 
         // Stable, per-top-up reversal idempotency key → the ledger reverses exactly once even on retry.
         UUID reversalKey = UUID.nameUUIDFromBytes(("topup-reversal:" + topUp.getPublicId()).getBytes());
+        // The (non-PII) machine reason is threaded to the tokens ledger so the REFUND entry is self-explaining.
         walletReversal.reverseTopUp(topUp.getWalletOwnerType(), topUp.getBuyerId(),
-                topUp.getTokenAmount(), reversalKey.toString());
+                topUp.getTokenAmount(), reversalKey.toString(), reason);
 
         topUp.markRefunded(reversalKey, reason);
         TopUp saved = topUps.save(topUp);

@@ -81,8 +81,10 @@ class RefundServiceTest {
         assertThat(result.getStatus()).isEqualTo(TopUpStatus.REFUNDED);
         assertThat(result.getReversalEventId()).isNotNull();
         assertThat(result.getReversalReason()).isEqualTo("DUPLICATE_CHARGE");
-        // 🔒 FENCE: the ONE effect is a convenience-token reversal of exactly the purchased token amount.
-        verify(walletReversal).reverseTopUp(eq(WalletOwnerKind.USER), eq(buyerId), eq(100L), anyString());
+        // 🔒 FENCE: the ONE effect is a convenience-token reversal of exactly the purchased token amount,
+        // carrying the (non-PII) audit reason; no democratic-weight path exists in the collaborator set.
+        verify(walletReversal).reverseTopUp(eq(WalletOwnerKind.USER), eq(buyerId), eq(100L), anyString(),
+                eq("DUPLICATE_CHARGE"));
     }
 
     /** The reversal uses a stable per-top-up key so a retried refund reverses the wallet exactly once. */
@@ -96,7 +98,8 @@ class RefundServiceTest {
         service.refund(id, "ADMIN");
 
         ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
-        verify(walletReversal, times(1)).reverseTopUp(any(), any(), anyLong(), keyCaptor.capture());
+        verify(walletReversal, times(1)).reverseTopUp(any(), any(), anyLong(), keyCaptor.capture(),
+                anyString());
         UUID expected = UUID.nameUUIDFromBytes(("topup-reversal:" + id).getBytes());
         assertThat(keyCaptor.getValue()).isEqualTo(expected.toString());
     }

@@ -22,12 +22,20 @@ import com.taarifu.responders.domain.model.enums.AssignmentRole;
 import com.taarifu.responders.domain.model.enums.CoverageType;
 import com.taarifu.responders.domain.model.enums.OrganisationType;
 import com.taarifu.responders.domain.model.enums.ResponderType;
+import com.taarifu.responders.api.dto.CreateOrganisationRequest;
+import com.taarifu.responders.api.dto.OrganisationDto;
+import com.taarifu.responders.domain.model.enums.OrganisationStatus;
 import com.taarifu.responders.domain.repository.OrganisationRepository;
 import com.taarifu.responders.domain.repository.ResponderAssignmentRepository;
 import com.taarifu.responders.domain.repository.ResponderRepository;
 import com.taarifu.responders.domain.repository.RoutingRuleRepository;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -64,6 +72,7 @@ class ResponderAdminServiceTest {
     private ScopeGuard scopeGuard;
     private AuditEventService audit;
     private OutboxWriter outboxWriter;
+    private SearchIndexApi searchIndexApi;
     private ResponderAdminService service;
 
     private final UUID reportId = UUID.randomUUID();
@@ -85,10 +94,12 @@ class ResponderAdminServiceTest {
         scopeGuard = mock(ScopeGuard.class);
         audit = mock(AuditEventService.class);
         outboxWriter = mock(OutboxWriter.class);
+        searchIndexApi = mock(SearchIndexApi.class);
         ClockPort clock = () -> Instant.parse("2026-06-23T09:00:00Z");
         service = new ResponderAdminService(organisationRepository, responderRepository,
                 routingRuleRepository, assignmentRepository, reportQueryApi, issueCategoryQueryApi,
-                reportLifecycleApi, scopeGuard, audit, new ResponderMapper(), clock, outboxWriter);
+                reportLifecycleApi, scopeGuard, audit, new ResponderMapper(), clock, outboxWriter,
+                searchIndexApi);
 
         Organisation org = Organisation.create("TANESCO", OrganisationType.PARASTATAL);
         responder = Responder.create(org, "TANESCO — Kilimanjaro", ResponderType.UTILITY,
@@ -208,6 +219,67 @@ class ResponderAdminServiceTest {
         verify(assignmentRepository, never()).save(any());
         // The report check runs first — the responder is never even looked up.
         verify(responderRepository, never()).findByPublicId(any());
+    }
+
+    // --- search indexing (ADR-0017 §1): the public provider directory into discovery ---
+
+    @Test
+    void createOrganisation_pushesStaffOnlyDocument_becauseNewOrgIsPendingUnverified() {
+        when(organisationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        CreateOrganisationRequest req = new CreateOrganisationRequest(
+                "TANESCO", OrganisationType.PARASTATAL, null, null, null);
+
+        OrganisationDto dto = service.createOrganisation(req);
+
+        // A freshly-created org is PENDING + unverified (NOT publicly listable), so it is indexed STAFF-only —
+        // it must never surface to a guest before verification (§24.4 anti-spoofing). The title is the public
+        // name, the type is a keyword facet, and NO PII / no author is indexed. Fails if create→index is
+        // dropped or maps a non-listable org to PUBLIC.
+        assertThat(dto.name()).isEqualTo("TANESCO");
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndexApi).upsert(captor.capture());
+        SearchDocumentUpsert pushed = captor.getValue();
+        assertThat(pushed.entityType()).isEqualTo(SearchEntityType.ORGANISATION);
+        assertThat(pushed.title()).isEqualTo("TANESCO");
+        assertThat(pushed.keywords()).isEqualTo("PARASTATAL");
+        assertThat(pushed.visibility()).isEqualTo(SearchVisibility.STAFF);
+        assertThat(pushed.authoredByAccountId()).isNull();
+    }
+
+    @Test
+    void verifyActiveOrganisation_flipsItPublicInDiscovery() {
+        // An ACTIVE-but-unverified org becomes publicly listable once verified (§24.4) — verification must
+        // re-push it as PUBLIC so it appears in discovery. This fails the moment the verify→index call is
+        // removed, or the visibility no longer mirrors isPubliclyListable().
+        UUID orgId = UUID.randomUUID();
+        Organisation org = Organisation.create("CRDB Bank", OrganisationType.PRIVATE_COMPANY);
+        org.changeStatus(OrganisationStatus.ACTIVE);
+        when(organisationRepository.findByPublicId(orgId)).thenReturn(Optional.of(org));
+
+        service.setOrganisationVerified(orgId, true);
+
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndexApi).upsert(captor.capture());
+        assertThat(captor.getValue().visibility()).isEqualTo(SearchVisibility.PUBLIC);
+    }
+
+    @Test
+    void unverifyOrganisation_dropsItToStaffOnly_notRemoved() {
+        // Un-verifying a previously-public org must immediately drop it out of public discovery (§24.4). We
+        // re-push it STAFF-only (an idempotent visibility flip) rather than removing the row, so it is
+        // re-listable on re-verification. Fails if un-verify keeps it PUBLIC or calls remove().
+        UUID orgId = UUID.randomUUID();
+        Organisation org = Organisation.create("CRDB Bank", OrganisationType.PRIVATE_COMPANY);
+        org.changeStatus(OrganisationStatus.ACTIVE);
+        org.setVerified(true);
+        when(organisationRepository.findByPublicId(orgId)).thenReturn(Optional.of(org));
+
+        service.setOrganisationVerified(orgId, false);
+
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndexApi).upsert(captor.capture());
+        assertThat(captor.getValue().visibility()).isEqualTo(SearchVisibility.STAFF);
+        verify(searchIndexApi, never()).remove(any(), any());
     }
 
     @Test

@@ -28,5 +28,17 @@
  * no projects module/port exists; that remains a documented {@code // TODO(wiring)}.) Only
  * {@code com.taarifu.common}, {@code com.taarifu.geography}, and {@code com.taarifu.identity} (the merged
  * upstream) plus published api ports may be imported.</p>
+ *
+ * <p><b>Published-port contributions (ADR-0013 §4c / ADR-0018):</b> accountability owns the only flaggable
+ * free text in its surface — a {@code Rating}'s optional comment (US-6.2, moderated downstream) — so it
+ * <b>implements</b> moderation's published {@code moderation.api.SubjectContentQueryApi} for
+ * {@code FlagSubjectType.RATING} ({@code RatingSubjectContentQuery}), surfacing that comment transiently to
+ * moderation's auto-assist scorer. This is a feature→foundation {@code api → api} dependency (moderation
+ * owns the interface; accountability provides the impl — dependency inversion, no cycle); the comment is
+ * never persisted or logged by moderation (PRD §18, PDPA). Accountability is <b>not</b> a search index
+ * producer: a rating/promise has no {@code SearchEntityType} (it is a binding civic action / moderated
+ * comment, not a public directory entity), so nothing here pushes to {@code search.api.SearchIndexApi} —
+ * the directory entities that are indexed (representatives, organisations) are owned by institutions and
+ * responders respectively.</p>
  */
 package com.taarifu.accountability;

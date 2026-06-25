@@ -1,6 +1,7 @@
 package com.taarifu.payments.infrastructure.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 import java.time.Duration;
 
@@ -48,7 +49,16 @@ public record PaymentsGatewayProperties(
     /**
      * Applies safe defaults so a no-config (dev/test/no-profile prod) context boots on the logging stub with
      * zero secrets and no external calls.
+     *
+     * <p><b>WHY {@code @ConstructorBinding} here:</b> this record has a <i>second</i> constructor (the
+     * backward-compatible seven-arg overload below). Spring Boot constructor binding requires exactly one
+     * candidate; with more than one constructor the intended binding constructor MUST be marked, otherwise the
+     * binder finds no unambiguous constructor and a record (no default constructor) fails to instantiate —
+     * which would fail the WHOLE application context at startup, not just the payments slice. Annotating the
+     * canonical (compact) constructor pins binding to the full eight-property form; the overload stays a
+     * plain programmatic convenience the binder ignores.</p>
      */
+    @ConstructorBinding
     public PaymentsGatewayProperties {
         if (provider == null || provider.isBlank()) {
             provider = "logging";

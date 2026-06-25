@@ -3,9 +3,11 @@ package com.taarifu.ussd;
 import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.ussd.api.dto.UssdGatewayRequest;
 import com.taarifu.ussd.api.dto.UssdGatewayResponse;
+import com.taarifu.ussd.application.port.UssdGeographyPort;
 import com.taarifu.ussd.application.port.UssdIdentityPort;
 import com.taarifu.ussd.application.port.UssdReportingPort;
 import com.taarifu.ussd.application.port.UssdSmsSender;
+import com.taarifu.ussd.application.port.UssdSubscriptionPort;
 import com.taarifu.ussd.application.service.UssdAlertService;
 import com.taarifu.ussd.application.service.UssdMenuMachine;
 import com.taarifu.ussd.application.service.UssdSessionStore;
@@ -43,6 +45,8 @@ class UssdMenuMachineTest {
     private FakeAlertRepo alertRepo;
     private FakeIdentity identity;
     private FakeReporting reporting;
+    private FakeGeography geography;
+    private RecordingSubscriptions subscriptions;
     private RecordingSms sms;
     private UssdMenuMachine machine;
 
@@ -57,9 +61,13 @@ class UssdMenuMachineTest {
         UssdSessionStore store = new UssdSessionStore(sessionRepo, clock);
         identity = new FakeIdentity();
         reporting = new FakeReporting();
+        geography = new FakeGeography();
+        subscriptions = new RecordingSubscriptions();
         sms = new RecordingSms();
-        UssdAlertService alertService = new UssdAlertService(alertRepo);
-        machine = new UssdMenuMachine(store, identity, reporting, alertService, sms);
+        // forwardEnabled = false (the default) — area-alert intent is captured locally; the forward to
+        // communications stays gated on the account→profile grain CENTRAL NEED (ADR-0019 §1b).
+        UssdAlertService alertService = new UssdAlertService(alertRepo, subscriptions, false);
+        machine = new UssdMenuMachine(store, identity, reporting, geography, alertService, sms);
     }
 
     /** A fresh dialogue (no/empty text) shows the language prompt and links the MSISDN account. */
@@ -101,7 +109,7 @@ class UssdMenuMachineTest {
         assertThat(sms.sent.get(0).body()).contains(f.ticket());
     }
 
-    /** Picking "2. enter ward code" accepts a typed ward UUID and files against it. */
+    /** Picking "2. enter ward code" accepts a typed ward UUID and files against it (back-compat). */
     @Test
     void fileReport_withTypedWardCode_filesAgainstThatWard() {
         UUID typedWard = UUID.randomUUID();
@@ -117,6 +125,46 @@ class UssdMenuMachineTest {
         assertThat(done.terminal()).isTrue();
         assertThat(reporting.filed).hasSize(1);
         assertThat(reporting.filed.get(0).wardId()).isEqualTo(typedWard);
+    }
+
+    /**
+     * A7 (ADR-0019): a citizen types a friendly <b>ward code</b> (not a UUID); it resolves via geography's
+     * published ward-by-code lookup and the report files against the resolved ward. This is the realistic
+     * feature-phone input (a short Kata code, never a 36-char UUID).
+     */
+    @Test
+    void fileReport_withFriendlyWardCode_resolvesViaGeography_andFiles() {
+        UUID resolvedWard = UUID.randomUUID();
+        geography.byCode.put("KATA01", resolvedWard); // case-insensitive in the real port; fake matches as typed
+
+        hit("");
+        hit("1");
+        hit("1*1");
+        hit("1*1*1");                       // -> FILE_AREA_CHOICE
+        hit("1*1*1*2");                     // enter ward code -> FILE_AREA_PICK
+        hit("1*1*1*2*KATA01");              // typed ward CODE -> FILE_DESCRIPTION
+        hit("1*1*1*2*KATA01*Taa za barabarani"); // -> FILE_CONFIRM
+        UssdGatewayResponse done = hit("1*1*1*2*KATA01*Taa za barabarani*1");
+
+        assertThat(done.terminal()).isTrue();
+        assertThat(reporting.filed).hasSize(1);
+        assertThat(reporting.filed.get(0).wardId()).isEqualTo(resolvedWard);
+        // The code (not a UUID) was resolved through the geography port.
+        assertThat(geography.queried).contains("KATA01");
+    }
+
+    /** An unrecognised ward code (neither a UUID nor a known code) re-prompts, does not advance. */
+    @Test
+    void fileReport_withUnknownWardCode_reprompts() {
+        hit("");
+        hit("1");
+        hit("1*1");
+        hit("1*1*1");
+        hit("1*1*1*2");                     // enter ward code -> FILE_AREA_PICK
+        UssdGatewayResponse r = hit("1*1*1*2*NOPE"); // unknown code -> still FILE_AREA_PICK
+
+        assertThat(r.terminal()).isFalse();
+        assertThat(reporting.filed).isEmpty();
     }
 
     /** Confirm = 2 cancels without filing. */
@@ -413,6 +461,29 @@ class UssdMenuMachineTest {
         }
 
         record Sent(String to, String body, String key) {
+        }
+    }
+
+    /** Fake geography port: resolves a friendly ward code to a ward id from a fixed map (A7). */
+    private static final class FakeGeography implements UssdGeographyPort {
+        private final Map<String, UUID> byCode = new HashMap<>();
+        private final List<String> queried = new ArrayList<>();
+
+        @Override
+        public Optional<UUID> wardIdByCode(String wardCode) {
+            queried.add(wardCode);
+            return Optional.ofNullable(byCode.get(wardCode));
+        }
+    }
+
+    /** Records area-subscription forwards (default forwarding is OFF, so this stays empty in these tests). */
+    private static final class RecordingSubscriptions implements UssdSubscriptionPort {
+        private final List<UUID[]> forwarded = new ArrayList<>();
+
+        @Override
+        public UUID subscribeArea(UUID subscriberProfilePublicId, UUID wardPublicId) {
+            forwarded.add(new UUID[]{subscriberProfilePublicId, wardPublicId});
+            return UUID.randomUUID();
         }
     }
 }

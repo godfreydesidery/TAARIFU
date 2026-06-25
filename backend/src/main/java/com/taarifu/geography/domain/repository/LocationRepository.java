@@ -29,6 +29,26 @@ public interface LocationRepository extends JpaRepository<Location, Long> {
     Optional<Location> findByPublicId(UUID publicId);
 
     /**
+     * Resolves a location's <b>public id</b> by its official administrative {@code code} restricted to a given
+     * level — backing {@code geography.api.WardCodeQueryApi} for the USSD "enter a ward code" step (A7,
+     * ADR-0019, PRD §9.0/§14).
+     *
+     * <p>WHY a projection of the {@code publicId} only (not the whole {@link Location}): the cross-module ward
+     * lookup needs the public id and nothing else, so returning a bare {@code UUID} keeps the entity from being
+     * loaded and from ever leaking past the published port (boundary discipline, CLAUDE.md §8). The match is
+     * <b>case-insensitive</b> on {@code code} (a feature-phone user may type any case) and pinned to
+     * {@code type} so only a ward code resolves to a ward — a region/district code can never be mistaken for a
+     * ward at the minimum pin granularity. Soft-deleted rows are excluded by the entity's {@code @SQLRestriction};
+     * the {@code unique} index on {@code code} makes this an index-friendly single-row read.</p>
+     *
+     * @param code the official administrative code, already trimmed (compared case-insensitively).
+     * @param type the required hierarchy level (e.g. {@link LocationType#WARD}).
+     * @return the matching location's public id, or empty if none/soft-deleted.
+     */
+    @Query("SELECT l.publicId FROM Location l WHERE lower(l.code) = lower(:code) AND l.type = :type")
+    Optional<UUID> findPublicIdByCodeAndType(@Param("code") String code, @Param("type") LocationType type);
+
+    /**
      * Lists all locations at a given level, paged.
      *
      * @param type     the hierarchy level (e.g. {@link LocationType#REGION}).

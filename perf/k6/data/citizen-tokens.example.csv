@@ -1,0 +1,18 @@
+# Taarifu perf — citizen bearer-token pool (EXAMPLE).
+#
+# One access token per line. Each MUST belong to a DISTINCT >= T2 account, because
+# filing a report is T2-gated (ReportController @RequiresTier("T2")). A fresh T1
+# signup CANNOT file — so do NOT put T1 tokens here.
+#
+# Lines starting with '#' and blank lines are ignored.
+#
+# Generate these with the seeding step (see perf/README.md "Seeding"):
+#   - In a NON-production env, mint N citizen accounts, raise each to T2, and
+#     write each account's access token on its own line.
+#
+# Copy this file to citizen-tokens.csv (gitignored) and fill it with REAL tokens.
+# NEVER commit real tokens (CLAUDE.md §12: no secrets in source).
+#
+# eyJhbGciOiJIUzI1NiJ9.aaaaaaaa.signature1
+# eyJhbGciOiJIUzI1NiJ9.bbbbbbbb.signature2
+# eyJhbGciOiJIUzI1NiJ9.cccccccc.signature3

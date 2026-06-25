@@ -230,6 +230,16 @@ taarifu:
       from: ${TAARIFU_EMAIL_FROM:}                    # SPF/DKIM/DMARC-aligned sender address (provider=smtp)
       from-name: ${TAARIFU_EMAIL_FROM_NAME:Taarifu}   # optional From display name
       reply-to: ${TAARIFU_EMAIL_REPLY_TO:}            # optional Reply-To address
+    # Scheduled area-activity DIGEST (PRD §13 "digest", EI-6, M5). The @Scheduled DigestService bean ONLY
+    # exists when enabled=true (the bean is gated by @ConditionalOnProperty) — so it never races tests and
+    # is owned by exactly ONE deployment instance. The digest is a lean FEED-only nudge (count, not the
+    # items) — it never charges SMS. cron/zone tune the cadence (daily default; set a weekly cron for weekly).
+    digest:
+      enabled: ${TAARIFU_DIGEST_ENABLED:false}                      # OFF by default; one deployment opts in
+      cron: ${TAARIFU_DIGEST_CRON:0 0 7 * * *}                      # 07:00 daily (local); e.g. '0 0 7 * * MON' weekly
+      zone: ${TAARIFU_DIGEST_ZONE:Africa/Dar_es_Salaam}            # cron is local time (EAT), not UTC
+      lookback: ${TAARIFU_DIGEST_LOOKBACK:1d}                       # window = (now-lookback, now]; 7d for weekly
+      batch-size: ${TAARIFU_DIGEST_BATCH_SIZE:500}                  # recipient page size as the run streams followers
 
   # Moderation auto-assist (US-12.3, EI-18, D-Q8; ADR-0018). The content-safety scorer is pluggable and
   # SAFE-BY-DEFAULT: 'heuristic' (default) is the in-house Swahili+English heuristic that runs with ZERO

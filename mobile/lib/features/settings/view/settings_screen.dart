@@ -76,6 +76,34 @@ class SettingsScreen extends StatelessWidget {
                 subtitle: Text(l10n.settingsDataSaverSubtitle),
               ),
               const Divider(),
+              // --- Appearance (theme) ---------------------------------------
+              _SectionHeader(title: l10n.settingsAppearanceHeader),
+              RadioGroup<ThemeMode>(
+                groupValue: settings.themeMode,
+                onChanged: (v) {
+                  if (v != null) cubit.setThemeMode(v);
+                },
+                child: Column(
+                  children: [
+                    RadioListTile<ThemeMode>(
+                      value: ThemeMode.system,
+                      title: Text(l10n.settingsThemeSystem),
+                      secondary: const Icon(Icons.brightness_auto_outlined),
+                    ),
+                    RadioListTile<ThemeMode>(
+                      value: ThemeMode.light,
+                      title: Text(l10n.settingsThemeLight),
+                      secondary: const Icon(Icons.light_mode_outlined),
+                    ),
+                    RadioListTile<ThemeMode>(
+                      value: ThemeMode.dark,
+                      title: Text(l10n.settingsThemeDark),
+                      secondary: const Icon(Icons.dark_mode_outlined),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
               // --- Account --------------------------------------------------
               ListTile(
                 leading: Icon(

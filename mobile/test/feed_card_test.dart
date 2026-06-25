@@ -121,6 +121,46 @@ void main() {
       expect(tapped, isTrue);
     });
 
+    testWidgets('a petition card shows the inline Sign CTA when onAct is wired', (
+      tester,
+    ) async {
+      var acted = false;
+      const item = FeedItem(
+        id: 'p1',
+        title: 'Ombi la barabara',
+        snippet: 'Saini.',
+        kind: FeedItemKind.petition,
+      );
+      await _pumpCard(
+        tester,
+        FeedCard(item: item, onTap: () {}, onAct: () => acted = true),
+      );
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(FeedCard)),
+      );
+      // The inline CTA replaces "read more" for an actionable kind.
+      expect(find.text(l10n.feedActionSign), findsOneWidget);
+      expect(find.text(l10n.feedReadMore), findsNothing);
+      await tester.tap(find.text(l10n.feedActionSign));
+      expect(acted, isTrue);
+    });
+
+    testWidgets('an announcement card shows read-more, not a CTA', (
+      tester,
+    ) async {
+      const item = FeedItem(id: 'a1', title: 'T', snippet: 'S');
+      await _pumpCard(
+        tester,
+        FeedCard(item: item, onTap: () {}, onAct: () {}),
+      );
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(FeedCard)),
+      );
+      // A non-actionable kind ignores onAct and keeps read-more.
+      expect(find.text(l10n.feedReadMore), findsOneWidget);
+      expect(find.text(l10n.feedActionSign), findsNothing);
+    });
+
     testWidgets('data-saver suppresses the cover image (PRD §15)', (
       tester,
     ) async {

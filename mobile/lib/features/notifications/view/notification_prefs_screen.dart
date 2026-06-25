@@ -48,22 +48,75 @@ class NotificationPrefsScreen extends StatelessWidget {
                 onRetry: () => context.read<NotificationPrefsCubit>().load(),
               );
             case NotificationPrefsStatus.loaded:
-              if (state.prefs.isEmpty) {
-                return EmptyView(
-                  message: l10n.prefsEmpty,
-                  icon: Icons.tune,
-                );
-              }
-              return ListView.builder(
+              return ListView(
                 padding: const EdgeInsets.all(8),
-                itemCount: state.prefs.length,
-                itemBuilder: (context, i) => _PrefTile(
-                  pref: state.prefs[i],
-                  saving: state.savingId == state.prefs[i].id,
-                ),
+                children: [
+                  const _PushDeviceCard(),
+                  if (state.prefs.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 24,
+                      ),
+                      child: Text(
+                        l10n.prefsEmpty,
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    )
+                  else
+                    for (final pref in state.prefs)
+                      _PrefTile(
+                        pref: pref,
+                        saving: state.savingId == pref.id,
+                      ),
+                ],
               );
           }
         },
+      ),
+    );
+  }
+}
+
+/// A small card explaining the device's push-registration state. Push (FCM) is
+/// a seam (not wired in this build — PRD §15 data budget), so this honestly says
+/// instant alerts aren't enabled and the platform falls back to SMS (US-5.1) —
+/// the device-token registration scaffolding is in place (`/notification-tokens`)
+/// and registers automatically once a real FCM token is available.
+class _PushDeviceCard extends StatelessWidget {
+  const _PushDeviceCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return Card(
+      margin: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.smartphone_outlined, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    l10n.prefsPushHeader,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    l10n.prefsPushUnavailableNote,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -27,11 +27,19 @@ import '../data/profile_models.dart';
 /// The profile/verification view.
 class ProfileScreen extends StatefulWidget {
   /// Creates the screen over the shared [geographyRepository] (for the ward
-  /// picker used when adding a location pin).
-  const ProfileScreen({required this.geographyRepository, super.key});
+  /// picker used when adding a location pin). [onOpenDataRights] opens the PDPA
+  /// data-request (export/deletion) screen.
+  const ProfileScreen({
+    required this.geographyRepository,
+    this.onOpenDataRights,
+    super.key,
+  });
 
   /// Civic-geography reads backing the manual ward picker.
   final GeographyRepository geographyRepository;
+
+  /// Opens the PDPA data-request screen, or `null` if not provided.
+  final VoidCallback? onOpenDataRights;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -140,6 +148,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _verifySection(context, l10n, me, busy),
         const Divider(height: 32),
         _locationsSection(context, l10n, busy),
+        if (widget.onOpenDataRights != null) ...[
+          const Divider(height: 32),
+          _dataRightsSection(context, l10n),
+        ],
+      ],
+    );
+  }
+
+  /// The PDPA data-rights entry: a short explainer + a button into the DSR screen
+  /// (export my data / request deletion) — PRD §18, §25.1.
+  Widget _dataRightsSection(BuildContext context, AppLocalizations l10n) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          l10n.profileDataRightsHeader,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          l10n.profileDataRightsSubtitle,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: widget.onOpenDataRights,
+          icon: const Icon(Icons.privacy_tip_outlined),
+          label: Text(l10n.profileDataRightsButton),
+        ),
       ],
     );
   }

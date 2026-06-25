@@ -26,7 +26,12 @@
  * §25.8 {@code SeverityPolicy} SLA chain) and emits an {@code auto_moderation_triaged} fact. It is <b>assist
  * only — it never auto-removes</b> (R21): only the D16-guarded human action path can take a takedown, and when
  * no provider scores anything everything routes to human moderators (EI-18 degradation). The human pipeline is
- * always the floor.</p>
+ * always the floor. The screen is <b>wired into the flag path</b> ({@code FlagService}): when a citizen flag
+ * raises a queue item, the flagged content is scored and the item is auto-marked/escalated for a human —
+ * the scorable text is fetched via the owner's published {@code SubjectContentQueryApi} (the same registry
+ * pattern as the author lookup), and when no owner publishes a content port the screen is simply skipped (the
+ * flag still raises a human-reviewed item). Auto-assist screening on content <i>create</i> (before any flag)
+ * and the §25.3 sensitive-report pre-routing hold remain {@code // TODO(wiring)} for those owners to call in.</p>
  *
  * <p><b>Transparency reporting (§18, §25, M-Phase 3; ADR-0018):</b> {@code TransparencyReportService} +
  * {@code GET /moderation/transparency} aggregate moderation's own (append-only, tamper-evident) tables into a

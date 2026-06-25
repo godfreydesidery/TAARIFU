@@ -11,11 +11,14 @@ package com.taarifu.analytics.api;
  * {@link RecordEventCommand#eventId} so a replayed/duplicated outbox emission is a no-op (no double-count,
  * Appendix E.0/E.3).</p>
  *
- * <p><b>Where this is called from (live emission — {@code // TODO(wiring)}):</b> per ADR-0013 §2, analytics
- * is an event-driven sink fed by the transactional outbox (the same source as feed/notification fan-out).
- * That outbox increment is <b>not yet built</b>, so sibling modules wire their emission to this port later;
- * each emission site is marked {@code // TODO(wiring)} until then. This module ships the contract + the
- * idempotent recorder + the aggregation read surface now, so emission can land independently.</p>
+ * <p><b>Where this is called from (live emission):</b> per ADR-0013 §2, analytics is an event-driven sink fed
+ * by the transactional outbox (the same source as feed/notification fan-out). That outbox increment is now
+ * <b>built and wired</b>: sibling modules (reporting, identity, engagement, moderation, responders) append a
+ * {@code CivicActivityRecorded} fact to the outbox inside their own write transactions, off the citizen path,
+ * and {@code AnalyticsEventHandler} consumes the {@code CIVIC_ACTIVITY_RECORDED} taxonomy key on the relay and
+ * records it here idempotently. No caller invokes this port inline on a critical path. PHASE-3: the long-tail
+ * Appendix E catalogue rows not yet emitted (e.g. {@code feed_item_viewed}, {@code search_performed}) land
+ * additively when their owner modules emit them — this contract and the handler already accept them.</p>
  *
  * <p><b>🔒 No PII (Appendix E.4, binding — §18/PDPA):</b> the only identity this API accepts is the
  * pseudonymous {@code actorRef} on the command; there is no method or field through which a name, phone,

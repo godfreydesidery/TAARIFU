@@ -42,7 +42,10 @@ import java.util.UUID;
  * <b>moderation-hold for new authors</b> (US-4.1) is computed here from the caller's roles: a privileged
  * author ({@code ADMIN}/{@code ROOT}/established official/representative) is trusted and publishes
  * immediately; any other authorised author is <b>held for moderation</b>. This is a deliberately
- * conservative default — trust is widened later by author reputation (TODO(wiring): reputation source).</p>
+ * conservative default — trust is widened later by author reputation. CROSS-MODULE: needs an author-reputation
+ * source (no such port exists yet — the moderation/accountability modules expose no reputation read). Until one
+ * ships, the role-based default above is the trust signal; when it lands, {@code callerIsTrustedAuthor()} also
+ * consults it so an established (good-standing) author is trusted without an explicit privileged role.</p>
  *
  * <p>WHY the trust decision lives in the controller (not the service): it is derived from the
  * authenticated principal's roles, which the controller already holds; the service stays free of identity

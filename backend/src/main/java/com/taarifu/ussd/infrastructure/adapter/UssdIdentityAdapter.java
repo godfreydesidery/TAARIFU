@@ -14,7 +14,7 @@ import java.util.UUID;
  * <p>Responsibility: bind the USSD module's consumer-owned identity seam to identity's real
  * account-provisioning command port, so a feature-phone dialogue resolves/creates the reporter's T1 account
  * (and reads its registered area) against the real {@code app_user}/{@code profile} rows — no in-process stub
- * id any more. This replaces the prior deterministic stub; the {@code // TODO(wiring)} is now closed.</p>
+ * id any more. This replaces the prior deterministic stub and is fully wired to the live identity port.</p>
  *
  * <p>This adapter holds <b>no logic</b>: it is a one-line delegation to the published port, which is exactly
  * the ADR-0013 pattern (the consumer's port, the producer's {@code api} implementation, an adapter that wires

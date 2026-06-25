@@ -28,6 +28,9 @@ import com.taarifu.responders.api.dto.ResponderDto;
 import com.taarifu.responders.api.dto.RoutingRuleDto;
 import com.taarifu.responders.api.dto.UpdateOrganisationRequest;
 import com.taarifu.responders.api.dto.UpdateResponderRequest;
+import com.taarifu.responders.api.event.ResponderAssignedEvent;
+import com.taarifu.responders.api.event.ResponderEventTypes;
+import com.taarifu.responders.application.mapper.OrganisationSearchProjection;
 import com.taarifu.responders.application.mapper.ResponderMapper;
 import com.taarifu.responders.domain.model.Organisation;
 import com.taarifu.responders.domain.model.Responder;
@@ -39,14 +42,12 @@ import com.taarifu.responders.domain.repository.ResponderAssignmentRepository;
 import com.taarifu.responders.domain.repository.ResponderRepository;
 import com.taarifu.responders.domain.repository.RoutingRuleRepository;
 import com.taarifu.search.api.SearchIndexApi;
-import com.taarifu.search.api.dto.SearchDocumentUpsert;
-import com.taarifu.search.domain.model.enums.SearchEntityType;
-import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.UUID;
 
@@ -86,6 +87,7 @@ public class ResponderAdminService {
     private final ClockPort clock;
     private final OutboxWriter outboxWriter;
     private final SearchIndexApi searchIndexApi;
+    private final OrganisationSearchProjection organisationSearchProjection;
 
     /**
      * @param organisationRepository organisation persistence.
@@ -102,15 +104,23 @@ public class ResponderAdminService {
      * @param audit                  append-only audit writer (out-of-scope-denial evidence; refs only, R-1/L-1).
      * @param mapper                 entity→DTO mapper.
      * @param clock                  injectable time (assignment timestamps; testability).
-     * @param outboxWriter           the transactional-outbox port; {@link #assignResponder} appends an
-     *                               assignment-created analytics fact in the assignment transaction so the
-     *                               analytics sink records it asynchronously, off the admin path (Appendix E, M15).
+     * @param outboxWriter           the transactional-outbox port; {@link #assignResponder} appends, in the
+     *                               assignment transaction, (1) an assignment-created analytics fact recorded
+     *                               asynchronously by the analytics sink (Appendix E, M15) and (2) — for an
+     *                               OWNER assignment — a {@link ResponderEventTypes#RESPONDER_ASSIGNED} back-event
+     *                               so reporting's handler sets {@code Report.assignedResponderId} +
+     *                               {@code NEW → ASSIGNED} asynchronously, closing the routing round-trip without
+     *                               a synchronous {@code responders → reporting} write (D21; ADR-0013 §2).
      * @param searchIndexApi         search's published inbound port (ADR-0017 §1): the org CRUD/verification
      *                               paths push an organisation's <b>public</b> directory projection (name +
      *                               type facet) on create/update and re-push (visibility flip) on
      *                               verify/un-verify, so the cross-entity discovery index mirrors the public
      *                               provider directory. An {@code api → api} owner→search call (no reach-in,
      *                               no cycle — ADR-0013 §1; ModuleBoundaryTest stays GREEN).
+     * @param organisationSearchProjection the single source of truth for an organisation's index projection +
+     *                               PUBLIC/STAFF visibility, shared verbatim with the one-off
+     *                               {@code OrganisationSearchBackfillSource} so the privacy fence cannot drift
+     *                               between the live write path and the backfill (DRY; ADR-0017 §1).
      */
     public ResponderAdminService(OrganisationRepository organisationRepository,
                                  ResponderRepository responderRepository,
@@ -124,7 +134,8 @@ public class ResponderAdminService {
                                  ResponderMapper mapper,
                                  ClockPort clock,
                                  OutboxWriter outboxWriter,
-                                 SearchIndexApi searchIndexApi) {
+                                 SearchIndexApi searchIndexApi,
+                                 OrganisationSearchProjection organisationSearchProjection) {
         this.organisationRepository = organisationRepository;
         this.responderRepository = responderRepository;
         this.routingRuleRepository = routingRuleRepository;
@@ -138,6 +149,7 @@ public class ResponderAdminService {
         this.clock = clock;
         this.outboxWriter = outboxWriter;
         this.searchIndexApi = searchIndexApi;
+        this.organisationSearchProjection = organisationSearchProjection;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -332,6 +344,14 @@ public class ResponderAdminService {
      * via reporting's published {@link ReportQueryApi} (the {@code responders → reporting} read direction,
      * ADR-0013 §4a), so an assignment can never be bound to a non-existent report (D21).</p>
      *
+     * <p>On a new <b>OWNER</b> assignment this appends a {@link ResponderEventTypes#RESPONDER_ASSIGNED}
+     * back-event to the outbox (in the same transaction as the assignment row), which reporting's
+     * {@code ResponderAssignedHandler} consumes to set {@code Report.assignedResponderId} and transition the
+     * report {@code NEW → ASSIGNED} — the identical round-trip {@code RoutingHandler} drives for system routing
+     * (D21; ADR-0014 §5b). No event is emitted for a COLLABORATOR (it must not move the accountable pointer or
+     * the lifecycle, §24.3). The async reverse leg keeps the module graph acyclic (no synchronous
+     * {@code responders → reporting} write, ADR-0013 §1/§2).</p>
+     *
      * @param reportId               the report id (from the path).
      * @param request                validated assignment input (responder + role).
      * @param assignedByUserPublicId the authenticated assigning user's id (for audit/attribution).
@@ -361,8 +381,9 @@ public class ResponderAdminService {
                     });
         }
 
+        Instant assignedAt = clock.now();
         ResponderAssignment assignment = ResponderAssignment.create(
-                reportId, responder, request.role(), assignedByUserPublicId, clock.now());
+                reportId, responder, request.role(), assignedByUserPublicId, assignedAt);
         assignment.setSlaPolicy(request.slaPolicy());
         ResponderAssignment saved = assignmentRepository.save(assignment);
         // ANALYTICS (Appendix E, M15): a responder assignment was created — a routing/ops fact. Emitted on the
@@ -375,7 +396,7 @@ public class ResponderAdminService {
                 saved.getPublicId(),
                 new CivicActivityRecorded(
                         AnalyticsEventTypes.REPORT_ROUTED,
-                        clock.now(),
+                        assignedAt,
                         null,                       // actorRef: no pseudonymous actor hash resolved here
                         null,                       // geoAreaId: not resolved on the admin path
                         null,                       // categoryId: not resolved on the admin path
@@ -385,8 +406,26 @@ public class ResponderAdminService {
                         null,                       // latencySeconds: n/a
                         null,                       // breachType: n/a
                         request.role().name()),     // outcome = OWNER / COLLABORATOR (controlled vocab)
-                clock.now()));
-        // TODO(wiring): publish ResponderAssignedEvent via the transactional outbox once the bus lands.
+                assignedAt));
+        // ROUTING ROUND-TRIP (D21, ADR-0014 §5b): a MANUAL OWNER assignment closes the same loop as system
+        // routing — emit RESPONDER_ASSIGNED on the outbox in THIS transaction (atomic with the assignment row)
+        // so reporting's ResponderAssignedHandler sets Report.assignedResponderId + transitions NEW → ASSIGNED.
+        // This is the back-edge RoutingHandler.createOwnerAssignment emits; the reverse leg is async over the
+        // outbox (no synchronous responders → reporting write — keeps the module graph acyclic, ADR-0013 §1/§2).
+        // OWNER only: a COLLABORATOR must not overwrite the accountable pointer nor re-drive the lifecycle
+        // (§24.3); the consumer no-ops on non-OWNER anyway, but we do not emit for it (avoid a redundant event).
+        // The reporting consumer is idempotent on report status (no-op if absent or already past NEW), so a
+        // manual OWNER assignment of an already-triaged report is a clean no-op there. Payload is ids/enums only
+        // (no report PII; ADR-0014 §1).
+        if (request.role() == AssignmentRole.OWNER) {
+            outboxWriter.append(EventEnvelope.of(
+                    ResponderEventTypes.RESPONDER_ASSIGNED,
+                    ResponderEventTypes.AGGREGATE_RESPONDER_ASSIGNMENT,
+                    saved.getPublicId(),
+                    new ResponderAssignedEvent(saved.getPublicId(), reportId, responder.getPublicId(),
+                            AssignmentRole.OWNER, assignedAt, assignedAt),
+                    assignedAt));
+        }
         return mapper.toAssignmentDto(saved);
     }
 
@@ -517,37 +556,19 @@ public class ResponderAdminService {
      * (ADR-0017 §1) via search's published inbound {@link SearchIndexApi}. Called on create/update/verify; the
      * upsert is idempotent on {@code (ORGANISATION, publicId)} so a re-push updates the single live row.
      *
-     * <h3>What is indexed — and why no PII (PRD §18, ADR-0017 §1)</h3>
-     * <p>Only the <b>public directory identity</b>: the organisation name as the title, and the organisation
-     * type (e.g. PARASTATAL/GOVERNMENT_AGENCY) as an English keyword facet. The public contact phone/email/URL
-     * are directory display fields fetched from the full record on tap (the index stays lean — PRD §15) and are
-     * <b>not</b> pushed; {@code authoredByAccountId} is left {@code null} because an organisation is a directory
-     * entity, not an authored post (no author-suspension visibility maintenance applies — ADR-0017 §3). No
-     * citizen PII is ever involved (an organisation's contacts are the body's own public details).</p>
-     *
-     * <h3>Visibility (ADR-0017 §4) — mirror {@code isPubliclyListable}</h3>
-     * <p>The organisation is indexed {@code PUBLIC} only when it is {@link Organisation#isPubliclyListable()}
-     * (ACTIVE <b>and</b> verified — §24.4), exactly the rule {@link ResponderDirectoryService} enforces on the
-     * public directory; otherwise {@code STAFF}. So a PENDING/unverified/suspended org is discoverable by staff
-     * but never surfaces to a guest/citizen (anti-spoofing/anti-enumeration — the same guarantee as the
-     * directory). On verify/un-verify or a status change the {@code update}/{@code verify} paths re-push and the
-     * visibility flips automatically; we never delete the row on un-verify (an idempotent visibility flip keeps
-     * the row consistent and re-listable on re-verification).</p>
+     * <p>The projection and its PUBLIC/STAFF visibility decision are built by the shared
+     * {@link OrganisationSearchProjection} — the single source of truth reused verbatim by the one-off
+     * {@code OrganisationSearchBackfillSource}, so what is indexed (name + type facet, no PII — PRD §18) and the
+     * {@link Organisation#isPubliclyListable()} visibility fence (ACTIVE+verified → PUBLIC, else STAFF — §24.4,
+     * the same rule {@link ResponderDirectoryService} enforces on the public directory) can never drift between
+     * the live write path and the backfill (DRY; ADR-0017 §1). On verify/un-verify or a status change the
+     * {@code update}/{@code verify} paths re-push and the visibility flips automatically; the row is never
+     * deleted on un-verify (an idempotent visibility flip keeps it consistent and re-listable on re-verification).
      *
      * @param org the persisted/managed organisation.
      */
     private void indexOrganisation(Organisation org) {
-        searchIndexApi.upsert(new SearchDocumentUpsert(
-                SearchEntityType.ORGANISATION,
-                org.getPublicId(),
-                org.getName(),
-                null,                       // snippetSw: name carries the label; no extra public snippet
-                null,                       // snippetEn
-                org.getType().name(),       // keyword facet: the organisation kind (enum name) — public, no PII
-                null,                       // areaId: an org is not pinned to a single ward (responders carry coverage)
-                null,                       // categoryId: capabilities (categories) live on Responder, not the org
-                org.isPubliclyListable() ? SearchVisibility.PUBLIC : SearchVisibility.STAFF,
-                null));                     // authoredByAccountId: a directory entity has no author
+        searchIndexApi.upsert(organisationSearchProjection.project(org));
     }
 
     /** Loads an organisation by public id or throws a localised not-found. */

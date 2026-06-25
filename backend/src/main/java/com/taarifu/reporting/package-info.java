@@ -30,7 +30,11 @@
  * search module's index via {@code search.api.SearchIndexApi} on file and on every lifecycle change, and
  * <b>removes</b> it whenever the report is not (or no longer) public-safe — a PRIVATE, sensitive, or anonymous
  * report is <b>never</b> indexed (the discovery IDOR fence — PRD §25.3, PDPA), and a PDPA erasure that
- * anonymises a report removes its discovery row. Reporting also <b>publishes</b> {@code moderation.api}'s
+ * anonymises a report removes its discovery row. For rows that pre-date the producer being wired, reporting
+ * implements search's {@code SearchBackfillSource} port ({@code ReportSearchBackfillSource}) to re-push its
+ * existing PUBLIC reports on an admin-triggered reindex — reusing the <i>same</i>
+ * {@code ReportService.reindexForDiscovery} fence so the backfill can never index a row the live path would
+ * keep out (ADR-0017 follow-up). Reporting also <b>publishes</b> {@code moderation.api}'s
  * {@code SubjectContentQueryApi} for {@code FlagSubjectType.REPORT}, surfacing a flagged report's transient
  * scorable text (title + description) to moderation's auto-assist scorer — text only, scored and discarded,
  * never persisted or logged (PRD §18). Both are owner→foundation {@code api} edges (no reach-in, no cycle).</p>

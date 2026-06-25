@@ -61,7 +61,13 @@ public class MediaObject extends BaseEntity {
      * <p>WHY a free string rather than an enum here: the set of attachment hosts spans several feature
      * modules this module must not depend on (ARCHITECTURE.md §3.2). Keeping it a validated string keeps
      * the boundary clean; the authoritative catalogue of valid types lives with the host modules and is
-     * enforced at attach time. // TODO(wiring): validate against the host catalogue when modules land.</p>
+     * enforced at attach time. The one host that has wired its file-time attach gate (reporting, via
+     * {@code media.api.MediaAttachmentApi#validateAndBind}) already rejects an object whose {@code ownerType}
+     * does not match the host's expected type — so a {@code REPORT}-typed object can never bind to a non-report
+     * host. PHASE-3: needs a published cross-module owner-type catalogue (a per-{@code ownerType} validation
+     * port mirroring the {@code SubjectContentQueryApi} registry) for upfront validation of host types whose
+     * owners do not yet publish an attach gate; until then an unmatched type simply never binds (it stays an
+     * orphan a janitor purges) and is never served (the serve path is deny-by-default).</p>
      */
     @Column(name = "owner_type", nullable = false, length = 48)
     private String ownerType;

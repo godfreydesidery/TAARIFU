@@ -8,6 +8,7 @@ import com.taarifu.engagement.application.mapper.EngagementMapper;
 import com.taarifu.engagement.domain.model.Question;
 import com.taarifu.engagement.domain.repository.AnswerRepository;
 import com.taarifu.engagement.domain.repository.QuestionRepository;
+import com.taarifu.identity.api.ProfileLookupApi;
 import com.taarifu.search.api.SearchIndexApi;
 import com.taarifu.search.api.dto.SearchDocumentUpsert;
 import com.taarifu.search.domain.model.enums.SearchEntityType;
@@ -46,6 +47,8 @@ class QuestionServiceTest {
     private AuditEventService audit;
     @Mock
     private SearchIndexApi searchIndex;
+    @Mock
+    private ProfileLookupApi profileLookup;
 
     private final EngagementMapper mapper = new EngagementMapper();
     private QuestionService service;
@@ -54,7 +57,7 @@ class QuestionServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new QuestionService(questions, answers, mapper, scopeGuard, audit, searchIndex);
+        service = new QuestionService(questions, answers, mapper, scopeGuard, audit, searchIndex, profileLookup);
     }
 
     @Test
@@ -75,6 +78,9 @@ class QuestionServiceTest {
     void askPersistsOpenQuestion_forValidTarget() {
         UUID targetRep = UUID.randomUUID();
         when(scopeGuard.isNotSelf(targetRep)).thenReturn(true);
+        // The asker's ACCOUNT id resolves to its PROFILE id via identity's ProfileLookupApi; stub it to the
+        // same value so the persisted askerProfileId equals the account id used by the assertion below.
+        when(profileLookup.profileIdForAccount(asker)).thenReturn(Optional.of(asker));
 
         var dto = service.ask(asker, targetRep, "When will the clinic open?");
 
@@ -91,6 +97,7 @@ class QuestionServiceTest {
         // indexed (authoredByAccountId is null). This assertion FAILS if reindexForDiscovery is removed from ask().
         UUID targetRep = UUID.randomUUID();
         when(scopeGuard.isNotSelf(targetRep)).thenReturn(true);
+        when(profileLookup.profileIdForAccount(asker)).thenReturn(Optional.of(asker));
 
         service.ask(asker, targetRep, "When will the clinic open?");
 

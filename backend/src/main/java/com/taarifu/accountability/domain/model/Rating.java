@@ -47,7 +47,9 @@ import java.util.UUID;
  * isolated and references them by public id. For a {@code REPRESENTATIVE} subject, existence and electoral
  * scope are validated in {@code RatingService} via institutions' published {@code RepresentativeQueryApi}.
  * ({@code OFFICE}/{@code PROJECT} subjects have no owning module/port yet, so their existence is not yet
- * validated — // TODO(wiring) once those seams exist.)</p>
+ * validated — // PHASE-3: needs an OFFICE directory query and the projects module's
+ * {@code projects.api.ProjectQueryApi.exists}; {@code RatingService} is the ready receiver, exactly as it
+ * already validates a {@code REPRESENTATIVE} subject via {@code RepresentativeQueryApi}.)</p>
  */
 @Entity
 @Table(name = "rating",

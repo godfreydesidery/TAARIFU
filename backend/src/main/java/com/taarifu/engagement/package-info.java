@@ -17,8 +17,9 @@
  * <p><b>Civic-integrity fence (D18, PRD §23.5):</b> binding actions are gated by tier
  * ({@code @RequiresTier}) + no-self-action ({@link com.taarifu.common.security.ScopeGuard}) +
  * one-per-person (DB unique constraints) and <b>never</b> read a token balance. Electoral-scope
- * enforcement (D13) and the account→Profile / target-validation cross-module resolution are wired in a
- * later integration step (marked {@code // TODO(wiring)} in the services).</p>
+ * enforcement (D13) is wired via institutions' {@code RepresentativeQueryApi} × identity's
+ * {@code ElectoralScopeApi}; the account→Profile author resolution is wired via identity's
+ * {@link com.taarifu.identity.api.ProfileLookupApi} on the create paths — all {@code api → api}, no import.</p>
  *
  * <p><b>Moderation auto-assist (ADR-0018; ADR-0013 §4c — DONE):</b> engagement publishes
  * {@link com.taarifu.moderation.api.SubjectContentQueryApi} implementations for the
@@ -32,16 +33,27 @@
  * not its own flaggable subject), so no {@code COMMENT} content port is published — an unregistered subject
  * type resolves to empty and degrades to a human screen by design.</p>
  *
- * <p><b>// TODO(wiring) — search discovery indexing (ADR-0017 §1; BLOCKED on a CENTRAL NEED):</b> on
- * create/update/close/delete of petitions, polls/surveys, and Q&amp;A questions, engagement must push a
- * public projection (public title/summary + area/category facets only, never a DRAFT, private body, or
- * anonymous author) via {@link com.taarifu.search.api.SearchIndexApi#upsert}/{@code remove}. This wiring is
- * <b>blocked</b> because the search module's {@link com.taarifu.search.domain.model.enums.SearchEntityType}
- * (the {@code entityType} of {@link com.taarifu.search.api.dto.SearchDocumentUpsert}) has no values for
- * engagement content — it covers only {@code REPRESENTATIVE}/{@code ORGANISATION}/{@code ANNOUNCEMENT}/
- * {@code ISSUE_CATEGORY}/{@code PUBLIC_REPORT}. Adding {@code PETITION}/{@code POLL}/{@code QUESTION} values is
- * an additive change the <b>search-module owner</b> must make (ADR-0017 §2 "adding a searchable entity adds a
- * value here"); engagement must not edit another module's {@code domain} (parallel-build isolation). Once the
- * enum values land, this wiring is a one-call-per-lifecycle step on the create/update/close/delete paths.</p>
+ * <p><b>Search discovery indexing (ADR-0017 §1, ADR-0013 §1 owner→search — DONE):</b> on
+ * create/activate/sign/answer/open and every lifecycle change, engagement pushes a public, PII-free projection
+ * (public title/summary only, never a DRAFT, private body, signer/asker/responder, or any PII) via
+ * {@link com.taarifu.search.api.SearchIndexApi#upsert}/{@code remove}. The search module's
+ * {@link com.taarifu.search.domain.model.enums.SearchEntityType} now carries the
+ * {@code PETITION}/{@code POLL}/{@code QUESTION} values (the search owner's additive change, ADR-0017 §2), so
+ * each service maintains its discovery row through a single {@code reindexForDiscovery} fence.</p>
+ *
+ * <p><b>Search backfill (ADR-0017 follow-up "a one-off backfill job per owner"; ADR-0013 §7 /
+ * ModuleBoundaryTest carve-out (b) — DONE):</b> engagement implements the search module's
+ * {@link com.taarifu.search.domain.port.SearchBackfillSource} <b>domain.port</b> three times (one per owned
+ * {@code SearchEntityType}) in {@code application.service.search} —
+ * {@link com.taarifu.engagement.application.service.search.PetitionBackfillSource},
+ * {@link com.taarifu.engagement.application.service.search.SurveyBackfillSource}, and
+ * {@link com.taarifu.engagement.application.service.search.QuestionBackfillSource}. Each pages its own
+ * publicly-visible (non-DRAFT / OPEN-or-ANSWERED) rows and re-pushes the <i>same</i> projection the live
+ * producer builds (it calls the very same {@code reindexForDiscovery} method, so the visibility fence cannot
+ * drift), idempotently via {@code upsert}. The search reindex orchestrator auto-discovers these beans. This is
+ * the sanctioned cross-module {@code domain.port} injection pattern (the {@code SmsGateway}/{@code Geocoder}
+ * shape), NOT a boundary violation — engagement implements a port search published, importing only search's
+ * {@code api} + {@code domain.port} + {@code domain.model.enums}, never search's
+ * {@code domain.model}/{@code infrastructure}.</p>
  */
 package com.taarifu.engagement;

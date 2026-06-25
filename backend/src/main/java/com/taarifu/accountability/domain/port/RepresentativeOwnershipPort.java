@@ -15,15 +15,18 @@ import java.util.UUID;
  * into. The service depends on this <b>abstraction</b>, not on those modules directly (SOLID/DIP; the
  * {@code WardResolver}/{@code Geocoder} cross-module-injectable-port pattern, ARCHITECTURE &sect;7).</p>
  *
- * <h3>Default is deny (fail-safe)</h3>
- * <p>The accountability module ships a <b>default deny-stub</b> adapter ({@code DenyByDefaultOwnershipAdapter})
- * that answers {@code false} for every account — so until a deployment provides the real adapter, NO
- * representative-self reply is ever accepted (deny-by-default, CLAUDE.md &sect;3 "fail safe"). This keeps the
- * fence closed and dev/test boot unchanged. The right-of-reply feature is still fully usable today via the
- * <b>curated on-behalf</b> path ({@code ADMIN}/{@code ROOT}), which does not consult this port. The
- * production adapter — delegating to an institutions published port that resolves a representative's linked
- * account — is the documented CENTRAL NEED; it overrides the stub via {@code @ConditionalOnMissingBean} when
- * wired, with NO change to this module.</p>
+ * <h3>Wired adapter + deny fail-safe</h3>
+ * <p>The accountability module ships the <b>real</b> adapter
+ * ({@code InstitutionsBackedOwnershipAdapter}) as the live default — it resolves ownership by delegating to
+ * institutions' published {@code RepresentativeQueryApi.ownsRepresentative} (which bridges account → profile via
+ * identity, then matches the representative's linked {@code profileId} — §6.4). So the self-reply path is
+ * genuinely available: a rated representative can reply to a rating about <i>themselves</i>, and the same
+ * resolver returns {@code false} for a rating about a rival, holding the fence. A <b>deny-stub</b>
+ * ({@code DenyByDefaultOwnershipAdapter}) remains as the fail-safe backstop, registered only via
+ * {@code @ConditionalOnMissingBean} — if the real adapter were ever absent it answers {@code false} for every
+ * account, so the worst case is "self-reply temporarily unavailable", never "anyone can speak as a
+ * representative" (deny-by-default, CLAUDE.md &sect;3 "fail safe"). The right-of-reply feature is additionally
+ * usable via the <b>curated on-behalf</b> path ({@code ADMIN}/{@code ROOT}), which does not consult this port.</p>
  */
 public interface RepresentativeOwnershipPort {
 

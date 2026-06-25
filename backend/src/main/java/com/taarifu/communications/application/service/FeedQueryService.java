@@ -32,9 +32,16 @@ import java.util.UUID;
  * and avoids any cross-module table reach (ARCHITECTURE §3.2).</p>
  *
  * <p>WHY representative-follows are not yet a feed dimension: an announcement is currently matched by area
- * and category (its stored audience), not by author-followed-as-representative. Author→representative
- * resolution is owned by {@code institutions}; that dimension is added when that module is wired
- * (TODO(wiring): include REPRESENTATIVE follows by resolving the author's representative id).</p>
+ * and category (its stored audience), not by author-followed-as-representative. A {@code REPRESENTATIVE}
+ * follow stores the representative's public id as its target, but an announcement stores only its
+ * <b>author profile id</b> — so including "announcements by a followed representative" needs the
+ * representative-public-id → author-profile-id mapping, which is owned by {@code institutions}.
+ * CROSS-MODULE: the existing {@code institutions.api.RepresentativeQueryApi} exposes only
+ * {@code exists}/{@code constituencyOf}/{@code wardOf}/{@code ownsRepresentative} — it does <b>not</b> yet
+ * expose a representative→profileId resolver. This dimension is wired once that published port gains a
+ * {@code profileIdOf(representativePublicId)} read (then: resolve followed reps → profile ids and add an
+ * {@code author_profile_id IN (...)} branch to {@link AnnouncementRepository#findFeed}). Until then the
+ * feed degrades to area+category matching only — correct, never a leak.</p>
  */
 @Service
 @Transactional(readOnly = true)

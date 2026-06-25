@@ -88,6 +88,31 @@ public interface AnnouncementRepository extends JpaRepository<Announcement, Long
                                                       @Param("cutoff") Instant cutoff);
 
     /**
+     * Pages {@code PUBLISHED} announcements ordered by primary key — the batched scan the discovery
+     * <b>backfill</b> ({@code AnnouncementSearchBackfillSource}) walks to re-push pre-existing public rows into
+     * the search index (ADR-0017 follow-up "a one-off backfill job per owner").
+     *
+     * <p>WHY this exact filter (matching the live producer, not a parallel rule — DRY, ADR-0017 §1): the live
+     * discovery fence ({@code AnnouncementService.reindexForDiscovery}) upserts iff
+     * {@code status == PUBLISHED} and removes for every other state. So the backfill's row source must be exactly
+     * the {@code PUBLISHED} rows — a {@code DRAFT}/held, {@code SCHEDULED}, or {@code EXPIRED} announcement is
+     * never even read here (defence-in-depth: a row that must stay out of discovery is not loaded), and the
+     * shared fence the backfill routes every loaded row through screens it again anyway. Note the live path keys
+     * on lifecycle <i>status</i>, not the publish/expiry window: a row whose {@code expireAt} has passed but the
+     * expiry sweep has not yet run is still {@code status == PUBLISHED} and so is still indexed — exactly as the
+     * live path would have it, until the sweep transitions it to {@code EXPIRED} (which then removes it). Soft-
+     * deleted rows are excluded automatically by the entity's {@code @SQLRestriction}. Ordered by {@code id} (a
+     * stable, monotonically-issued key) so successive pages are deterministic and a row cannot be skipped or
+     * visited twice as the walk advances — every push is an idempotent keyed upsert regardless.</p>
+     *
+     * @param status   must be {@link AnnouncementStatus#PUBLISHED} (the backfill always passes PUBLISHED).
+     * @param pageable the batch window (page size + index); the backfill pages until exhausted.
+     * @return a page of {@code PUBLISHED} announcements, ordered by primary key.
+     */
+    @Query("SELECT a FROM Announcement a WHERE a.status = :status ORDER BY a.id ASC")
+    Page<Announcement> findByStatusOrderById(@Param("status") AnnouncementStatus status, Pageable pageable);
+
+    /**
      * Counts the distinct {@code PUBLISHED} announcements that went live in the digest window and target at
      * least one of the recipient's followed areas — the single number a digest summary carries ("N new
      * updates in your areas"). The window is {@code since < publishAt <= until} so a daily/weekly run counts

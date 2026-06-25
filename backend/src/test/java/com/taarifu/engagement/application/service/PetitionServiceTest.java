@@ -13,6 +13,7 @@ import com.taarifu.engagement.domain.model.enums.PetitionTargetType;
 import com.taarifu.engagement.domain.repository.PetitionRepository;
 import com.taarifu.engagement.domain.repository.PetitionSignatureRepository;
 import com.taarifu.identity.api.ElectoralScopeApi;
+import com.taarifu.identity.api.ProfileLookupApi;
 import com.taarifu.institutions.api.RepresentativeQueryApi;
 import com.taarifu.search.api.SearchIndexApi;
 import com.taarifu.search.api.dto.SearchDocumentUpsert;
@@ -68,6 +69,8 @@ class PetitionServiceTest {
     private OutboxWriter outboxWriter;
     @Mock
     private SearchIndexApi searchIndex;
+    @Mock
+    private ProfileLookupApi profileLookup;
 
     private final EngagementMapper mapper = new EngagementMapper();
     private PetitionService service;
@@ -78,7 +81,7 @@ class PetitionServiceTest {
     @BeforeEach
     void setUp() {
         service = new PetitionService(petitions, signatures, mapper, scopeGuard,
-                representativeQueryApi, electoralScopeApi, audit, outboxWriter, searchIndex);
+                representativeQueryApi, electoralScopeApi, audit, outboxWriter, searchIndex, profileLookup);
     }
 
     private Petition activeOfficePetition() {
@@ -151,6 +154,7 @@ class PetitionServiceTest {
         // routes through reindexForDiscovery, whose non-public branch REMOVES (idempotent) — never upserts.
         UUID target = UUID.randomUUID();
         when(scopeGuard.isNotSelf(target)).thenReturn(true);
+        when(profileLookup.profileIdForAccount(signer)).thenReturn(Optional.of(signer));
 
         service.create("Title", "Body", "OFFICE", target, 50, null, signer);
 
@@ -388,6 +392,9 @@ class PetitionServiceTest {
     void createPersistsDraft_forValidOfficeTarget() {
         UUID target = UUID.randomUUID();
         when(scopeGuard.isNotSelf(target)).thenReturn(true);
+        // The creator's ACCOUNT id resolves to its PROFILE id via ProfileLookupApi; stub it to the same id so
+        // the persisted creatorProfileId equals the account id the assertion below checks.
+        when(profileLookup.profileIdForAccount(signer)).thenReturn(Optional.of(signer));
 
         var dto = service.create("Title", "Body", "OFFICE", target, 50, null, signer);
 

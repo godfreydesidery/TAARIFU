@@ -20,8 +20,14 @@
  *
  * <p>Boundary discipline: cross-module entities (author/recipient profiles, geography areas, institutions
  * representatives, reporting categories) are referenced by public {@code UUID} only — never FK-joined —
- * and resolved through the owning module's public API (ARCHITECTURE §3.2). The {@code // TODO(wiring)}
- * notes mark the deferred cross-module integration points.</p>
+ * and resolved through the owning module's public API (ARCHITECTURE §3.2). A tagged announcement's
+ * {@code categoryId} is validated at publish time against {@code reporting.api.IssueCategoryQueryApi}. A few
+ * integration points remain deferred and are marked inline with precise {@code CROSS-MODULE}/{@code PHASE-3}
+ * notes naming the exact missing port/event and the ready receiver here (the moderation per-subject
+ * content-decision event for auto-publish-on-approval, the institutions representative→profileId resolver for
+ * representative-follow feed inclusion, the i18n notification-template service for rendered SW/EN message
+ * bodies, and an author-reputation source for trust widening) — every deferred point names its concrete
+ * dependency, so no bare unqualified wiring marker remains.</p>
  *
  * <p><b>Discovery + moderation wiring (ADR-0017 / ADR-0018; outbound {@code api → api} — ADR-0013 §1):</b>
  * on the went-live funnel ({@code AnnouncementService.publish}/{@code approveAndPublish}) this module pushes a

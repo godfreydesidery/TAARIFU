@@ -5,6 +5,7 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.common.outbox.EventEnvelope;
 import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.reporting.api.IssueCategoryQueryApi;
@@ -13,6 +14,9 @@ import com.taarifu.reporting.api.ReportQueryApi;
 import com.taarifu.reporting.api.dto.ReportScopeDto;
 import com.taarifu.responders.api.dto.CreateAssignmentRequest;
 import com.taarifu.responders.api.dto.ResponderAssignmentDto;
+import com.taarifu.responders.api.event.ResponderAssignedEvent;
+import com.taarifu.responders.api.event.ResponderEventTypes;
+import com.taarifu.responders.application.mapper.OrganisationSearchProjection;
 import com.taarifu.responders.application.mapper.ResponderMapper;
 import com.taarifu.responders.application.service.ResponderAdminService;
 import com.taarifu.responders.domain.model.Organisation;
@@ -99,7 +103,7 @@ class ResponderAdminServiceTest {
         service = new ResponderAdminService(organisationRepository, responderRepository,
                 routingRuleRepository, assignmentRepository, reportQueryApi, issueCategoryQueryApi,
                 reportLifecycleApi, scopeGuard, audit, new ResponderMapper(), clock, outboxWriter,
-                searchIndexApi);
+                searchIndexApi, new OrganisationSearchProjection());
 
         Organisation org = Organisation.create("TANESCO", OrganisationType.PARASTATAL);
         responder = Responder.create(org, "TANESCO — Kilimanjaro", ResponderType.UTILITY,
@@ -219,6 +223,63 @@ class ResponderAdminServiceTest {
         verify(assignmentRepository, never()).save(any());
         // The report check runs first — the responder is never even looked up.
         verify(responderRepository, never()).findByPublicId(any());
+    }
+
+    @Test
+    void assign_owner_emitsResponderAssignedBackEvent_closingTheRoutingRoundTrip() {
+        // D21 / ADR-0014 §5b: a MANUAL OWNER assignment must emit RESPONDER_ASSIGNED on the outbox so
+        // reporting's handler sets Report.assignedResponderId + NEW → ASSIGNED — the same round-trip the
+        // system RoutingHandler drives. This fails the moment the back-event emission is dropped, breaking
+        // the citizen-facing "official triages" loop on a manual assignment.
+        CreateAssignmentRequest req =
+                new CreateAssignmentRequest(responderPublicId, AssignmentRole.OWNER, null);
+
+        service.assignResponder(reportId, req, actor);
+
+        ArgumentCaptor<EventEnvelope<?>> captor = forEnvelopeCaptor();
+        verify(outboxWriter, org.mockito.Mockito.atLeastOnce()).append(captor.capture());
+        EventEnvelope<?> assigned = captor.getAllValues().stream()
+                .filter(e -> ResponderEventTypes.RESPONDER_ASSIGNED.equals(e.eventType()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("RESPONDER_ASSIGNED was not appended for an OWNER assignment"));
+        assertThat(assigned.aggregateType()).isEqualTo(ResponderEventTypes.AGGREGATE_RESPONDER_ASSIGNMENT);
+        // Payload carries ids/enums only (no PII): reportId, responderId, role=OWNER.
+        assertThat(assigned.payload()).isInstanceOf(ResponderAssignedEvent.class);
+        ResponderAssignedEvent payload = (ResponderAssignedEvent) assigned.payload();
+        assertThat(payload.reportId()).isEqualTo(reportId);
+        assertThat(payload.responderId()).isEqualTo(responder.getPublicId());
+        assertThat(payload.role()).isEqualTo(AssignmentRole.OWNER);
+    }
+
+    @Test
+    void assign_collaborator_doesNotEmitResponderAssigned_soTheOwnerPointerIsUntouched() {
+        // §24.3: a COLLABORATOR must NOT move the report's accountable OWNER pointer nor re-drive the
+        // lifecycle, so no RESPONDER_ASSIGNED is emitted for it. An OWNER already exists; we add a
+        // COLLABORATOR for a different responder. Fails if a COLLABORATOR were to emit the back-event.
+        ResponderAssignment existingOwner = ResponderAssignment.create(
+                reportId, responder, AssignmentRole.OWNER, actor, Instant.now());
+        when(assignmentRepository.findOwner(reportId, AssignmentRole.OWNER))
+                .thenReturn(Optional.of(existingOwner));
+        UUID collaboratorId = UUID.randomUUID();
+        Responder collaborator = Responder.create(
+                Organisation.create("DAWASA", OrganisationType.PARASTATAL),
+                "DAWASA", ResponderType.UTILITY, CoverageType.NATIONWIDE);
+        when(responderRepository.findByPublicId(collaboratorId)).thenReturn(Optional.of(collaborator));
+        CreateAssignmentRequest req =
+                new CreateAssignmentRequest(collaboratorId, AssignmentRole.COLLABORATOR, null);
+
+        service.assignResponder(reportId, req, actor);
+
+        ArgumentCaptor<EventEnvelope<?>> captor = forEnvelopeCaptor();
+        verify(outboxWriter, org.mockito.Mockito.atLeastOnce()).append(captor.capture());
+        assertThat(captor.getAllValues())
+                .noneMatch(e -> ResponderEventTypes.RESPONDER_ASSIGNED.equals(e.eventType()));
+    }
+
+    /** Captor for the generic {@link EventEnvelope} appended to the outbox (one cast, documented once). */
+    @SuppressWarnings("unchecked")
+    private static ArgumentCaptor<EventEnvelope<?>> forEnvelopeCaptor() {
+        return ArgumentCaptor.forClass((Class<EventEnvelope<?>>) (Class<?>) EventEnvelope.class);
     }
 
     // --- search indexing (ADR-0017 §1): the public provider directory into discovery ---

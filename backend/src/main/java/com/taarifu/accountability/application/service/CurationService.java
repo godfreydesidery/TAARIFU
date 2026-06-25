@@ -51,9 +51,12 @@ import java.util.UUID;
  * api port only; this service never reaches into institutions' {@code domain}/{@code infrastructure}.</p>
  *
  * <p>{@code linkedProjectIds} on a promise are still accepted as opaque public ids and not yet validated:
- * there is no projects module/published port to validate them against. That remains a documented
- * {@code // TODO(wiring)} pending the projects seam — distinct from the representative-existence guard,
- * which is now wired.</p>
+ * there is no projects module/published port to validate them against — distinct from the
+ * representative-existence guard, which is now wired.
+ * // PHASE-3: needs the projects module's published existence query (e.g. {@code projects.api.ProjectQueryApi
+ * .exists(UUID)}); this service's referenced-existence guard pattern — already used for the representative via
+ * {@code RepresentativeQueryApi.exists} — is the ready receiver to validate each linked project id once that
+ * module ships its api port.</p>
  */
 @Service
 @Transactional

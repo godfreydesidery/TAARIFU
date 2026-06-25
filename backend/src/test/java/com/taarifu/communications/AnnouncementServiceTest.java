@@ -10,6 +10,7 @@ import com.taarifu.communications.domain.model.Announcement;
 import com.taarifu.communications.domain.model.enums.AnnouncementStatus;
 import com.taarifu.communications.domain.model.enums.Channel;
 import com.taarifu.communications.domain.repository.AnnouncementRepository;
+import com.taarifu.reporting.api.IssueCategoryQueryApi;
 import com.taarifu.search.api.SearchIndexApi;
 import com.taarifu.search.api.dto.SearchDocumentUpsert;
 import com.taarifu.search.domain.model.enums.SearchEntityType;
@@ -48,6 +49,7 @@ class AnnouncementServiceTest {
     private AnnouncementRepository announcementRepository;
     private OutboxWriter outboxWriter;
     private SearchIndexApi searchIndex;
+    private IssueCategoryQueryApi issueCategories;
     private FixedClock clock;
     private AnnouncementService service;
 
@@ -59,8 +61,10 @@ class AnnouncementServiceTest {
         announcementRepository = mock(AnnouncementRepository.class);
         outboxWriter = mock(OutboxWriter.class);
         searchIndex = mock(SearchIndexApi.class);
+        issueCategories = mock(IssueCategoryQueryApi.class);
         clock = new FixedClock(Instant.parse("2026-06-23T12:00:00Z"));
-        service = new AnnouncementService(announcementRepository, outboxWriter, clock, searchIndex);
+        service = new AnnouncementService(
+                announcementRepository, outboxWriter, clock, searchIndex, issueCategories);
         when(announcementRepository.save(any(Announcement.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -157,6 +161,45 @@ class AnnouncementServiceTest {
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getErrorCode())
                 .isEqualTo(ErrorCode.VALIDATION_FAILED);
+    }
+
+    @Test
+    void publish_withCategory_validatesAgainstReportingDirectory() {
+        // A tagged announcement validates its categoryId against the reporting category directory at publish
+        // time (ADR-0013 §4a) — so a category-follow fan-out can never point at a non-existent category.
+        UUID category = UUID.randomUUID();
+
+        service.publish(author, true, "Title", "Mwili", null,
+                Set.of(area), category, null, Set.of("FEED"), null, null, null);
+
+        verify(issueCategories).requireCategory(category);
+    }
+
+    @Test
+    void publish_withUnknownCategory_isRejected_andNothingPersisted() {
+        // The reporting port throws NOT_FOUND for a retired/non-existent category; publish must surface it and
+        // persist nothing (validation runs before the draft is built/saved).
+        UUID category = UUID.randomUUID();
+        org.mockito.Mockito.doThrow(new ApiException(ErrorCode.NOT_FOUND))
+                .when(issueCategories).requireCategory(category);
+
+        assertThatThrownBy(() -> service.publish(author, true, "Title", "Mwili", null,
+                Set.of(area), category, null, Set.of("FEED"), null, null, null))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.NOT_FOUND);
+        verify(announcementRepository, never()).save(any());
+        verify(searchIndex, never()).upsert(any());
+        verify(outboxWriter, never()).append(any());
+    }
+
+    @Test
+    void publish_withoutCategory_skipsCategoryValidation() {
+        // The untagged case: no categoryId → no call to the reporting port (deny-by-default needs no lookup).
+        service.publish(author, true, "Title", "Mwili", null,
+                Set.of(area), null, null, Set.of("FEED"), null, null, null);
+
+        verify(issueCategories, never()).requireCategory(any());
     }
 
     @Test

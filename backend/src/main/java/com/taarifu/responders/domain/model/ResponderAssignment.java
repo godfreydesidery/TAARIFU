@@ -27,11 +27,14 @@ import java.util.UUID;
  * The parent report aggregates child statuses and only closes when all assignments resolve (§24.3).</p>
  *
  * <p>WHY the report is referenced by a loose {@code reportId} {@code UUID} and not an FK: the
- * {@code reporting} module (which owns {@code Report}) is built in <b>parallel</b> and must not be
- * imported (ARCHITECTURE.md §3.2; module isolation rule 2). The cross-module link is therefore by
- * id; the FK/wiring to reporting is a later integration step. // TODO(wiring): bind {@code reportId}
- * to the reporting module's {@code Report} (resolve/validate via its public API or an FK once the
- * modules are integrated).</p>
+ * {@code reporting} module (which owns {@code Report}) is a peer feature module and must not be
+ * imported (ARCHITECTURE.md §3.2; module isolation rule 2). The cross-module link is therefore by id.
+ * The id's existence is validated synchronously against reporting's published
+ * {@link com.taarifu.reporting.api.ReportQueryApi#requireExists} before an assignment is created
+ * (both the manual {@code ResponderAdminService.assignResponder} path and the system
+ * {@code RoutingHandler} path — sync {@code responders → reporting}, ADR-0013 §4a/D21), so an
+ * assignment can never bind a non-existent report; a cross-module FK is deliberately NOT used (it would
+ * couple the two modules' schemas — ARCHITECTURE.md §4.3).</p>
  *
  * <p>WHY the single-OWNER invariant is DB-owned (a partial unique index on
  * {@code (report_id) WHERE role = 'OWNER' AND deleted = false} in the migration), not just enforced in
@@ -55,8 +58,9 @@ import java.util.UUID;
 public class ResponderAssignment extends BaseEntity {
 
     /**
-     * The report this assignment belongs to, referenced by id only (no FK — reporting is built in
-     * parallel). // TODO(wiring): link to the reporting module's {@code Report}.
+     * The report this assignment belongs to, referenced by id only (no FK — reporting is a peer module).
+     * Its existence is validated against reporting's published {@code ReportQueryApi.requireExists} before
+     * creation (ADR-0013 §4a, D21).
      */
     @Column(name = "report_id", nullable = false)
     private UUID reportId;
@@ -81,8 +85,13 @@ public class ResponderAssignment extends BaseEntity {
     private Instant assignedAt;
 
     /**
-     * The {@code identity} user (by id) who made the assignment (operator/admin/owner), for audit and
-     * conflict-of-interest checks. // TODO(wiring): resolve via identity API. Optional for system routing.
+     * The {@code identity} account (by id) who made the assignment (operator/admin/owner), for audit and
+     * conflict-of-interest checks. On the manual path this is the authenticated caller from the security
+     * context ({@code CurrentUser.requirePublicId()}) — already a valid account id, so it needs no
+     * re-validation; it is {@code null} for system routing ({@code RoutingHandler}, no human actor). When a
+     * UI needs to label the assigner by name it resolves this id through identity's published
+     * {@code ProfileLookupApi}/{@code UserAdminQueryApi} (sync {@code responders → identity}, ADR-0013 §1) —
+     * never by reaching into identity's tables.
      */
     @Column(name = "assigned_by_user_public_id")
     private UUID assignedByUserPublicId;

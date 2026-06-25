@@ -11,6 +11,7 @@ import com.taarifu.communications.domain.model.Announcement;
 import com.taarifu.communications.domain.model.enums.AnnouncementStatus;
 import com.taarifu.communications.domain.model.enums.Channel;
 import com.taarifu.communications.domain.repository.AnnouncementRepository;
+import com.taarifu.reporting.api.IssueCategoryQueryApi;
 import com.taarifu.search.api.SearchIndexApi;
 import com.taarifu.search.api.dto.SearchDocumentUpsert;
 import com.taarifu.search.domain.model.enums.SearchEntityType;
@@ -38,8 +39,11 @@ import java.util.stream.Collectors;
  * created in {@code DRAFT} with {@code moderationHeld=true} and cannot reach {@code PUBLISHED} until a
  * moderator clears the hold (the moderation review lives in the {@code moderation} module). The trust
  * decision is computed by the caller from the authenticated principal's roles/tier and passed in, so this
- * service stays free of identity internals (ARCHITECTURE §3.2). TODO(wiring): subscribe to the moderation
- * approval event to auto-publish a cleared hold.</p>
+ * service stays free of identity internals (ARCHITECTURE §3.2). The auto-publish-on-approval consumer is
+ * ready ({@link #approveAndPublish}); CROSS-MODULE: it can be driven by an outbox handler once moderation
+ * publishes a per-subject content-decision event for an {@code APPROVE} of a held {@code ANNOUNCEMENT}.
+ * Today moderation emits only the account-scoped {@code ModerationSanctionApplied}, so a moderator's
+ * approval still reaches this service via the in-process admin call site, not an event.</p>
  *
  * <p>WHY the event is appended to the transactional <b>outbox</b> (ADR-0014), not raised in-process:
  * {@link OutboxWriter#append} runs with {@code Propagation.MANDATORY} inside <i>this</i> service's
@@ -76,6 +80,7 @@ public class AnnouncementService {
     private final OutboxWriter outboxWriter;
     private final ClockPort clock;
     private final SearchIndexApi searchIndex;
+    private final IssueCategoryQueryApi issueCategories;
 
     /**
      * @param announcementRepository announcement persistence.
@@ -87,15 +92,23 @@ public class AnnouncementService {
      *                               service pushes a public, PII-free announcement projection on publish and
      *                               removes it on any non-published state. Injected as the {@code api}
      *                               interface, never search's implementation/internals (ADR-0013 §1).
+     * @param issueCategories        the reporting module's published category-validation port (ADR-0013 §1,
+     *                               §4a); used to reject a {@code categoryId} that does not name a live issue
+     *                               category at publish time, so a category-tagged announcement (and its
+     *                               category-follow fan-out) can never reference a non-existent/retired
+     *                               category. A synchronous {@code communications → reporting} {@code api → api}
+     *                               read — never a reach into reporting's internals (ARCHITECTURE §3.2).
      */
     public AnnouncementService(AnnouncementRepository announcementRepository,
                                OutboxWriter outboxWriter,
                                ClockPort clock,
-                               SearchIndexApi searchIndex) {
+                               SearchIndexApi searchIndex,
+                               IssueCategoryQueryApi issueCategories) {
         this.announcementRepository = announcementRepository;
         this.outboxWriter = outboxWriter;
         this.clock = clock;
         this.searchIndex = searchIndex;
+        this.issueCategories = issueCategories;
     }
 
     /**
@@ -126,6 +139,7 @@ public class AnnouncementService {
                                 Instant publishAt, Instant expireAt) {
         Set<Channel> channels = parseChannels(channelNames);
         validateWindow(publishAt, expireAt);
+        validateCategory(categoryId);
 
         Announcement a = Announcement.draft(authorProfileId, title, bodySw, bodyEn);
         a.targetAudience(
@@ -147,7 +161,7 @@ public class AnnouncementService {
         a.publish(clock.now());
         Announcement saved = announcementRepository.save(a);
         emitIfPublished(saved);
-        indexForDiscovery(saved);
+        reindexForDiscovery(saved);
         return saved;
     }
 
@@ -225,8 +239,11 @@ public class AnnouncementService {
      * Clears a moderation hold and publishes (the moderator-approval path). Idempotent: a non-held or
      * already-published announcement is returned unchanged.
      *
-     * <p>TODO(wiring): this is invoked today only by tests / a future moderation-decision consumer; the
-     * moderator authorisation is enforced at that call site, not here.</p>
+     * <p>This is the ready receiver for an approval decision: it is invoked today by the moderator admin call
+     * site (which enforces the moderator authorisation — not enforced here). CROSS-MODULE: it is also the method
+     * an outbox handler would call to <b>auto-publish a cleared hold</b> once moderation publishes a per-subject
+     * content-decision event for an {@code APPROVE} of a held {@code ANNOUNCEMENT} (moderation emits only the
+     * account-scoped {@code ModerationSanctionApplied} today — no such per-subject event exists yet).</p>
      *
      * @param announcementPublicId the held announcement's public id.
      * @return the now-published announcement.
@@ -240,7 +257,7 @@ public class AnnouncementService {
         a.publish(clock.now());
         Announcement saved = announcementRepository.save(a);
         emitIfPublished(saved);
-        indexForDiscovery(saved);
+        reindexForDiscovery(saved);
         return saved;
     }
 
@@ -256,7 +273,7 @@ public class AnnouncementService {
      * the feed (the feed query filters on the window) yet remained a {@code PUBLISHED} row in
      * {@code search_document}, discoverable forever. This closes that leak. An expiry scheduler/operator
      * unpublish action calls this; it transitions the row to {@code EXPIRED} and routes through the same single
-     * {@link #indexForDiscovery(Announcement)} fence, whose non-PUBLISHED branch <b>removes</b> the projection
+     * {@link #reindexForDiscovery(Announcement)} fence, whose non-PUBLISHED branch <b>removes</b> the projection
      * (idempotent — removing an absent/already-removed row is a no-op, ADR-0017 §1).</p>
      *
      * <p>Idempotent: an already-{@code EXPIRED} announcement is returned unchanged but still has its (absent)
@@ -272,9 +289,9 @@ public class AnnouncementService {
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND));
         a.expire();
         Announcement saved = announcementRepository.save(a);
-        // No longer PUBLISHED → indexForDiscovery removes the projection so the expired/unpublished
+        // No longer PUBLISHED → reindexForDiscovery removes the projection so the expired/unpublished
         // announcement is positively pulled from public discovery (the no-leak rule, PRD §18, ADR-0017 §1).
-        indexForDiscovery(saved);
+        reindexForDiscovery(saved);
         return saved;
     }
 
@@ -314,6 +331,15 @@ public class AnnouncementService {
      * cross-module call — ADR-0013 §1). Called on the went-live funnel after the row is saved, inside this
      * service's {@code @Transactional}.
      *
+     * <p><b>This is the single shared discovery fence (DRY — the fence cannot drift, ADR-0017 §1):</b> it is
+     * {@code public} because it is reused verbatim by the <b>backfill</b> adapter
+     * ({@code AnnouncementSearchBackfillSource}) as well as the three live callers ({@link #publish},
+     * {@link #approveAndPublish}, {@link #expire}). The {@code SearchBackfillSource} contract is explicit that a
+     * backfill MUST reuse the live producer's projection/visibility logic — "ideally the very same method" — so
+     * the index-vs-no-index decision and the public projection shape can never diverge between the live write path
+     * and the one-off backfill. An announcement the backfill indexes is, by construction, one the live path would
+     * have indexed identically.</p>
+     *
      * <p><b>Index ⇔ public visibility (the no-leak rule, PRD §18, ADR-0017 §1/§4):</b></p>
      * <ul>
      *   <li>{@code PUBLISHED} → <b>upsert</b> a {@code PUBLIC} projection so the announcement is discoverable;</li>
@@ -335,8 +361,11 @@ public class AnnouncementService {
      *
      * @param a the just-saved announcement; its current {@link Announcement#getStatus() status} decides
      *          upsert-vs-remove.
+     * @return {@code true} if the announcement was <b>upserted</b> into discovery (it is {@code PUBLISHED} /
+     *         public-safe); {@code false} if it was instead <b>removed</b> (any non-published state). The live
+     *         callers ignore the result; the backfill adapter uses it to count only the rows it actually indexed.
      */
-    private void indexForDiscovery(Announcement a) {
+    public boolean reindexForDiscovery(Announcement a) {
         if (a.getStatus() == AnnouncementStatus.PUBLISHED) {
             UUID areaFacet = a.getAudienceAreaIds().stream().findFirst().orElse(null);
             searchIndex.upsert(new SearchDocumentUpsert(
@@ -350,10 +379,11 @@ public class AnnouncementService {
                     a.getCategoryId(),
                     SearchVisibility.PUBLIC,
                     a.getAuthorProfileId()));
-        } else {
-            // Not publicly visible (draft/held/scheduled/expired) → must not be discoverable. Idempotent.
-            searchIndex.remove(SearchEntityType.ANNOUNCEMENT, a.getPublicId());
+            return true;
         }
+        // Not publicly visible (draft/held/scheduled/expired) → must not be discoverable. Idempotent.
+        searchIndex.remove(SearchEntityType.ANNOUNCEMENT, a.getPublicId());
+        return false;
     }
 
     /**
@@ -397,6 +427,28 @@ public class AnnouncementService {
     private void validateWindow(Instant publishAt, Instant expireAt) {
         if (publishAt != null && expireAt != null && !expireAt.isAfter(publishAt)) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED);
+        }
+    }
+
+    /**
+     * Validates an optional category tag against the reporting module's live category directory at publish time
+     * (resolves the entity's deferred {@code categoryId} cross-module wiring — ADR-0013 §1/§4a).
+     *
+     * <p>WHY validate here (not in the entity): the issue-category catalogue is owned by the {@code reporting}
+     * module; this module references a category by bare {@code UUID} only and must not FK-join or reach into
+     * reporting's tables (ARCHITECTURE §3.2). The published {@link IssueCategoryQueryApi#requireCategory} port is
+     * the sanctioned synchronous read that asserts the category exists and is not retired/soft-deleted, throwing a
+     * localised {@code NOT_FOUND} otherwise. Validating at the boundary keeps a category-tagged announcement — and
+     * the category-follow fan-out it drives ({@link AnnouncementPublishedHandler}) — from ever pointing at a
+     * non-existent category. A {@code null} category is the "untagged" case and is skipped (no call made).</p>
+     *
+     * @param categoryId the optional category public id to validate, or {@code null} for an untagged announcement.
+     * @throws ApiException {@link ErrorCode#NOT_FOUND} (raised by the reporting port) if a non-null category id
+     *                      does not name a live issue category.
+     */
+    private void validateCategory(UUID categoryId) {
+        if (categoryId != null) {
+            issueCategories.requireCategory(categoryId);
         }
     }
 }

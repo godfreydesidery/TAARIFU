@@ -27,9 +27,10 @@ import java.util.UUID;
  * it checks <b>tier (T3) + electoral scope + one-per-person</b> only and must <b>never</b> read a token
  * balance. The T3 gate is the {@code @RequiresTier("T3")} on the sign endpoint (re-resolved live by
  * {@code RequiresTierAspect}); the one-per-person guarantee is <b>this unique constraint</b>; the
- * electoral-scope check and the no-self-petition conflict guard (D13/D16) are applied in the service via
- * the shared {@link com.taarifu.common.security.ScopeGuard} seam (electoral-scope enforcement is wired in
- * integration — see the service // TODO(wiring)). The unique constraint is the load-bearing
+ * electoral-scope check and the no-self-petition conflict guard (D13/D16) are applied in the service: the
+ * no-self guard via the shared {@link com.taarifu.common.security.ScopeGuard} seam, and the two-tier
+ * electoral-scope check (constituency/ward) via institutions' {@code RepresentativeQueryApi} × identity's
+ * {@code ElectoralScopeApi} (both api → api, no import). The unique constraint is the load-bearing
  * "one person = one signature regardless of token balance" rule (PRD §23.5).</p>
  *
  * <p>WHY the petition side is a real FK but the signer is a UUID: the petition is owned by this very

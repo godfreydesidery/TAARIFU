@@ -49,10 +49,14 @@ import java.util.UUID;
  * content is screened so the item is also prioritised by what it actually contains. The scorable text is
  * fetched from the owning module's published {@code SubjectContentQueryApi} (the boundary-safe registry — no
  * content-owner import); when no such port is published the screen is skipped and the item still goes to a
- * human (EI-18 floor). This is the live wiring. (2) Content-owning modules' create paths (to screen on
- * publish, before any flag) and the §25.3 sensitive-report stricter pre-routing hold remain
- * {@code // TODO(wiring)} until those owners call in — the same deferral discipline as the existing
- * routing/takedown wirings (ADR-0013 §2).</p>
+ * human (EI-18 floor). This is the live wiring. (2) PHASE-3: screening on content <i>create</i> (before any
+ * flag) and the §25.3 sensitive-report stricter pre-routing hold need each content-owning module
+ * (engagement comments, communications announcements, reporting) to call {@code triage(...)} on its own
+ * create/publish path — moderation cannot reach into those modules to trigger it (ARCHITECTURE.md §3.2). The
+ * receiving seam is already published and stable: this {@code @Transactional} {@code triage} method (an
+ * {@code application.service} bean owners can inject) plus the {@code SubjectContentQueryApi} registry. Until
+ * an owner wires its create path the flag path remains the only screen entry, which is sufficient for launch
+ * (the human pipeline + flagging is the floor).</p>
  */
 @Service
 public class AutoAssistService {

@@ -33,7 +33,9 @@ import java.util.UUID;
  * to import here. The {@code representativeId} existence is confirmed via institutions' published
  * {@code RepresentativeQueryApi.exists} port in {@code CurationService} before persistence (ADR-0013).
  * {@code linkedProjectIds} are not yet validated — there is no projects module/port to resolve them
- * against (// TODO(wiring): resolve via the projects API once that seam exists).</p>
+ * against (// PHASE-3: needs the projects module's published {@code projects.api.ProjectQueryApi}; the
+ * {@code CurationService} referenced-existence guard is the ready receiver, exactly as it already validates
+ * {@code representativeId} via {@code RepresentativeQueryApi.exists}).</p>
  */
 @Entity
 @Table(name = "promise", indexes = {
@@ -70,7 +72,8 @@ public class Promise extends BaseEntity {
 
     /**
      * Public ids of projects this promise is linked to (projects module — referenced by id only, never
-     * FKs). Stored in side table {@code promise_project} (// TODO(wiring): resolve via projects API).
+     * FKs). Stored in side table {@code promise_project} (// PHASE-3: needs the projects module's published
+     * {@code projects.api.ProjectQueryApi} for id validation; {@code CurationService} is the ready receiver).
      */
     @ElementCollection(fetch = FetchType.LAZY)
     @CollectionTable(name = "promise_project",

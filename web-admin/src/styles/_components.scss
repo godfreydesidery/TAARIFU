@@ -238,6 +238,104 @@ code, .code-chip {
 }
 
 // -----------------------------------------------------------------------------
+// Detail drawer — a right-anchored slide-over panel for an entity's full detail
+// + operator actions (e.g. a payment's status timeline + refund/void). Theme-
+// aware and dismissible by backdrop/Esc. Built on the design tokens so it matches
+// the elevated-card look. Reduced-motion respected.
+// -----------------------------------------------------------------------------
+.tf-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1055; // above Bootstrap modal-backdrop (1050), below toasts.
+  animation: tf-fade-in var(--tf-dur) var(--tf-ease);
+}
+.tf-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1060;
+  width: min(34rem, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--tf-surface);
+  border-left: 1px solid var(--tf-border);
+  box-shadow: var(--tf-shadow-lg);
+  animation: tf-slide-in-right var(--tf-dur) var(--tf-ease);
+}
+.tf-drawer__header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--tf-space-3);
+  padding: var(--tf-space-4);
+  border-bottom: 1px solid var(--tf-border);
+}
+.tf-drawer__title {
+  font-size: var(--tf-fs-lg);
+  font-weight: 600;
+  color: var(--tf-text-strong);
+  margin: 0;
+}
+.tf-drawer__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--tf-space-4);
+}
+.tf-drawer__footer {
+  flex: 0 0 auto;
+  padding: var(--tf-space-3) var(--tf-space-4);
+  border-top: 1px solid var(--tf-border);
+  background: var(--tf-surface-muted);
+}
+
+// Definition grid — label/value pairs in the drawer body.
+.tf-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(7rem, 35%) 1fr;
+  gap: 0.55rem var(--tf-space-3);
+  margin: 0;
+}
+.tf-detail-grid dt {
+  font-size: var(--tf-fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--tf-text-muted);
+  align-self: center;
+}
+.tf-detail-grid dd { margin: 0; color: var(--tf-text); word-break: break-word; }
+
+// Status timeline — vertical stepper derived from the entity's lifecycle.
+.tf-timeline { list-style: none; margin: 0; padding: 0; }
+.tf-timeline__item {
+  position: relative;
+  padding: 0 0 var(--tf-space-3) var(--tf-space-5);
+  border-left: 2px solid var(--tf-border);
+}
+.tf-timeline__item:last-child { padding-bottom: 0; }
+.tf-timeline__dot {
+  position: absolute;
+  left: -0.5rem;
+  top: 0.1rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  background: var(--tf-neutral-300);
+  border: 2px solid var(--tf-surface);
+}
+.tf-timeline__item.is-current .tf-timeline__dot { background: var(--tf-primary); }
+.tf-timeline__when { font-size: var(--tf-fs-xs); color: var(--tf-text-muted); margin: 0.1rem 0 0; }
+
+@keyframes tf-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tf-slide-in-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .tf-drawer-backdrop, .tf-drawer { animation: none; }
+}
+
+// -----------------------------------------------------------------------------
 // Filter bar — the row of search/select controls above a list.
 // -----------------------------------------------------------------------------
 .filter-bar {

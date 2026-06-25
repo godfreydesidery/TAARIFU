@@ -13,11 +13,16 @@ import java.util.UUID;
  * (SLA clocks, citizen timeline) and communications module (notify the responder) subscribe to it via
  * the transactional outbox/bus — never by reaching into this module's tables (ARCHITECTURE.md §3.2/§8).</p>
  *
- * <p>WHY an event record in {@code api.event} (not a direct call into reporting): reporting is built in
- * parallel and is a peer feature module; the only permitted cross-feature coupling is via events. This
- * record carries ids only (no entities) so subscribers stay decoupled from this module's model.
- * // TODO(wiring): the actual outbox publication is added when the outbox/bus lands; today this record
- * defines the contract so the seam exists.</p>
+ * <p>WHY an event record in {@code api.event} (not a direct call into reporting): reporting is a peer
+ * feature module; the only permitted cross-feature coupling is via events. This record carries ids/enums
+ * only (no entities) so subscribers stay decoupled from this module's model.</p>
+ *
+ * <p>Published on the transactional outbox under {@link ResponderEventTypes#RESPONDER_ASSIGNED} by both
+ * producers that create an OWNER assignment: the system {@code RoutingHandler} (on {@code REPORT_ROUTED})
+ * and the manual {@code ResponderAdminService.assignResponder} path. Reporting's
+ * {@code ResponderAssignedHandler} consumes it to set {@code Report.assignedResponderId} and transition the
+ * report {@code NEW → ASSIGNED}, closing the routing round-trip asynchronously — no synchronous
+ * {@code responders → reporting} write (ADR-0013 §2; ADR-0014 §5b, D21).</p>
  *
  * @param assignmentId   the new assignment's public id.
  * @param reportId       the report the responder was assigned to (loose reference).

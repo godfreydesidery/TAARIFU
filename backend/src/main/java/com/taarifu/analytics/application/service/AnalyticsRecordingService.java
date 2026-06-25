@@ -19,8 +19,10 @@ import java.util.UUID;
  * only cross-module surface, impl lives in {@code application.service}).
  *
  * <p>Responsibility: validates the command minimally, defaults the idempotency key + occurred-at, and
- * appends the fact exactly once. It is the seam sibling modules' outbox workers wire to ({@code //
- * TODO(wiring)} until the outbox increment, ADR-0013 §2).</p>
+ * appends the fact exactly once. It is the seam {@code AnalyticsEventHandler} (the outbox consumer) calls when
+ * the relay delivers a {@code CIVIC_ACTIVITY_RECORDED} event emitted by a sibling module — the outbox
+ * increment is built and live (ADR-0013 §2), so this recorder runs asynchronously off the relay thread, never
+ * on a citizen's critical path.</p>
  *
  * <p>WHY two-layer idempotency (pre-check + unique-constraint catch): an {@code existsByEventId} pre-check
  * keeps the common replay cheap, but two concurrent workers could both pass it; the globally-unique

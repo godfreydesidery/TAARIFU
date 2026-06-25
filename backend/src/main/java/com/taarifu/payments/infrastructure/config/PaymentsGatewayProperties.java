@@ -28,6 +28,10 @@ import java.time.Duration;
  *                           {@code 0} on the stub.
  * @param currency       ISO-4217 currency code (default {@code TZS}).
  * @param requestTimeout per-request connect/read timeout so a slow rail never piles up threads (default 8s).
+ * @param merchantId     the rail-side merchant/short-code/party identifier some rails require in the
+ *                       collection request (M-Pesa {@code BusinessShortCode}, Airtel/HaloPesa merchant id);
+ *                       <b>not a secret</b> (it is sent in the request), but still env-bound so it is not
+ *                       hard-coded; {@code null}/blank when a rail does not need one.
  */
 @ConfigurationProperties(prefix = "taarifu.payments.gateway")
 public record PaymentsGatewayProperties(
@@ -37,7 +41,8 @@ public record PaymentsGatewayProperties(
         String signatureHeader,
         long priceMinorPerToken,
         String currency,
-        Duration requestTimeout
+        Duration requestTimeout,
+        String merchantId
 ) {
 
     /**
@@ -57,5 +62,25 @@ public record PaymentsGatewayProperties(
         if (requestTimeout == null) {
             requestTimeout = Duration.ofSeconds(8);
         }
+    }
+
+    /**
+     * Backward-compatible constructor (pre-{@code merchantId}) that defaults the merchant id to {@code null}.
+     *
+     * <p>WHY retained: existing tests and any caller built before the {@code merchantId} addition keep
+     * compiling unchanged; a rail that needs a merchant id binds it via configuration (the canonical
+     * constructor) — the seven-arg form is for the rails that do not (KISS, no churn).</p>
+     *
+     * @param provider           see canonical.
+     * @param baseUrl            see canonical.
+     * @param hmacSecret         see canonical.
+     * @param signatureHeader    see canonical.
+     * @param priceMinorPerToken see canonical.
+     * @param currency           see canonical.
+     * @param requestTimeout     see canonical.
+     */
+    public PaymentsGatewayProperties(String provider, String baseUrl, String hmacSecret, String signatureHeader,
+                                     long priceMinorPerToken, String currency, Duration requestTimeout) {
+        this(provider, baseUrl, hmacSecret, signatureHeader, priceMinorPerToken, currency, requestTimeout, null);
     }
 }

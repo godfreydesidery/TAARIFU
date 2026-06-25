@@ -47,7 +47,7 @@ test('traverse every admin area without an auth bounce or crash', async ({ page 
     await page.goto(route);
     await page.waitForLoadState('networkidle').catch(() => {});
     expect.soft(page.url(), `${route} kept the session`).not.toContain('/login');
-    expect.soft(await page.locator('#app-sidenav').count(), `${route} rendered the shell`).toBeGreaterThan(0);
+    expect.soft(await page.locator('#app-sidebar').count(), `${route} rendered the shell`).toBeGreaterThan(0);
     await page.screenshot({ path: `shots/${String(i).padStart(2, '0')}-${name}.png`, fullPage: true });
     i++;
   }

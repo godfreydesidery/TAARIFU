@@ -1,0 +1,125 @@
+{
+  "__comment": "Taarifu — adapters, outbox throughput, error-budget burn, and pod-health dashboard. Grounding: ARCHITECTURE §7 (per-adapter metrics: success rate / p95 / circuit state — DI6), §8 (outbox/DLQ), §9 (observability), PRD §15 (SLO 99.9%, error-budget). Per-adapter panels render once the Resilience4j adapter metrics land (resilience4j_circuitbreaker_state etc.); they degrade to 'No data' until then. kube_* panels need kube-state-metrics in the cluster (Helm/K8s topology). Import via provisioning alongside taarifu-backend-overview.json.",
+  "annotations": { "list": [ { "builtIn": 1, "datasource": { "type": "grafana", "uid": "-- Grafana --" }, "enable": true, "hide": true, "name": "Annotations & Alerts", "type": "dashboard" } ] },
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "tags": ["taarifu", "backend", "adapters", "slo", "outbox"],
+  "title": "Taarifu Backend — Adapters, Outbox & SLO Burn",
+  "uid": "taarifu-adapters-slo",
+  "timezone": "utc",
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      { "name": "datasource", "type": "datasource", "query": "prometheus", "current": { "text": "Prometheus", "value": "taarifu-prometheus" }, "hide": 0 }
+    ]
+  },
+  "panels": [
+    { "type": "row", "title": "Error-budget burn (PRD §15 — 99.9% monthly => 0.1% budget)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false, "panels": [] },
+    {
+      "type": "stat",
+      "title": "Fast burn (1h) — 5xx ratio vs 0.1% budget",
+      "description": "Multiple of the error budget being burned over 1h. >14.4x for 1h is the classic fast-burn page threshold (PRD §15).",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 5 }, { "color": "red", "value": 14.4 } ] } } },
+      "targets": [
+        { "refId": "A", "expr": "(sum(rate(http_server_requests_seconds_count{job=\"taarifu-backend\",status=~\"5..\"}[1h])) / clamp_min(sum(rate(http_server_requests_seconds_count{job=\"taarifu-backend\"}[1h])), 0.001)) / 0.001" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Slow burn (6h) — 5xx ratio vs budget",
+      "description": ">6x over 6h is the slow-burn ticket threshold (PRD §15).",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 3 }, { "color": "red", "value": 6 } ] } } },
+      "targets": [
+        { "refId": "A", "expr": "(sum(rate(http_server_requests_seconds_count{job=\"taarifu-backend\",status=~\"5..\"}[6h])) / clamp_min(sum(rate(http_server_requests_seconds_count{job=\"taarifu-backend\"}[6h])), 0.001)) / 0.001" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Availability proxy (30d non-5xx %)",
+      "description": "Share of requests NOT 5xx over 30d — a proxy for the 99.9% SLO (PRD §15).",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 4, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 0.999 } ] } } },
+      "targets": [
+        { "refId": "A", "expr": "1 - (sum(rate(http_server_requests_seconds_count{job=\"taarifu-backend\",status=~\"5..\"}[30d])) / clamp_min(sum(rate(http_server_requests_seconds_count{job=\"taarifu-backend\"}[30d])), 0.001))" }
+      ]
+    },
+    { "type": "row", "title": "Outbox throughput & DLQ (ARCHITECTURE §8)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 }, "collapsed": false, "panels": [] },
+    {
+      "type": "stat",
+      "title": "Outbox DLQ depth (FAILED)",
+      "description": "taarifu.outbox.failed gauge. >0 => a side-effect dropped after the attempt cap. Fix cause, replay (RUNBOOK #dlq-replay).",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 50 } ] } } },
+      "targets": [ { "refId": "A", "expr": "max(taarifu_outbox_failed{job=\"taarifu-backend\"})" } ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Outbox relay activity (events/s by outcome)",
+      "description": "Per-outcome relay rate if the relay exposes a counter (taarifu_outbox_dispatched_total / _failed_total). Degrades to 'No data' until the counters are added.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "dispatched", "expr": "sum(rate(taarifu_outbox_dispatched_total{job=\"taarifu-backend\"}[5m]))" },
+        { "refId": "B", "legendFormat": "failed", "expr": "sum(rate(taarifu_outbox_failed_total{job=\"taarifu-backend\"}[5m]))" }
+      ]
+    },
+    { "type": "row", "title": "Per-adapter health (DI6 — ARCHITECTURE §7)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 }, "collapsed": false, "panels": [] },
+    {
+      "type": "timeseries",
+      "title": "Resilience4j circuit-breaker state (1=open)",
+      "description": "Open circuit => the adapter is shedding to its degraded path (SMS/NIDA/FCM/email/payments). Renders once resilience4j-micrometer is wired (ARCHITECTURE §7).",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "short", "max": 1, "min": 0 } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{name}} {{state}}", "expr": "max by (name) (resilience4j_circuitbreaker_state{job=\"taarifu-backend\",state=\"open\"})" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Adapter call failure rate by name",
+      "description": "Resilience4j failed-call rate per adapter (per-adapter success/error, DI6).",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{name}} failed", "expr": "sum by (name) (rate(resilience4j_circuitbreaker_calls_seconds_count{job=\"taarifu-backend\",kind=\"failed\"}[5m]))" }
+      ]
+    },
+    { "type": "row", "title": "Datastores & runtime (USE)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 }, "collapsed": false, "panels": [] },
+    {
+      "type": "timeseries",
+      "title": "HikariCP connections (active vs max)",
+      "description": "Pool exhaustion drives write-latency SLO breaches (RUNBOOK #latency).",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 23 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "active", "expr": "max(hikaricp_connections_active{job=\"taarifu-backend\"})" },
+        { "refId": "B", "legendFormat": "pending", "expr": "max(hikaricp_connections_pending{job=\"taarifu-backend\"})" },
+        { "refId": "C", "legendFormat": "max", "expr": "max(hikaricp_connections_max{job=\"taarifu-backend\"})" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Backend pods Ready (Helm/K8s — kube-state-metrics)",
+      "description": "Available vs desired replicas for the backend Deployment. <desired sustained => a pod is CrashLooping (pages as BackendDown / KubePodCrashLooping).",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 23 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "available", "expr": "max(kube_deployment_status_replicas_available{deployment=~\".*-backend\"})" },
+        { "refId": "B", "legendFormat": "desired", "expr": "max(kube_deployment_spec_replicas{deployment=~\".*-backend\"})" }
+      ]
+    }
+  ]
+}

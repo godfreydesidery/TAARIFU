@@ -1,0 +1,93 @@
+# =============================================================================
+# Taarifu — Kubernetes-platform Prometheus alerting rules (Helm/K8s topology).
+#
+# COMPLEMENTS alerts.yml (the app/SLO rules: 5xx, latency, DLQ, JVM — which apply
+# to BOTH the compose and the K8s topology). THIS file adds platform alerts that
+# only make sense on Kubernetes: CrashLoopBackOff, stuck rollout, OOMKilled, HPA
+# pinned at max, PVC near-full. Load BOTH rule files in the cluster Prometheus
+# (e.g. via a PrometheusRule CR, or rule_files in prometheus.yml).
+#
+# Grounding: ARCHITECTURE §9 (alert on CrashLoopBackOff/deploy failure), PRD §15
+# (availability/capacity), deploy/README §10. Requires kube-state-metrics +
+# node/kubelet metrics in the cluster. Every alert links the same RUNBOOK.
+# =============================================================================
+groups:
+  - name: taarifu-k8s-workload
+    rules:
+      # A backend pod is restarting in a tight loop — page (citizen-facing).
+      - alert: KubePodCrashLooping
+        expr: |
+          max by (namespace, pod) (
+            rate(kube_pod_container_status_restarts_total{pod=~"taarifu.*-backend.*"}[10m])
+          ) * 600 > 3
+        for: 5m
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "Backend pod {{ $labels.pod }} is CrashLooping"
+          description: "{{ $labels.pod }} restarted >3 times in 10m. Check logs + recent deploy/migration. Likely pages as BackendDown too."
+          runbook: "deploy/observability/RUNBOOK.md#backenddown"
+
+      # A pod was OOMKilled — heap/limit mismatch (RUNBOOK #jvm).
+      - alert: KubePodOOMKilled
+        expr: |
+          max by (namespace, pod) (
+            kube_pod_container_status_last_terminated_reason{reason="OOMKilled", pod=~"taarifu.*"}
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "Pod {{ $labels.pod }} was OOMKilled"
+          description: "Container hit its memory limit. Raise the limit/request or fix a leak; ensure MaxRAMPercentage leaves headroom (RUNBOOK #jvm)."
+          runbook: "deploy/observability/RUNBOOK.md#jvm"
+
+      # A rollout has not reached the desired replica count — stuck deploy.
+      - alert: KubeDeploymentRolloutStuck
+        expr: |
+          (
+            kube_deployment_status_replicas_available{deployment=~"taarifu.*-backend"}
+            < kube_deployment_spec_replicas{deployment=~"taarifu.*-backend"}
+          )
+        for: 15m
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "Deployment {{ $labels.deployment }} rollout stuck"
+          description: "available < desired for >15m. --atomic should have rolled back a CI deploy; a manual change may need `helm rollback` (RUNBOOK #rollback)."
+          runbook: "deploy/observability/RUNBOOK.md#rollback"
+
+  - name: taarifu-k8s-capacity
+    rules:
+      # HPA pinned at max — no headroom left for a further spike (PRD §15 capacity).
+      - alert: HpaMaxedOut
+        expr: |
+          kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler=~"taarifu.*-backend"}
+          >= kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=~"taarifu.*-backend"}
+        for: 15m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "Backend HPA at max replicas"
+          description: "Running at maxReplicas for >15m — no autoscale headroom. Raise maxReplicas or investigate load (election-period headroom, deploy/README §9)."
+          runbook: "deploy/observability/RUNBOOK.md#jvm"
+
+      # PVC (DB/Redis) approaching full — data-loss / write-failure risk.
+      - alert: PersistentVolumeFillingUp
+        expr: |
+          (
+            kubelet_volume_stats_available_bytes{persistentvolumeclaim=~"data-taarifu.*"}
+            / clamp_min(kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~"data-taarifu.*"}, 1)
+          ) < 0.15
+        for: 10m
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "PVC {{ $labels.persistentvolumeclaim }} <15% free"
+          description: "Volume nearly full. Expand the PVC or free space NOW — a full DB volume stops writes (citizen path). Check backups before resizing (RUNBOOK #backup-restore)."
+          runbook: "deploy/observability/RUNBOOK.md#backup-restore"

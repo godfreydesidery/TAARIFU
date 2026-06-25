@@ -125,7 +125,13 @@ CI runs fully (build, test, SAST, scan) **without** any secret; only image push 
    `:vX.Y.Z`. The **same image** is promoted dev -> staging -> prod (no rebuild).
 4. **Deploy** — start lean (managed VM + systemd / `docker compose` on a host),
    grow to orchestrated containers (Helm/Kubernetes) when load and team justify it
-   (PRD §16). Keep the migration seam clean; don't impose Kubernetes early.
+   (PRD §16). Keep the migration seam clean; don't impose Kubernetes early. The
+   **orchestrated (grow-to) topology** is `deploy/helm/taarifu` (backend + HPA + PDB,
+   Redis, Angular admin host, optional in-cluster PostGIS, ingress/TLS, NetworkPolicy)
+   driven by **`.github/workflows/cd.yml`** (build→test→scan→push→deploy-staging gated,
+   with `helm rollback` one-command rollback). See **ADR-0021** for the topology
+   decision, `deploy/helm/secrets/` for the no-secrets-in-git secrets layer, and
+   `deploy/runbooks/` for deploy/rollback/DR/on-call runbooks.
 5. **Config & secrets** — 12-factor: all config via env; secrets from the env /
    secret manager (Vault / cloud KMS), never from source. CORS is an explicit
    allow-list (no `*`-with-credentials). Actuator exposes only `health,info`.

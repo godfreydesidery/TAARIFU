@@ -1,0 +1,89 @@
+# =============================================================================
+# Web admin — Angular 18 static bundle served by a non-root nginx (port 8080).
+# The SPA calls the backend via the ingress path /api/v1 (no hardcoded backend URL
+# in the bundle — CLAUDE.md §8). Stateless: scale freely, no PVC.
+# =============================================================================
+{{- if .Values.webAdmin.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "taarifu.fullname" . }}-web-admin
+  labels:
+    {{- include "taarifu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web-admin
+spec:
+  replicas: {{ .Values.webAdmin.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "taarifu.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web-admin
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "taarifu.labels" . | nindent 8 }}
+        app.kubernetes.io/component: web-admin
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: web-admin
+          {{- if not .Values.webAdmin.image.tag }}
+          {{- fail "webAdmin.image.tag is required when webAdmin.enabled (or set webAdmin.enabled=false)." }}
+          {{- end }}
+          image: "{{ .Values.webAdmin.image.repository }}:{{ .Values.webAdmin.image.tag }}"
+          imagePullPolicy: {{ .Values.webAdmin.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.webAdmin.containerPort }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.webAdmin.resources | nindent 12 }}
+          volumeMounts:
+            # nginx needs writable cache/run dirs with a read-only root FS.
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "taarifu.fullname" . }}-web-admin
+  labels:
+    {{- include "taarifu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web-admin
+spec:
+  type: {{ .Values.webAdmin.service.type }}
+  selector:
+    {{- include "taarifu.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web-admin
+  ports:
+    - name: http
+      port: {{ .Values.webAdmin.service.port }}
+      targetPort: http
+{{- end }}

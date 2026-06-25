@@ -1,0 +1,46 @@
+# =============================================================================
+# Staging overlay — mirrors prod placement, smaller footprint, synthetic data only.
+# NO real PII in non-prod (R10): identity/geo use stubbed/synthetic data.
+#   helm upgrade --install taarifu deploy/helm/taarifu -n taarifu-staging \
+#     -f deploy/helm/taarifu/values-staging.yaml --set backend.image.tag=<git-sha>
+# =============================================================================
+environment: staging
+
+backend:
+  replicaCount: 2
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 4
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  corsOrigins: "https://admin.staging.taarifu.example"
+  config:
+    SPRING_PROFILES_ACTIVE: staging
+    TAARIFU_RATELIMIT_BACKEND: redis
+    # MFA stays enforced in staging too (RUNBOOK #mfa) — shared-env staff tokens.
+    TAARIFU_MFA_ENFORCED: "true"
+
+ingress:
+  hosts:
+    - host: admin.staging.taarifu.example
+      paths:
+        - path: /api/v1
+          pathType: Prefix
+          service: backend
+        - path: /
+          pathType: Prefix
+          service: web-admin
+  tls:
+    - hosts:
+        - admin.staging.taarifu.example
+      secretName: taarifu-staging-tls
+
+postgresql:
+  # Staging may use a managed staging DB; flip to true for an ephemeral in-cluster one.
+  deployInCluster: false

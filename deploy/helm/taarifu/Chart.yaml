@@ -1,0 +1,37 @@
+# =============================================================================
+# Taarifu — Helm chart for the ORCHESTRATED (Kubernetes) production topology.
+#
+# This is the "grow-to" rung of deploy/README §5 ("start lean — managed VM +
+# compose; grow to Helm/Kubernetes when load + team justify it", PRD §16). The
+# docker-compose.prod.yml single-host stack remains the lean default; THIS chart
+# is what we cut over to once concurrent load justifies horizontal scale + HPA.
+#
+# Deploys: backend (Spring Boot, Deployment+HPA), Redis (single replica), the
+# Angular admin static host (nginx Deployment), and OPTIONALLY an in-cluster
+# PostgreSQL+PostGIS (off by default — prefer a managed/in-country DB; ADR-0021).
+#
+# Grounding: ARCHITECTURE.md §2 (pinned stack), §9 (observability/health),
+# deploy/README.md §5/§7/§8, PRD §15 (SLOs), §16 (architecture), §18 (security),
+# D-Q9 (in-country-where-feasible hosting). See ADR-0021 for the topology decision.
+# =============================================================================
+apiVersion: v2
+name: taarifu
+description: Taarifu civic-engagement platform — backend API, Redis, admin static host, optional in-cluster PostGIS.
+type: application
+
+# Chart version (bump on chart changes). appVersion tracks the backend image line;
+# the ACTUAL deployed image tag is the immutable git-sha set at deploy time
+# (--set image.tag=<git-sha>), never this string (deploy/README §5).
+version: 0.1.0
+appVersion: "0.1.0"
+
+keywords:
+  - taarifu
+  - civic-engagement
+  - tanzania
+home: https://github.com/desideryg/taarifu
+maintainers:
+  - name: SRE / DevOps (Peter Nyerere)
+
+# kubeVersion floor: probes use startupProbe (1.18+) and HPA autoscaling/v2 (1.23+).
+kubeVersion: ">=1.23.0-0"

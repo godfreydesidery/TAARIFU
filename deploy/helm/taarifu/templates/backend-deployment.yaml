@@ -1,0 +1,180 @@
+# =============================================================================
+# Backend Deployment — Spring Boot modular monolith (:8081, /api/v1).
+#
+# Grounding: ARCHITECTURE §9 (probes/health groups, metrics), deploy/README §7
+# (liveness/readiness incl DB), PRD §15 (resource sizing for SLOs), §18 (non-root,
+# read-only FS, no secrets in source — all from referenced Secrets).
+#
+# Probes use the SAME actuator paths the compose stack + RUNBOOK use:
+#   liveness  = /api/v1/actuator/health/liveness  (cheap; excludes deps)
+#   readiness = /api/v1/actuator/health/readiness (group includes DB — application.yml)
+# A startupProbe protects a slow first boot (Flyway migrate+validate) from being killed.
+# =============================================================================
+{{- if not .Values.backend.image.tag }}
+{{- fail "backend.image.tag is required — deploy the immutable git-sha CI scanned (deploy/README §5). Refusing to deploy :latest / empty tag." }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "taarifu.fullname" . }}-backend
+  labels:
+    {{- include "taarifu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  {{- if not .Values.backend.hpa.enabled }}
+  replicas: {{ .Values.backend.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "taarifu.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  strategy:
+    # Rolling update with zero-downtime: never take a pod down before a new one is Ready.
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "taarifu.labels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+      annotations:
+        {{- if .Values.backend.metrics.enabled }}
+        # Pod-level scrape annotations (for a plain Prometheus, not the operator).
+        # Restricted to the monitoring namespace by the NetworkPolicy (PRD §18).
+        prometheus.io/scrape: "true"
+        prometheus.io/path: {{ .Values.backend.metrics.path | quote }}
+        prometheus.io/port: {{ .Values.backend.containerPort | quote }}
+        {{- end }}
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        {{- if .Values.backend.affinity }}
+        {{- toYaml .Values.backend.affinity | nindent 8 }}
+        {{- else }}
+        # Spread replicas across nodes so one node failure never takes the API down.
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "taarifu.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: backend
+        {{- end }}
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.containerPort }}
+              protocol: TCP
+          env:
+            # --- JVM container-awareness (RUNBOOK #jvm). ---
+            - name: JAVA_OPTS
+              value: {{ .Values.backend.jvmOpts | quote }}
+            # --- Datasource: URL/user from values; PASSWORD from the core Secret. ---
+            - name: TAARIFU_DB_URL
+              value: {{ include "taarifu.dbUrl" . | quote }}
+            - name: TAARIFU_DB_USER
+              value: {{ include "taarifu.dbUser" . | quote }}
+            - name: TAARIFU_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.secrets.core.existingSecret }}
+                  key: TAARIFU_DB_PASSWORD
+            # --- Redis (multi-instance limiters / OTP / idempotency / USSD state). ---
+            - name: TAARIFU_REDIS_HOST
+              value: {{ include "taarifu.redisHost" . | quote }}
+            - name: TAARIFU_REDIS_PORT
+              value: {{ include "taarifu.redisPort" . | quote }}
+            # --- Required core secrets (backend FAILS FAST at boot if absent — MF-1/EI-19). ---
+            - name: TAARIFU_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.secrets.core.existingSecret }}
+                  key: TAARIFU_JWT_SECRET
+            - name: TAARIFU_CRYPTO_DEV_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.secrets.core.existingSecret }}
+                  key: TAARIFU_CRYPTO_DEV_KEY
+            # --- CORS allow-list (PRD §18) — explicit origins, never '*'+credentials. ---
+            - name: TAARIFU_CORS_ORIGINS
+              value: {{ .Values.backend.corsOrigins | quote }}
+            # --- Non-secret config (12-factor; mirrors application.yml selectors). ---
+            {{- range $k, $v := .Values.backend.config }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            # --- Optional integration secrets (only mapped when enabled). ---
+            {{- if .Values.backend.secrets.integrations.enabled }}
+            - name: TAARIFU_SMS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.secrets.integrations.existingSecret }}
+                  key: TAARIFU_SMS_API_KEY
+                  optional: true
+            - name: TAARIFU_USSD_GATEWAY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.secrets.integrations.existingSecret }}
+                  key: TAARIFU_USSD_GATEWAY_SECRET
+                  optional: true
+            - name: TAARIFU_MEDIA_SCANNER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.secrets.integrations.existingSecret }}
+                  key: TAARIFU_MEDIA_SCANNER_SECRET
+                  optional: true
+            {{- end }}
+          # --- Probes (deploy/README §7). startup shields a slow Flyway migrate. ---
+          startupProbe:
+            httpGet:
+              path: {{ .Values.backend.probes.startup.path }}
+              port: http
+            periodSeconds: {{ .Values.backend.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.backend.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.backend.probes.liveness.path }}
+              port: http
+            periodSeconds: {{ .Values.backend.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.backend.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.backend.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.backend.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.backend.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.backend.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.backend.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          volumeMounts:
+            # readOnlyRootFilesystem=true means we must mount writable scratch for tmp.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

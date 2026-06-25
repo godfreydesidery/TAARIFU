@@ -1,6 +1,7 @@
 <!--
   Mobile-money payments admin: server-side provider/status/date filters, an aggregate totals strip, and a
-  paged ledger with MASKED payer MSISDN. Phase-2 token-purchase reconciliation. (D19; PRD §23.)
+  paged ledger of top-ups. Click a row to open the detail drawer (full detail + status timeline + refund/void).
+  Phase-2 token-purchase reconciliation. No MSISDN/PII (privacy by construction, PRD §18). (ADR-0015; PRD §23.)
 -->
 <section>
   <header class="page-header">
@@ -23,8 +24,8 @@
         <div class="card card-elevated stat-tile">
           <div class="stat-tile__icon is-success" aria-hidden="true">✓</div>
           <div class="stat-tile__body">
-            <div class="stat-tile__value">{{ t.paidAmount | number: '1.0-0' }} {{ t.currency }}</div>
-            <p class="stat-tile__label">{{ 'payments.totalPaid' | translate }} ({{ t.paidCount }})</p>
+            <div class="stat-tile__value">{{ minorToMajor(t.settledAmountMinor) | number: '1.0-0' }} {{ t.currency }}</div>
+            <p class="stat-tile__label">{{ 'payments.totalSettled' | translate }} ({{ t.succeededCount }})</p>
           </div>
         </div>
       </div>
@@ -32,7 +33,7 @@
         <div class="card card-elevated stat-tile">
           <div class="stat-tile__icon is-warning" aria-hidden="true">⏳</div>
           <div class="stat-tile__body">
-            <div class="stat-tile__value">{{ t.pendingAmount | number: '1.0-0' }} {{ t.currency }}</div>
+            <div class="stat-tile__value">{{ t.pendingCount | number }}</div>
             <p class="stat-tile__label">{{ 'payments.totalPending' | translate }}</p>
           </div>
         </div>
@@ -41,7 +42,7 @@
         <div class="card card-elevated stat-tile">
           <div class="stat-tile__icon is-danger" aria-hidden="true">✕</div>
           <div class="stat-tile__body">
-            <div class="stat-tile__value">{{ t.failedAmount | number: '1.0-0' }} {{ t.currency }}</div>
+            <div class="stat-tile__value">{{ t.failedCount | number }}</div>
             <p class="stat-tile__label">{{ 'payments.totalFailed' | translate }}</p>
           </div>
         </div>
@@ -50,8 +51,8 @@
         <div class="card card-elevated stat-tile">
           <div class="stat-tile__icon is-info" aria-hidden="true">↩</div>
           <div class="stat-tile__body">
-            <div class="stat-tile__value">{{ t.refundedAmount | number: '1.0-0' }} {{ t.currency }}</div>
-            <p class="stat-tile__label">{{ 'payments.totalRefunded' | translate }}</p>
+            <div class="stat-tile__value">{{ minorToMajor(t.refundedAmountMinor) | number: '1.0-0' }} {{ t.currency }}</div>
+            <p class="stat-tile__label">{{ 'payments.totalRefunded' | translate }} ({{ t.refundedCount }})</p>
           </div>
         </div>
       </div>
@@ -128,24 +129,32 @@
           <thead>
             <tr>
               <th scope="col">{{ 'payments.provider' | translate }}</th>
-              <th scope="col">{{ 'payments.payer' | translate }}</th>
+              <th scope="col">{{ 'payments.buyer' | translate }}</th>
               <th scope="col">{{ 'payments.amount' | translate }}</th>
               <th scope="col">{{ 'payments.tokens' | translate }}</th>
               <th scope="col">{{ 'payments.status' | translate }}</th>
               <th scope="col">{{ 'payments.reference' | translate }}</th>
               <th scope="col">{{ 'payments.created' | translate }}</th>
+              <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
             </tr>
           </thead>
           @if (loading()) {
-            <tbody app-skeleton-table [rows]="8" [cols]="7"></tbody>
+            <tbody app-skeleton-table [rows]="8" [cols]="8"></tbody>
           } @else {
             <tbody>
               @for (pay of rows(); track pay.id) {
+                <!-- The explicit "View" button is the accessible affordance (a real <button>, WCAG). -->
                 <tr>
                   <td>{{ 'payments.providerValue.' + pay.provider | translate }}</td>
-                  <td><span class="code-chip">{{ mask(pay.maskedMsisdn) || '—' }}</span></td>
-                  <td class="fw-semibold">{{ pay.amount | number: '1.0-2' }} {{ pay.currency }}</td>
-                  <td>{{ pay.tokens === null ? '—' : (pay.tokens | number) }}</td>
+                  <td>
+                    @if (pay.buyerId) {
+                      <span class="code-chip">{{ pay.buyerId }}</span>
+                    } @else {
+                      <span class="text-muted">—</span>
+                    }
+                  </td>
+                  <td class="fw-semibold">{{ minorToMajor(pay.amountMinor) | number: '1.0-2' }} {{ pay.currency }}</td>
+                  <td>{{ pay.tokenAmount | number }}</td>
                   <td>
                     <app-status-badge [tone]="tone(pay.status)" [label]="'payments.statusValue.' + pay.status | translate" />
                   </td>
@@ -157,6 +166,16 @@
                     }
                   </td>
                   <td><small class="text-muted">{{ pay.createdAt | date: 'short' }}</small></td>
+                  <td class="text-end">
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-primary"
+                      [attr.aria-label]="('payments.viewDetail' | translate) + ' ' + pay.id"
+                      (click)="openDetail(pay)"
+                    >
+                      {{ 'common.view' | translate }}
+                    </button>
+                  </td>
                 </tr>
               }
             </tbody>
@@ -167,4 +186,11 @@
 
     <app-pagination [meta]="meta()" (pageChange)="reload($event)" />
   }
+
+  <!-- Detail drawer: opens on row click; emits on refund/void to refresh the page. -->
+  <app-payment-detail-drawer
+    [paymentId]="selectedId()"
+    (closed)="closeDetail()"
+    (changed)="onDetailChanged()"
+  />
 </section>

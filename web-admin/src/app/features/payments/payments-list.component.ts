@@ -10,22 +10,27 @@ import { StatePanelComponent } from '../../shared/components/state-panel.compone
 import { SkeletonTableComponent } from '../../shared/components/skeleton.component';
 import { StatusBadgeComponent } from '../../shared/components/status-badge.component';
 import { statusTone } from '../../shared/util/status-tone.util';
+import { PaymentDetailDrawerComponent } from './payment-detail-drawer.component';
 import { PAYMENT_PROVIDERS, PAYMENT_STATUSES, Payment, PaymentTotals } from './payments.models';
 import { PaymentsService } from './payments.service';
-import { maskMsisdn } from './payments.util';
+import { minorToMajor } from './payments.util';
 
 /**
- * Mobile-money payments admin view — Phase-2 token-purchase ledger (D19; PRD §23, §21 EI-20).
+ * Mobile-money payments admin view — Phase-2 token-purchase ledger (ADR-0015 + addendum; PRD §23, §18).
  *
- * <p>Responsibility: the reconciliation console for mobile-money payments (M-Pesa / Tigo Pesa / Airtel
- * Money / HaloPesa / card). It lists payments paged from {@code GET /admin/payments} with server-side filters
- * by provider, status, and date window, and shows an aggregate TOTALS strip ({@code GET /admin/payments/
- * totals}) — collected / pending / failed / refunded — so the operator sees the money picture without
- * summing pages. Each row shows a MASKED payer MSISDN (defence-in-depth client mask over the server's, PRD
- * §18/DI5), the provider, amount, and the tokens credited. The totals strip degrades to hidden if its
- * endpoint is absent; the list shows an explicit error/retry. A standing reminder reinforces the §23 fence:
- * buying tokens never buys democratic weight. Loading/empty/error states are handled; subscriptions use
- * {@link takeUntilDestroyed}.</p>
+ * <p>Responsibility: the reconciliation console for mobile-money top-ups (M-Pesa / Tigo Pesa / Airtel Money /
+ * HaloPesa). It lists payments paged from {@code GET /admin/payments} with server-side filters by provider,
+ * status, and date window, and shows an aggregate TOTALS strip ({@code GET /admin/payments/totals}) — settled
+ * / pending / failed / refunded — so the operator sees the money picture without summing pages. Clicking a row
+ * opens the {@link PaymentDetailDrawerComponent} (full detail + status timeline + the REFUND/VOID operator
+ * actions); a successful action reloads the current page so the new status is server-authoritative. The totals
+ * strip degrades to hidden if its endpoint is absent; the list shows an explicit error/retry. A standing
+ * reminder reinforces the §23 fence: buying tokens never buys democratic weight. Loading/empty/error states
+ * are handled; subscriptions use {@link takeUntilDestroyed}.</p>
+ *
+ * <p><b>Privacy (PRD §18, D18):</b> the rows carry no MSISDN (never stored) and no national/voter ID — only an
+ * opaque buyer id, redacted reason codes, and reconciliation references. Money is held in minor units and
+ * converted at the presentation edge ({@link minorToMajor}).</p>
  */
 @Component({
   selector: 'app-payments-list',
@@ -39,6 +44,7 @@ import { maskMsisdn } from './payments.util';
     StatePanelComponent,
     SkeletonTableComponent,
     StatusBadgeComponent,
+    PaymentDetailDrawerComponent,
   ],
   templateUrl: './payments-list.component.html',
 })
@@ -54,6 +60,9 @@ export class PaymentsListComponent implements OnInit {
 
   /** Aggregate totals strip. `null` = unavailable/loading (the strip hides). */
   readonly totals = signal<PaymentTotals | null>(null);
+
+  /** The id of the payment whose detail drawer is open, or `null` when the drawer is closed. */
+  readonly selectedId = signal<string | null>(null);
 
   /** Server-side filter state. */
   readonly providerFilter = signal('');
@@ -132,8 +141,26 @@ export class PaymentsListComponent implements OnInit {
     this.reload(0);
   }
 
-  /** Defence-in-depth MSISDN mask (server is expected to mask; this guarantees it). */
-  mask = maskMsisdn;
+  /** Opens the detail drawer for a row (click or keyboard activation). */
+  openDetail(payment: Payment): void {
+    this.selectedId.set(payment.id);
+  }
+
+  /** Closes the detail drawer, clearing the selection. */
+  closeDetail(): void {
+    this.selectedId.set(null);
+  }
+
+  /**
+   * Refreshes the current page after a refund/void succeeded in the drawer, so the row's new status is
+   * server-authoritative (not an optimistic guess); the drawer stays open showing the updated detail.
+   */
+  onDetailChanged(): void {
+    this.reload(this.meta()?.page ?? 0);
+  }
+
+  /** Minor → major money conversion for display. */
+  readonly minorToMajor = minorToMajor;
 
   /** Maps a payment status token to a badge tone (shared design-system mapping). */
   tone = statusTone;

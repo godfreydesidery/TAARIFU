@@ -23,6 +23,7 @@ export function statusTone(token: string | null | undefined): StatusTone {
     case 'VERIFIED':
     case 'ACTIONED':
     case 'UPHELD':
+    case 'SUCCEEDED':
       return 'success';
 
     // In-flight / informational.
@@ -32,11 +33,13 @@ export function statusTone(token: string | null | undefined): StatusTone {
     case 'IN_REVIEW':
     case 'SCHEDULED':
     case 'NORMAL':
+    case 'REFUNDED':
       return 'info';
 
     // Needs attention.
     case 'SUBMITTED':
     case 'PENDING':
+    case 'INITIATED':
     case 'PENDING_VERIFICATION':
     case 'ESCALATED':
     case 'HIGH':
@@ -59,6 +62,7 @@ export function statusTone(token: string | null | undefined): StatusTone {
     case 'DISMISSED':
     case 'FORMER':
     case 'LOW':
+    case 'VOIDED':
       return 'neutral';
 
     default:

@@ -44,10 +44,15 @@ import java.util.UUID;
  * persisted or logged here; the queue item records only labels (signal + confidence), and the analytics fact
  * carries ids/codes only — no text, no author identity.</p>
  *
- * <p>WHO calls {@code triage(...)}: content-owning modules' create paths (to screen on publish), and the
- * §25.3 sensitive-report stricter pre-routing hold (which strips/encrypts identity before a responder sees
- * the case). Those call sites are {@code // TODO(wiring)} until the owners publish/consume the hook — the same
- * deferral discipline as the existing routing/takedown wirings (ADR-0013 §2).</p>
+ * <p>WHO calls {@code triage(...)}: (1) the moderation module's own <b>flag path</b>
+ * ({@link FlagService#flag}) — when a citizen flag raises/escalates a {@link ModerationItem}, the flagged
+ * content is screened so the item is also prioritised by what it actually contains. The scorable text is
+ * fetched from the owning module's published {@code SubjectContentQueryApi} (the boundary-safe registry — no
+ * content-owner import); when no such port is published the screen is skipped and the item still goes to a
+ * human (EI-18 floor). This is the live wiring. (2) Content-owning modules' create paths (to screen on
+ * publish, before any flag) and the §25.3 sensitive-report stricter pre-routing hold remain
+ * {@code // TODO(wiring)} until those owners call in — the same deferral discipline as the existing
+ * routing/takedown wirings (ADR-0013 §2).</p>
  */
 @Service
 public class AutoAssistService {

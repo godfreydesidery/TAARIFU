@@ -230,6 +230,16 @@ taarifu:
       from: ${TAARIFU_EMAIL_FROM:}                    # SPF/DKIM/DMARC-aligned sender address (provider=smtp)
       from-name: ${TAARIFU_EMAIL_FROM_NAME:Taarifu}   # optional From display name
       reply-to: ${TAARIFU_EMAIL_REPLY_TO:}            # optional Reply-To address
+    # Scheduled area-activity DIGEST (PRD §13 "digest", EI-6, M5). The @Scheduled DigestService bean ONLY
+    # exists when enabled=true (the bean is gated by @ConditionalOnProperty) — so it never races tests and
+    # is owned by exactly ONE deployment instance. The digest is a lean FEED-only nudge (count, not the
+    # items) — it never charges SMS. cron/zone tune the cadence (daily default; set a weekly cron for weekly).
+    digest:
+      enabled: ${TAARIFU_DIGEST_ENABLED:false}                      # OFF by default; one deployment opts in
+      cron: ${TAARIFU_DIGEST_CRON:0 0 7 * * *}                      # 07:00 daily (local); e.g. '0 0 7 * * MON' weekly
+      zone: ${TAARIFU_DIGEST_ZONE:Africa/Dar_es_Salaam}            # cron is local time (EAT), not UTC
+      lookback: ${TAARIFU_DIGEST_LOOKBACK:1d}                       # window = (now-lookback, now]; 7d for weekly
+      batch-size: ${TAARIFU_DIGEST_BATCH_SIZE:500}                  # recipient page size as the run streams followers
 
   # Moderation auto-assist (US-12.3, EI-18, D-Q8; ADR-0018). The content-safety scorer is pluggable and
   # SAFE-BY-DEFAULT: 'heuristic' (default) is the in-house Swahili+English heuristic that runs with ZERO
@@ -252,6 +262,25 @@ taarifu:
     #   a stripped dev/CI context that must boot without the tokens module wired. Exactly one bean is active.
     wallet-credit:
       adapter: ${TAARIFU_PAYMENTS_WALLET_CREDIT_ADAPTER:tokens-api}
+    # Which WalletReversalPort adapter REVERSES a refunded top-up from the buyer's wallet (ADR-0015 addendum).
+    # 'tokens-api' (default): TokensApiWalletReversalAdapter → the typed, fence-safe tokens.api
+    #   TokenLedgerApi.refund(...) REFUND debit reversing the prior PURCHASE credit (the real reversal; D18 —
+    #   reverses convenience tokens only, never democratic weight). This is now the wired default since the
+    #   typed refund method has landed (CENTRAL NEED satisfied).
+    # 'logging': LoggingWalletReversalStub — records the reversal intent and moves NO real tokens; use only for
+    #   a stripped dev/CI context that must boot without the tokens module wired. Exactly one bean is active.
+    wallet-reversal:
+      adapter: ${TAARIFU_PAYMENTS_WALLET_REVERSAL_ADAPTER:tokens-api}
+    # Scheduled settlement reconciliation job (ADR-0015 addendum; PRD §23.5). Re-checks stale non-terminal
+    # top-ups against the provider (never trust-the-callback) and expires ones stuck past expire-after. Gated
+    # by 'enabled' (mirrors the outbox relay toggle) so it can be paused/pinned/disabled in a test. All values
+    # default — no central config change required.
+    reconciliation:
+      enabled: ${TAARIFU_PAYMENTS_RECONCILIATION_ENABLED:true}      # run the @Scheduled job (default true)
+      batch-size: ${TAARIFU_PAYMENTS_RECONCILIATION_BATCH_SIZE:50}  # max stale rows claimed per tick
+      min-age: ${TAARIFU_PAYMENTS_RECONCILIATION_MIN_AGE:2m}        # skip attempts younger than this (in-flight)
+      expire-after: ${TAARIFU_PAYMENTS_RECONCILIATION_EXPIRE_AFTER:30m}  # expire rows stuck longer than this
+      poll-interval-ms: ${TAARIFU_PAYMENTS_RECONCILIATION_POLL_INTERVAL_MS:300000}  # fixed delay (5m default)
     # Mobile-money rail selector + endpoints. Default 'logging' is the safe no-op (zero external calls, no
     # secrets) so a no-config context boots and NO credit is ever posted until a real rail is configured.
     # All secrets (HMAC callback key, rail credentials) come from env/secret-mounts — NEVER committed

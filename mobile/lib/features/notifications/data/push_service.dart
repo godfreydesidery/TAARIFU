@@ -15,6 +15,8 @@
 /// preferred when possible.
 library;
 
+import 'device_token_repository.dart';
+
 /// A deep link parsed from a notification payload, telling the app where to go.
 ///
 /// The backend stamps `type` + a target id on the data payload (mirroring the
@@ -67,22 +69,70 @@ abstract interface class PushService {
   Stream<NotificationDeepLink> get onMessageOpened;
 }
 
-/// The default, dependency-free binding: push is not wired yet.
+/// The default, dependency-free binding: real push (FCM) is not wired yet.
 ///
-/// Keeps the contract honest — the app builds and runs, SMS-fallback copy is
-/// shown, and token calls are no-ops until `firebase_messaging` lands.
+/// WHY this still talks to the backend token endpoint: the token-registration
+/// **scaffolding** is real and testable now — [registerToken] obtains a token
+/// from [tokenProvider] (the only seam `firebase_messaging` later fills) and, if
+/// one is available AND a [DeviceTokenRepository] was supplied, registers it via
+/// `POST /notification-tokens`; [clearToken] unregisters it on logout. With no
+/// `firebase_messaging` in the budget yet (PRD §15), [tokenProvider] returns
+/// `null`, so registration is correctly skipped (SMS-fallback copy is shown
+/// instead) — but the entire lifecycle wiring is in place and exercised by the
+/// repository's tests. Swapping in a real FCM token provider is the only change
+/// needed to go live (clean boundaries, CLAUDE.md §3).
+///
+/// Degrades gracefully: any failure to register/unregister is swallowed — push
+/// is a non-critical channel and must never block app start or sign-out (the
+/// backend's SMS fallback still reaches the citizen — US-5.1).
 class UnavailablePushService implements PushService {
-  /// Creates the unavailable service.
-  const UnavailablePushService();
+  /// Creates the service.
+  ///
+  /// [tokenRepository] performs the backend register/unregister (omit it to keep
+  /// the pure no-op behaviour, e.g. in tests). [platform] is the backend
+  /// `DevicePlatform` name for this device (defaults to `ANDROID`, the citizen
+  /// app's primary target). [tokenProvider] yields the FCM token when push is
+  /// wired; the default returns `null` (no token available yet).
+  const UnavailablePushService({
+    DeviceTokenRepository? tokenRepository,
+    String platform = 'ANDROID',
+    Future<String?> Function()? tokenProvider,
+  }) : _tokenRepository = tokenRepository,
+       _platform = platform,
+       _tokenProvider = tokenProvider;
+
+  final DeviceTokenRepository? _tokenRepository;
+  final String _platform;
+  final Future<String?> Function()? _tokenProvider;
 
   @override
   bool get isAvailable => false;
 
   @override
-  Future<void> registerToken() async {}
+  Future<void> registerToken() async {
+    final repo = _tokenRepository;
+    if (repo == null) return;
+    try {
+      final token = await (_tokenProvider?.call() ?? Future<String?>.value());
+      if (token == null || token.isEmpty) return;
+      await repo.register(token: token, platform: _platform);
+    } on Object {
+      // Push is best-effort; never let a failed register block startup.
+    }
+  }
 
   @override
-  Future<void> clearToken() async {}
+  Future<void> clearToken() async {
+    final repo = _tokenRepository;
+    if (repo == null) return;
+    try {
+      final token = await (_tokenProvider?.call() ?? Future<String?>.value());
+      if (token == null || token.isEmpty) return;
+      await repo.unregister(token);
+    } on Object {
+      // Best-effort: a failed unregister must not block secure logout.
+    }
+  }
 
   @override
   Stream<NotificationDeepLink> get onMessageOpened =>

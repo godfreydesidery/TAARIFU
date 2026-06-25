@@ -271,6 +271,23 @@ public class Report extends BaseCodedEntity {
         this.status = ReportStatus.DUPLICATE;
     }
 
+    /**
+     * Severs the reporter linkage on a data-subject ERASURE (PRD §25.1; ADR-0016 §5.6) — the report's
+     * <b>civic content survives as an anonymised record</b> while its tie to the now-erased reporter is cut.
+     *
+     * <p>WHY null (not delete): §25.1 keeps the de-identified civic record and its discovery counters intact;
+     * deleting the row would distort ward-level issue history and orphan the case timeline. After this call
+     * the report reads exactly as an {@link #isAnonymous() anonymous} sensitive filing always did — no
+     * reporter is recoverable from it. <b>Idempotent</b>: a redelivered erasure event finds the linkage
+     * already {@code null} and this is a harmless no-op (at-least-once safe, ADR-0014 §3).</p>
+     *
+     * <p>The {@link #title}/{@link #description} are citizen civic content (the substance of the issue),
+     * preserved as the anonymised record; the severed reference is the only PII linkage on this aggregate.</p>
+     */
+    public void anonymiseReporter() {
+        this.reporterProfileId = null;
+    }
+
     /** Increments the discovery-reach upvote counter (integrity-fenced; never affects routing/SLA). */
     public void incrementUpvotes() {
         this.upvotes++;

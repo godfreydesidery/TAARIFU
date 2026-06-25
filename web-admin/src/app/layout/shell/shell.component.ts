@@ -8,6 +8,7 @@ import { AuthService } from '../../core/auth/auth.service';
 import { LocaleService, SupportedLocale } from '../../core/i18n/locale.service';
 import { ToastService } from '../../core/notifications/toast.service';
 import { ThemeService } from '../../core/theme/theme.service';
+import { SearchBoxComponent } from '../../features/search/search-box.component';
 
 /** A single sidebar navigation item. */
 interface NavItem {
@@ -55,7 +56,7 @@ interface Crumb {
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, TranslateModule],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, TranslateModule, SearchBoxComponent],
   templateUrl: './shell.component.html',
   styleUrl: './shell.component.scss',
 })
@@ -124,7 +125,9 @@ export class ShellComponent {
         { path: '/issue-categories', labelKey: 'nav.issueCategories', icon: '✎', show: () => this.isAdmin() },
         { path: '/institutions/parliaments', labelKey: 'nav.institutions', icon: '⚖', show: () => this.isAdmin() },
         { path: '/tokens', labelKey: 'nav.tokens', icon: '●', show: () => this.isAdmin() },
+        { path: '/payments', labelKey: 'nav.payments', icon: '₮', show: () => this.isAdmin() },
         { path: '/users', labelKey: 'nav.users', icon: '☺', show: () => this.isAdmin() },
+        { path: '/privacy', labelKey: 'nav.privacy', icon: '🛡', show: () => this.isAdmin() },
       ],
     },
   ];

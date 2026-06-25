@@ -32,10 +32,15 @@ import 'feed_detail_screen.dart';
 class FeedScreen extends StatelessWidget {
   /// Creates the screen. [onSignIn] is invoked from the Guest prompt (the shell
   /// routes it to sign-in); when omitted the prompt shows without an action.
-  const FeedScreen({this.onSignIn, super.key});
+  /// [onOpenEngagement], when supplied, is the inline CTA target for actionable
+  /// petition/poll cards (opens the engagement hub where the real action lives).
+  const FeedScreen({this.onSignIn, this.onOpenEngagement, super.key});
 
   /// Optional sign-in callback for the Guest empty state.
   final VoidCallback? onSignIn;
+
+  /// Optional engagement-hub opener for petition/poll inline CTAs.
+  final VoidCallback? onOpenEngagement;
 
   @override
   Widget build(BuildContext context) {
@@ -99,6 +104,11 @@ class FeedScreen extends StatelessWidget {
                       item: item,
                       dataSaver: dataSaver,
                       onTap: () => _openDetail(context, item),
+                      // Petition/poll cards get an inline Sign/Respond CTA that
+                      // opens the engagement hub (the real, tier-gated action).
+                      onAct: _isActionable(item.kind)
+                          ? onOpenEngagement
+                          : null,
                     ),
                   );
                 },
@@ -108,6 +118,10 @@ class FeedScreen extends StatelessWidget {
       },
     );
   }
+
+  /// Whether a feed item's kind carries an inline civic action (petition/poll).
+  bool _isActionable(FeedItemKind kind) =>
+      kind == FeedItemKind.petition || kind == FeedItemKind.poll;
 
   /// Opens the full announcement on tap (US-4.2). The detail seeds from the
   /// snippet already in hand (instant, offline-safe) and fetches the full body

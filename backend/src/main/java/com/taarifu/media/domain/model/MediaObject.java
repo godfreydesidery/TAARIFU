@@ -229,6 +229,22 @@ public class MediaObject extends BaseEntity {
         return this.scanStatus == ScanStatus.CLEAN;
     }
 
+    /**
+     * Severs the uploader linkage on a data-subject ERASURE (PRD §18, §25.1; ADR-0016 §5.6) — the object
+     * record survives (its bytes belong to the host civic record it is attached to, whose own anonymisation
+     * is that host module's concern) while its tie to the now-erased uploader is cut.
+     *
+     * <p>WHY null the uploader (not delete the row here): an attachment's lifecycle is owned by its host
+     * resource — deleting the media row from this handler could orphan a host that still references it (the
+     * reporting/host module decides whether the host civic record survives anonymised). The strongest
+     * severing available to the media module on a DSR is to drop the personal <i>uploader</i> reference; the
+     * EXIF/geo strip (EI-8) already removed embedded location PII from the bytes at promote time.
+     * <b>Idempotent</b>: an object whose uploader is already {@code null} is a harmless no-op.</p>
+     */
+    public void severUploader() {
+        this.uploadedByProfileId = null;
+    }
+
     /** @return the host-resource discriminator. */
     public String getOwnerType() {
         return ownerType;

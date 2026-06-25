@@ -135,6 +135,20 @@ class ApiClient {
     return _send(() => _dio.put(path, data: body, options: options), parser);
   }
 
+  /// Performs a DELETE and returns the unwrapped, typed payload.
+  ///
+  /// Used for idempotent removals (e.g. unregistering a push device token on
+  /// logout — `DELETE /notification-tokens/{token}`). The envelope may carry a
+  /// `null` data node (a no-body success), so callers typically parse to `void`.
+  Future<ApiResult<T>> delete<T>(
+    String path, {
+    Map<String, dynamic>? query,
+    required T Function(Object? data) parser,
+  }) => _send(
+    () => _dio.delete(path, queryParameters: query),
+    parser,
+  );
+
   /// Shared send pipeline: offline pre-check → retrying call → envelope unwrap.
   Future<ApiResult<T>> _send<T>(
     Future<Response<dynamic>> Function() call,

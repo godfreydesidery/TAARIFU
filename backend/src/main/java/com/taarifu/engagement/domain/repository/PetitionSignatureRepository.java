@@ -3,6 +3,7 @@ package com.taarifu.engagement.domain.repository;
 import com.taarifu.engagement.domain.model.PetitionSignature;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -21,4 +22,15 @@ public interface PetitionSignatureRepository extends JpaRepository<PetitionSigna
      * @return {@code true} if this signer has already signed this petition (one-per-person pre-check).
      */
     boolean existsByPetition_PublicIdAndSignerProfileId(UUID petitionPublicId, UUID signerProfileId);
+
+    /**
+     * Lists every signature the subject gave, for the PDPA fan-out (data-subject ACCESS export + ERASURE
+     * de-identification; ADR-0016 §4/§5). The erasure handler replaces each signer reference with a
+     * deterministic tombstone (preserving the petition tally — §23.5), so a redelivery finds none still on
+     * the real signer id.
+     *
+     * @param signerProfileId the signer's account public id (the DSR subject).
+     * @return every (non-deleted) signature still attributed to this signer; empty if none / already severed.
+     */
+    List<PetitionSignature> findBySignerProfileId(UUID signerProfileId);
 }

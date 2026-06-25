@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -36,6 +37,17 @@ public interface RatingRepository extends JpaRepository<Rating, Long> {
      */
     Optional<Rating> findBySubjectTypeAndSubjectIdAndRaterProfileIdAndPeriod(
             RatingSubjectType subjectType, UUID subjectId, UUID raterProfileId, String period);
+
+    /**
+     * Lists every rating the subject authored as a rater, for the PDPA fan-out (data-subject ACCESS export +
+     * ERASURE de-identification; ADR-0016 §4/§5). The erasure handler replaces each rater reference with a
+     * deterministic tombstone (preserving the computed aggregate — §23.5), so a redelivery finds none still
+     * on the real rater id.
+     *
+     * @param raterProfileId the rater's account public id (the DSR subject).
+     * @return every (non-deleted) rating still attributed to this rater; empty if none / already severed.
+     */
+    List<Rating> findByRaterProfileId(UUID raterProfileId);
 
     /**
      * Computes the aggregate rating for a subject across all raters and periods.

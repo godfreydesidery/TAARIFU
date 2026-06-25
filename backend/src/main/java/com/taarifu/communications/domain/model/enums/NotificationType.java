@@ -12,9 +12,10 @@ package com.taarifu.communications.domain.model.enums;
  * <p>WHY only a subset this increment: notifications for reports/petitions/Q&A/ratings are emitted by
  * the modules that own those events (reporting/engagement/accountability) via domain events; their
  * concrete {@code payloadRef} is produced there. This module owns the dispatch substrate and the types
- * its own M4/M5 surface produces — {@code NEW_ANNOUNCEMENT} — plus the always-on {@code SYSTEM} and
- * {@code MODERATION_OUTCOME} types the matrix marks "always". Other modules reference an existing value
- * by name; new types are appended here (never repurposed — clients/preferences depend on the name).</p>
+ * its own M4/M5 surface produces — {@code NEW_ANNOUNCEMENT} and the {@code DIGEST} summary — plus the
+ * always-on {@code SYSTEM} and {@code MODERATION_OUTCOME} types the matrix marks "always". Other modules
+ * reference an existing value by name; new types are appended here (never repurposed — clients/preferences
+ * depend on the name).</p>
  */
 public enum NotificationType {
 
@@ -28,5 +29,13 @@ public enum NotificationType {
     MODERATION_OUTCOME,
 
     /** A generic system notice (account/security); "always" on — cannot be silenced by preference. */
-    SYSTEM
+    SYSTEM,
+
+    /**
+     * A periodic (daily/weekly) summary of activity in the citizen's followed areas — the low-cost,
+     * opt-out-able digest the {@code DigestService} fans out over the durable FEED channel (PRD §13
+     * "digest" / EI-6). Defaults ON for FEED like other non-SMS types, but a citizen can silence it per
+     * the preference matrix (it is not "always-on" — a digest is convenience, not security).
+     */
+    DIGEST
 }

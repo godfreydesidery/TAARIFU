@@ -83,6 +83,17 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
     @Query("select r from Report r join fetch r.category where r.publicId = :publicId")
     Optional<Report> findByPublicIdWithCategory(@Param("publicId") UUID publicId);
 
+    /**
+     * Lists <b>all</b> of a subject's reports for the PDPA fan-out (data-subject ACCESS export + ERASURE
+     * severing; ADR-0016 §4/§5). Unlike the paged citizen-tracking {@link #findByReporterProfileId} this is the
+     * unbounded set the erasure handler must sever and the export contributor must enumerate — a subject's
+     * report footprint is bounded in practice and is read once per DSR.
+     *
+     * @param reporterProfileId the reporter's account public id (the DSR subject).
+     * @return every (non-deleted) report still linked to this reporter; empty if none / already anonymised.
+     */
+    List<Report> findAllByReporterProfileId(UUID reporterProfileId);
+
     // ------------------------------ Admin console read surface (M14) ------------------------------
 
     /**

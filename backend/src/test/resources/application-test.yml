@@ -51,3 +51,9 @@ taarifu:
       dev-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
   geography:
     geocoder: stub
+  payments:
+    reconciliation:
+      # Disable the @Scheduled top-up reconciliation poller in tests so it never races an IT that manipulates
+      # top_up rows directly (the documented purpose of this toggle; mirrors keeping the outbox relay quiet).
+      # The reconcile/expire logic is unit/slice-tested by calling the job method explicitly instead.
+      enabled: false

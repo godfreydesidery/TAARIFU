@@ -164,6 +164,19 @@ public class Petition extends BaseEntity {
         return this.status != PetitionStatus.DRAFT;
     }
 
+    /**
+     * Severs the authoring-person linkage on a data-subject ERASURE (PRD §25.1; ADR-0016 §5.6) — the petition
+     * <b>survives as an anonymised civic record</b> (its title/body/signature tally are preserved) while its
+     * tie to the now-erased creator is cut, exactly as an organisation-authored petition reads
+     * ({@code creatorProfileId == null}). <b>Idempotent</b>: an already-severed petition is a harmless no-op.
+     *
+     * <p>WHY null (not delete): deleting a petition would erase the binding signatures others gave to it
+     * (§23.5) and a civic ask the public engaged with; only the personal authorship reference is de-identified.</p>
+     */
+    public void anonymiseCreator() {
+        this.creatorProfileId = null;
+    }
+
     /** @return the headline. */
     public String getTitle() {
         return title;

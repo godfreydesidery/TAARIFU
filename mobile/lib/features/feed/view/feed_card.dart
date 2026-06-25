@@ -22,9 +22,13 @@ import '../data/feed_models.dart';
 class FeedCard extends StatelessWidget {
   /// Creates the card for [item]; [onTap] opens the full detail and [dataSaver]
   /// suppresses the cover image so a low-bundle citizen is never charged for it.
+  /// [onAct], when supplied, drives the inline civic action affordance shown for
+  /// actionable kinds (petition → Sign, poll → Respond); the shell routes it to
+  /// the engagement hub where the real, tier-gated action lives.
   const FeedCard({
     required this.item,
     required this.onTap,
+    this.onAct,
     this.dataSaver = false,
     super.key,
   });
@@ -34,6 +38,9 @@ class FeedCard extends StatelessWidget {
 
   /// Opens the full item (the detail screen).
   final VoidCallback onTap;
+
+  /// Opens the inline civic action for an actionable kind, or `null`.
+  final VoidCallback? onAct;
 
   /// When true, the cover image is not loaded (data-frugal, PRD §15).
   final bool dataSaver;
@@ -83,7 +90,12 @@ class FeedCard extends StatelessWidget {
                   ],
                   const SizedBox(height: AppPalette.spaceSm),
                   const Divider(height: AppPalette.spaceXl),
-                  _ActionRow(item: item, accent: accent, onOpen: onTap),
+                  _ActionRow(
+                    item: item,
+                    accent: accent,
+                    onOpen: onTap,
+                    onAct: onAct,
+                  ),
                 ],
               ),
             ),
@@ -212,24 +224,39 @@ class _AreaChip extends StatelessWidget {
 }
 
 /// The engagement row: a neutral "support" acknowledgement (with count), a
-/// share affordance, and a read-more nudge. These are presentation-only stubs —
-/// wiring real reactions/sharing is a backend-contracted follow-up; nothing here
-/// fabricates a count the server did not send.
+/// share affordance, and either a kind-aware civic CTA (Sign/Respond, for an
+/// actionable petition/poll when [onAct] is wired) or a read-more nudge. The
+/// reaction/share glyphs are presentation-only — nothing here fabricates a count
+/// the server did not send; the inline CTA routes to the engagement hub where the
+/// real, one-person-one-vote, tier-gated action is performed (PRD §19 — tokens
+/// never buy democratic weight; the feed never votes inline behind the contract).
 class _ActionRow extends StatelessWidget {
   const _ActionRow({
     required this.item,
     required this.accent,
     required this.onOpen,
+    this.onAct,
   });
 
   final FeedItem item;
   final Color accent;
   final VoidCallback onOpen;
+  final VoidCallback? onAct;
+
+  /// The localised inline-CTA label for an actionable kind, or `null` when the
+  /// kind has no civic action (announcement/report → just "read more").
+  String? _ctaLabel(AppLocalizations l10n) => switch (item.kind) {
+    FeedItemKind.petition => l10n.feedActionSign,
+    FeedItemKind.poll => l10n.feedActionRespond,
+    _ => null,
+  };
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final scheme = Theme.of(context).colorScheme;
+    final cta = _ctaLabel(l10n);
+    final showCta = cta != null && onAct != null;
     return Row(
       children: [
         Icon(Icons.favorite_outline, size: 20, color: scheme.onSurfaceVariant),
@@ -245,11 +272,21 @@ class _ActionRow extends StatelessWidget {
         const SizedBox(width: AppPalette.spaceLg),
         Icon(Icons.ios_share_outlined, size: 20, color: scheme.onSurfaceVariant),
         const Spacer(),
-        TextButton(
-          onPressed: onOpen,
-          style: TextButton.styleFrom(foregroundColor: accent),
-          child: Text(l10n.feedReadMore),
-        ),
+        if (showCta)
+          FilledButton.tonal(
+            onPressed: onAct,
+            style: FilledButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              foregroundColor: accent,
+            ),
+            child: Text(cta),
+          )
+        else
+          TextButton(
+            onPressed: onOpen,
+            style: TextButton.styleFrom(foregroundColor: accent),
+            child: Text(l10n.feedReadMore),
+          ),
       ],
     );
   }

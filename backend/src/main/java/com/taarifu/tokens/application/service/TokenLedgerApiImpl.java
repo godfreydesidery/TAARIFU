@@ -50,6 +50,16 @@ public class TokenLedgerApiImpl implements TokenLedgerApi {
     }
 
     @Override
+    public boolean refund(WalletOwnerType ownerType, UUID accountPublicId, long amount,
+                          String reversalEventId, String reason) {
+        // 🔒 FENCE (D18): the ONLY effect is a REFUND-kind convenience DEBIT reversing a prior PURCHASE credit.
+        // No role/vote/weight is revoked or granted and no balance is returned — a refund undoes
+        // convenience/reach only. Idempotent on reversalEventId (the payments reversal_event_id) → exactly-once
+        // reversal on refund-callback replay. A null return means "nothing to reverse / replay" → false.
+        return walletService.refund(ownerType, accountPublicId, amount, reversalEventId, reason) != null;
+    }
+
+    @Override
     public boolean reward(WalletOwnerType ownerType, UUID ownerId, RewardBehaviour behaviour,
                           String refEntityType, UUID refEntityId, String idempotencyKey) {
         return walletService.earn(ownerType, ownerId, behaviour, refEntityType, refEntityId, idempotencyKey)

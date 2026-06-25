@@ -27,15 +27,23 @@ import '../auth/bloc/auth_bloc.dart';
 import '../auth/bloc/auth_event.dart';
 import '../engagement/bloc/engagement_cubit.dart';
 import '../engagement/view/engagement_screen.dart';
+import '../feed/bloc/announcement_detail_cubit.dart';
 import '../feed/bloc/feed_cubit.dart';
+import '../feed/data/feed_models.dart';
+import '../feed/view/feed_detail_screen.dart';
 import '../feed/view/feed_screen.dart';
 import '../notifications/bloc/notification_prefs_cubit.dart';
 import '../notifications/bloc/notifications_cubit.dart';
 import '../notifications/data/push_service.dart';
 import '../notifications/view/notification_prefs_screen.dart';
 import '../notifications/view/notifications_screen.dart';
+import '../privacy/bloc/dsr_cubit.dart';
+import '../privacy/view/dsr_screen.dart';
 import '../profile/bloc/profile_cubit.dart';
 import '../profile/view/profile_screen.dart';
+import '../search/bloc/search_cubit.dart';
+import '../search/data/search_models.dart';
+import '../search/view/search_screen.dart';
 import '../reporting/bloc/my_reports_cubit.dart';
 import '../reporting/bloc/report_detail_cubit.dart';
 import '../reporting/bloc/report_form_cubit.dart';
@@ -175,6 +183,7 @@ class _HomeShellState extends State<HomeShell> {
               ProfileCubit(repository: _deps.profileRepository)..load(),
           child: ProfileScreen(
             geographyRepository: _deps.geographyRepository,
+            onOpenDataRights: _openDataRights,
           ),
         ),
       ),
@@ -193,6 +202,63 @@ class _HomeShellState extends State<HomeShell> {
             context.read<AuthBloc>().add(const AuthLoggedOut());
             Navigator.of(context).popUntil((r) => r.isFirst);
           },
+        ),
+      ),
+    );
+  }
+
+  /// Opens the cross-entity discovery search (PRD discovery, ADR-0017).
+  void _openSearch() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider(
+          create: (_) => SearchCubit(repository: _deps.searchRepository),
+          child: SearchScreen(onOpenResult: _openSearchResult),
+        ),
+      ),
+    );
+  }
+
+  /// Routes a tapped search result to its owning surface. Returns `true` when a
+  /// destination exists (so the search screen knows whether to nudge the citizen).
+  ///
+  /// Today only an ANNOUNCEMENT has a citizen-facing detail screen; other kinds
+  /// (rep/org/category/public report) await their own screens and return `false`
+  /// rather than dead-ending or fabricating a destination (EI-7, fail-safe).
+  bool _openSearchResult(SearchResult result) {
+    if (result.kind == SearchResultKind.announcement &&
+        result.entityPublicId.isNotEmpty) {
+      _openAnnouncement(result.entityPublicId, result.title, result.snippet);
+      return true;
+    }
+    return false;
+  }
+
+  /// Opens a full announcement by id, seeding the detail from a lean [FeedItem]
+  /// (built from the search result) so the title shows instantly while the body
+  /// loads (US-4.2). Reuses the existing feed detail + its repository/cache.
+  void _openAnnouncement(String id, String title, String? snippet) {
+    final item = FeedItem(id: id, title: title, snippet: snippet ?? '');
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => BlocProvider(
+          create: (_) => AnnouncementDetailCubit(
+            repository: _deps.feedRepository,
+            announcementId: id,
+          )..load(),
+          child: FeedDetailScreen(item: item),
+        ),
+      ),
+    );
+  }
+
+  /// Opens the PDPA data-request (DSR) self-service screen.
+  void _openDataRights() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider(
+          create: (_) => DsrCubit(repository: _deps.dsrRepository)..load(),
+          child: const DsrScreen(),
         ),
       ),
     );
@@ -245,6 +311,11 @@ class _HomeShellState extends State<HomeShell> {
           title: Text(_index == 0 ? l10n.feedTitle : l10n.myRepsTitle),
           actions: [
             IconButton(
+              tooltip: l10n.navSearch,
+              icon: const Icon(Icons.search_rounded),
+              onPressed: _openSearch,
+            ),
+            IconButton(
               tooltip: l10n.navEngage,
               icon: const Icon(Icons.how_to_vote_outlined),
               onPressed: _openEngage,
@@ -259,7 +330,10 @@ class _HomeShellState extends State<HomeShell> {
         body: IndexedStack(
           index: _index,
           children: [
-            FeedScreen(onSignIn: _openSettings),
+            FeedScreen(
+              onSignIn: _openSettings,
+              onOpenEngagement: _openEngage,
+            ),
             MyRepsScreen(geographyRepository: _deps.geographyRepository),
           ],
         ),

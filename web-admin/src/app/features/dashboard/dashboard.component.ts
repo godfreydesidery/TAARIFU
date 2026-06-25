@@ -1,6 +1,7 @@
 import { Component, DestroyRef, OnInit, WritableSignal, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { DecimalPipe } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { ChartData } from 'chart.js';
@@ -9,8 +10,9 @@ import { Observable } from 'rxjs';
 import { AdminStats } from '../reporting/reporting.models';
 import { DashboardService } from './dashboard.service';
 import { AnalyticsService } from './analytics.service';
-import { Breakdown, Funnel, LatencyStats, VolumeReport } from './analytics.models';
+import { Breakdown, Funnel, LatencyStats, MetricPoint, VolumeReport } from './analytics.models';
 import { ChartComponent, TF_CHART_PALETTE } from '../../shared/components/chart.component';
+import { DateWindow, QUICK_RANGES, QuickRange, resolveWindow } from './date-range.util';
 
 /** A simple legend row the template renders alongside a chart for accessibility + at-a-glance reading. */
 interface LegendEntry {
@@ -39,7 +41,7 @@ interface LegendEntry {
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [RouterLink, DecimalPipe, TranslateModule, ChartComponent],
+  imports: [RouterLink, DecimalPipe, FormsModule, TranslateModule, ChartComponent],
   templateUrl: './dashboard.component.html',
 })
 export class DashboardComponent implements OnInit {
@@ -68,6 +70,29 @@ export class DashboardComponent implements OnInit {
   readonly moderation = signal<Breakdown | null | undefined>(undefined);
   readonly ttfr = signal<LatencyStats | null | undefined>(undefined);
   readonly ttr = signal<LatencyStats | null | undefined>(undefined);
+
+  // --- Date-range picker (drill-down window) --------------------------------
+  /** The selectable quick ranges, surfaced for the segmented control. */
+  readonly quickRanges = QUICK_RANGES;
+  /** The active quick range (defaults to the §3.3 headline 30-day window). */
+  readonly range = signal<QuickRange>('30D');
+  /** Custom-range start `yyyy-MM-dd` (only meaningful when `range() === 'CUSTOM'`). */
+  readonly customFrom = signal('');
+  /** Custom-range end `yyyy-MM-dd` (only meaningful when `range() === 'CUSTOM'`). */
+  readonly customTo = signal('');
+
+  // --- Volume drill-down -----------------------------------------------------
+  /** Which dimension the reports-volume drill-down table shows. */
+  readonly volumeDim = signal<'category' | 'area'>('category');
+
+  /** The volume drill-down rows for the active dimension (descending), or `[]`. */
+  readonly volumeRows = computed<MetricPoint[]>(() => {
+    const v = this.volume();
+    if (!v) {
+      return [];
+    }
+    return this.volumeDim() === 'category' ? v.byCategory : v.byArea;
+  });
 
   // --- Derived chart data ----------------------------------------------------
   /** Reports-by-status bar chart, built from the aggregate's per-status breakdown. */
@@ -155,19 +180,56 @@ export class DashboardComponent implements OnInit {
   });
 
   ngOnInit(): void {
-    // KPI aggregate + the two list counts.
+    // KPI aggregate + the two list counts — a live snapshot, window-independent (loaded once).
     this.bind(this.dashboard.stats(), this.stats);
     this.bind(this.dashboard.organisations(), this.organisationsCount);
     this.bind(this.dashboard.representatives(), this.representativesCount);
 
-    // Analytics charts — each independent, each degrades to null on 404/403/error.
-    this.bind(this.analytics.reportsVolume(), this.volume);
-    this.bind(this.analytics.reportChannelMix(), this.channelMix);
-    this.bind(this.analytics.verificationFunnel(), this.funnel);
-    this.bind(this.analytics.slaBreaches(), this.slaBreaks);
-    this.bind(this.analytics.moderationActions(), this.moderation);
-    this.bind(this.analytics.ttfr(), this.ttfr);
-    this.bind(this.analytics.ttr(), this.ttr);
+    // Window-scoped analytics — re-fetched whenever the date range changes.
+    this.loadAnalytics();
+  }
+
+  /**
+   * (Re)loads every window-scoped analytics source for the active date range. Each call is independent and
+   * degrades to `null` on a 404/403/error, so a missing endpoint never blocks the others (PRD §15). Resetting
+   * each signal to `undefined` first restores the skeleton while the new window loads (clear feedback that the
+   * range changed). The KPI tiles are intentionally NOT re-fetched — they are a live operational snapshot.
+   */
+  private loadAnalytics(): void {
+    const { from, to } = this.window();
+    for (const sig of [this.volume, this.channelMix, this.funnel, this.slaBreaks, this.moderation, this.ttfr, this.ttr]) {
+      sig.set(undefined);
+    }
+    this.bind(this.analytics.reportsVolume(from, to), this.volume);
+    this.bind(this.analytics.reportChannelMix(from, to), this.channelMix);
+    this.bind(this.analytics.verificationFunnel(from, to), this.funnel);
+    this.bind(this.analytics.slaBreaches(from, to), this.slaBreaks);
+    this.bind(this.analytics.moderationActions(from, to), this.moderation);
+    this.bind(this.analytics.ttfr(from, to), this.ttfr);
+    this.bind(this.analytics.ttr(from, to), this.ttr);
+  }
+
+  /** The resolved `from`/`to` ISO window for the active quick/custom range. */
+  private window(): DateWindow {
+    return resolveWindow(this.range(), this.customFrom(), this.customTo());
+  }
+
+  /**
+   * Applies a quick range from the segmented control. A non-custom pick re-queries immediately; `CUSTOM`
+   * waits for the user to set both dates (then {@link applyCustomRange}).
+   * @param range the chosen quick range.
+   */
+  selectRange(range: QuickRange): void {
+    this.range.set(range);
+    if (range !== 'CUSTOM') {
+      this.loadAnalytics();
+    }
+  }
+
+  /** Re-queries analytics for the custom from/to window (called when a custom date changes). */
+  applyCustomRange(): void {
+    this.range.set('CUSTOM');
+    this.loadAnalytics();
   }
 
   /** Median (p50) TTFR, formatted human-readable (e.g. "12h", "3d"), or "—". */

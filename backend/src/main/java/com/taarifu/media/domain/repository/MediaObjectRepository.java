@@ -50,4 +50,13 @@ public interface MediaObjectRepository extends JpaRepository<MediaObject, Long> 
      * @return the bound objects (never {@code null}; empty if none).
      */
     List<MediaObject> findByOwnerTypeAndOwnerId(String ownerType, UUID ownerId);
+
+    /**
+     * Lists every (non-deleted) object uploaded by the subject, for the PDPA fan-out (data-subject ACCESS
+     * export + ERASURE uploader-linkage sever; ADR-0016 §4/§5).
+     *
+     * @param uploadedByProfileId the uploader's account public id (the DSR subject).
+     * @return every object still attributed to this uploader; empty if none / already severed.
+     */
+    List<MediaObject> findByUploadedByProfileId(UUID uploadedByProfileId);
 }

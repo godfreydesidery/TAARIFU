@@ -86,4 +86,33 @@ public interface AnnouncementRepository extends JpaRepository<Announcement, Long
             """)
     java.util.List<Announcement> findDueForTransition(@Param("status") AnnouncementStatus status,
                                                       @Param("cutoff") Instant cutoff);
+
+    /**
+     * Counts the distinct {@code PUBLISHED} announcements that went live in the digest window and target at
+     * least one of the recipient's followed areas — the single number a digest summary carries ("N new
+     * updates in your areas"). The window is {@code since < publishAt <= until} so a daily/weekly run counts
+     * exactly the announcements published since the previous run, with no overlap or gap.
+     *
+     * <p>WHY a count (not the rows): the digest is a deliberately lean nudge (PRD §15 data budget) — it tells
+     * the citizen "there is activity, open the app" rather than re-sending each item over a metered channel.
+     * The full items are pulled by {@link FeedQueryService} when the citizen taps through. A {@code DISTINCT}
+     * count over the audience-area join avoids double-counting an announcement that targets two followed areas.</p>
+     *
+     * @param areaIds the recipient's followed area public ids (matched against the announcement audience).
+     * @param since   exclusive lower bound of the window (the previous run's instant).
+     * @param until   inclusive upper bound of the window (this run's instant).
+     * @return the count of distinct in-window announcements touching the followed areas (0 → no digest sent).
+     */
+    @Query("""
+            SELECT COUNT(DISTINCT a) FROM Announcement a
+            JOIN a.audienceAreaIds area
+            WHERE a.status = com.taarifu.communications.domain.model.enums.AnnouncementStatus.PUBLISHED
+              AND area IN :areaIds
+              AND a.publishAt IS NOT NULL
+              AND a.publishAt > :since
+              AND a.publishAt <= :until
+            """)
+    long countAreaActivitySince(@Param("areaIds") Set<UUID> areaIds,
+                                @Param("since") Instant since,
+                                @Param("until") Instant until);
 }

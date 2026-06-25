@@ -76,4 +76,42 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
             """)
     List<UUID> findFollowerProfileIds(@Param("targetType") SubscriptionTargetType targetType,
                                       @Param("targetIds") Set<UUID> targetIds);
+
+    /**
+     * Returns the distinct profile ids that follow at least one target of a given kind — the digest's
+     * recipient set ("everyone who follows any area"). Paged so the {@code @Scheduled} digest job streams
+     * the population in bounded slices and never loads the whole follower base into one heap (a citywide
+     * fan-out could be large; the job iterates pages, ARCHITECTURE §8 / PRD §15 cost-awareness).
+     *
+     * @param targetType the kind of follow that makes a profile a digest candidate (AREA for the area digest).
+     * @param pageable   the bounded slice (page size + page number) the digest job iterates.
+     * @return a page of distinct follower profile public ids.
+     */
+    @Query(value = """
+            SELECT DISTINCT s.followerProfileId FROM Subscription s
+            WHERE s.targetType = :targetType
+            """,
+            // Explicit DISTINCT count: a derived count over a SELECT DISTINCT projection is ambiguous, so the
+            // count of *distinct followers* is stated here to keep the paged query correct (Spring Data JPA).
+            countQuery = """
+            SELECT COUNT(DISTINCT s.followerProfileId) FROM Subscription s
+            WHERE s.targetType = :targetType
+            """)
+    Page<UUID> findDistinctFollowerProfileIds(@Param("targetType") SubscriptionTargetType targetType,
+                                              Pageable pageable);
+
+    /**
+     * Returns the area target ids a profile follows — the digest's per-recipient "which areas to summarise"
+     * input. Equivalent to {@link #findTargetIds} for {@link SubscriptionTargetType#AREA}; named explicitly
+     * here so the digest reads intention-revealingly.
+     *
+     * @param followerProfileId the recipient profile's public id.
+     * @return the set of followed AREA target public ids (possibly empty).
+     */
+    @Query("""
+            SELECT s.targetId FROM Subscription s
+            WHERE s.followerProfileId = :followerProfileId
+              AND s.targetType = com.taarifu.communications.domain.model.enums.SubscriptionTargetType.AREA
+            """)
+    Set<UUID> findFollowedAreaIds(@Param("followerProfileId") UUID followerProfileId);
 }

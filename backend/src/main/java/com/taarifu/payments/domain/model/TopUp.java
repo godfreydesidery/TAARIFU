@@ -46,9 +46,11 @@ import java.util.UUID;
         })
 @SQLRestriction("deleted = false")
 public class TopUp extends BaseEntity {
-    // INVARIANTS (DB-owned, migration V130):
+    // INVARIANTS (DB-owned, migrations V130 + V131):
     //   * idempotency_key UNIQUE            — one initiate = one row (replay-safe).
     //   * (provider, provider_ref) UNIQUE WHERE provider_ref IS NOT NULL — one settlement = one row.
+    //   * credit_event_id / reversal_event_id key the wallet credit / reversal so a redelivered SUCCEEDED
+    //     callback credits once and a retried refund debits once (V131 adds reversal_event_id/reversal_reason).
 
     /** The buyer's account public id (opaque UUID — never an FK into identity; ADR-0013). */
     @Column(name = "buyer_id", nullable = false, updatable = false)
@@ -93,9 +95,24 @@ public class TopUp extends BaseEntity {
     @Column(name = "credit_event_id")
     private UUID creditEventId;
 
+    /**
+     * Idempotency key used for the wallet <b>reversal</b> (refund); set once, when the reversal is posted, so
+     * a retried refund debits the wallet exactly once (mirrors {@link #creditEventId}). {@code null} unless
+     * the top-up has been refunded (ADR-0015 addendum).
+     */
+    @Column(name = "reversal_event_id")
+    private UUID reversalEventId;
+
     /** Machine failure reason on FAILED; <b>redacted</b> — no PII, no provider body (PRD §18). */
     @Column(name = "failure_reason", length = 256)
     private String failureReason;
+
+    /**
+     * Redacted machine reason for a VOID/REFUND (e.g. {@code ADMIN_CANCELLED}, {@code DUPLICATE_CHARGE}); no
+     * PII, no provider body (PRD §18). {@code null} unless the top-up was voided or refunded.
+     */
+    @Column(name = "reversal_reason", length = 256)
+    private String reversalReason;
 
     /** JPA requires a no-arg constructor; not for application use. */
     protected TopUp() {
@@ -174,9 +191,19 @@ public class TopUp extends BaseEntity {
         return creditEventId;
     }
 
+    /** @return the wallet-reversal (refund) idempotency key once the reversal is posted, else {@code null}. */
+    public UUID getReversalEventId() {
+        return reversalEventId;
+    }
+
     /** @return the redacted failure reason, or {@code null}. */
     public String getFailureReason() {
         return failureReason;
+    }
+
+    /** @return the redacted void/refund reason, or {@code null}. */
+    public String getReversalReason() {
+        return reversalReason;
     }
 
     /**
@@ -216,8 +243,58 @@ public class TopUp extends BaseEntity {
         this.failureReason = reason;
     }
 
-    /** @return {@code true} if the row is in a terminal state (SUCCEEDED or FAILED) — no further transition. */
+    /**
+     * Voids an <b>un-settled</b> attempt (INITIATED/PENDING) — an admin cancellation of a top-up that never
+     * settled, so there is nothing to reverse on the wallet (ADR-0015 addendum: REFUND/VOID).
+     *
+     * <p>WHY guarded: a void is only meaningful before settlement. Calling this on a SUCCEEDED row would
+     * silently discard a real credit (use {@link #markRefunded(UUID, String)} for a settled top-up); calling
+     * it on an already-terminal row is a programming error. The guard makes the precondition explicit.</p>
+     *
+     * @param reason redacted machine reason (e.g. {@code ADMIN_CANCELLED}); never PII.
+     * @throws IllegalStateException if the top-up is not in INITIATED/PENDING.
+     */
+    public void markVoided(String reason) {
+        if (this.status != TopUpStatus.INITIATED && this.status != TopUpStatus.PENDING) {
+            throw new IllegalStateException("Only an un-settled top-up may be VOIDED; status=" + this.status);
+        }
+        this.status = TopUpStatus.VOIDED;
+        this.reversalReason = reason;
+    }
+
+    /**
+     * Refunds a <b>settled</b> top-up: records the reversal idempotency key and moves SUCCEEDED → REFUNDED
+     * (ADR-0015 addendum: REFUND/VOID). The actual wallet debit is posted by {@code RefundService} through
+     * the fence-safe reversal port in the same transaction; this method only flips the in-memory state.
+     *
+     * <p><b>🔒 Fence (D18):</b> a refund reverses only the convenience-token credit this top-up produced — it
+     * never touches a signature, rating, poll outcome, role, routing/SLA, or verification status.</p>
+     *
+     * @param reversalEventId the idempotency key under which the wallet reversal was posted (exactly-once).
+     * @param reason          redacted machine reason (e.g. {@code DUPLICATE_CHARGE}); never PII.
+     * @throws IllegalStateException if the top-up is not SUCCEEDED (only a settled credit can be reversed).
+     */
+    public void markRefunded(UUID reversalEventId, String reason) {
+        if (this.status != TopUpStatus.SUCCEEDED) {
+            throw new IllegalStateException("Only a SUCCEEDED top-up may be REFUNDED; status=" + this.status);
+        }
+        this.status = TopUpStatus.REFUNDED;
+        this.reversalEventId = reversalEventId;
+        this.reversalReason = reason;
+    }
+
+    /**
+     * @return {@code true} if the row is in a <b>settlement-terminal</b> state — no settlement callback may
+     *         re-credit it. SUCCEEDED, FAILED, VOIDED, and REFUNDED all qualify, so a duplicate/out-of-order
+     *         provider callback on any of them is a no-op (idempotent reconciliation, PRD §23.5). NOTE: a
+     *         SUCCEEDED row is settlement-terminal yet still {@link #isRefundable() refundable} by an admin.
+     */
     public boolean isTerminal() {
-        return this.status == TopUpStatus.SUCCEEDED || this.status == TopUpStatus.FAILED;
+        return this.status != TopUpStatus.INITIATED && this.status != TopUpStatus.PENDING;
+    }
+
+    /** @return {@code true} if the top-up is SUCCEEDED and may therefore be reversed to REFUNDED (D18-safe). */
+    public boolean isRefundable() {
+        return this.status == TopUpStatus.SUCCEEDED;
     }
 }

@@ -4,6 +4,8 @@ import com.taarifu.accountability.api.dto.AttendanceDto;
 import com.taarifu.accountability.api.dto.AttendanceSummaryDto;
 import com.taarifu.accountability.api.dto.ContributionDto;
 import com.taarifu.accountability.api.dto.PromiseDto;
+import com.taarifu.accountability.api.dto.PromiseStatusEntryDto;
+import com.taarifu.accountability.api.dto.RatingReplyDto;
 import com.taarifu.accountability.api.dto.RatingSummaryDto;
 import com.taarifu.accountability.application.service.AccountabilityQueryService;
 import com.taarifu.accountability.domain.model.enums.ContributionType;
@@ -154,6 +156,52 @@ public class AccountabilityController {
         Pageable pageable = pageRequests.of(page, size, sort);
         Page<PromiseDto> result = queryService.listPromises(representativeId, status, pageable);
         return responses.paged(result.getContent(), pageMapper.toMeta(result));
+    }
+
+    /**
+     * Lists a promise's citizen-visible status timeline (US-6.3 — the dated provenance of how the promise
+     * moved: made → in-progress → kept/broken).
+     *
+     * <p>Defaults to oldest→newest ({@code createdAt,asc}) so the timeline reads chronologically; a client may
+     * override with {@code sort}. The {@code representativeId} in the path scopes the URL to a representative's
+     * promise (RESTful nesting); the timeline itself is keyed by the promise id.</p>
+     *
+     * @param representativeId the owning representative's public id (URL scope).
+     * @param promiseId        the promise's public id.
+     * @param page             zero-based page index.
+     * @param size             page size (capped at 100).
+     * @param sort             sort expression; defaults to {@code createdAt,asc}.
+     * @return a paged envelope of {@link PromiseStatusEntryDto}.
+     */
+    @GetMapping("/{representativeId}/promises/{promiseId}/timeline")
+    @PreAuthorize("permitAll()")
+    @Operation(summary = "List a promise's status timeline",
+            description = "Public, paged; the append-only dated provenance of a promise's status moves (US-6.3).")
+    public ApiResponse<List<PromiseStatusEntryDto>> promiseTimeline(
+            @PathVariable UUID representativeId,
+            @PathVariable UUID promiseId,
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
+            @RequestParam(defaultValue = "createdAt,asc") String sort) {
+        Pageable pageable = pageRequests.of(page, size, sort);
+        Page<PromiseStatusEntryDto> result = queryService.promiseTimeline(promiseId, pageable);
+        return responses.paged(result.getContent(), pageMapper.toMeta(result));
+    }
+
+    /**
+     * Returns the representative's right-of-reply to a single rating, if one exists (the D-rated-fairness rule,
+     * US-6.2) — so a client showing a moderated rating comment can show the representative's reply with it.
+     *
+     * @param ratingId the rating's public id.
+     * @return an envelope carrying the {@link RatingReplyDto}, or {@code data=null} if the rating has no reply.
+     */
+    @GetMapping("/ratings/{ratingId}/reply")
+    @PreAuthorize("permitAll()")
+    @Operation(summary = "Get a rating's right-of-reply",
+            description = "Public; the rated representative's reply to a rating, shown with the rating (US-6.2). "
+                    + "Returns null data when there is no reply.")
+    public ApiResponse<RatingReplyDto> ratingReply(@PathVariable UUID ratingId) {
+        return responses.ok(queryService.ratingReply(ratingId).orElse(null));
     }
 
     /**

@@ -4,11 +4,15 @@ import com.taarifu.accountability.api.dto.AttendanceDto;
 import com.taarifu.accountability.api.dto.AttendanceSummaryDto;
 import com.taarifu.accountability.api.dto.ContributionDto;
 import com.taarifu.accountability.api.dto.PromiseDto;
+import com.taarifu.accountability.api.dto.PromiseStatusEntryDto;
 import com.taarifu.accountability.api.dto.RatingDto;
+import com.taarifu.accountability.api.dto.RatingReplyDto;
 import com.taarifu.accountability.api.dto.RatingSummaryDto;
 import com.taarifu.accountability.domain.model.Attendance;
 import com.taarifu.accountability.domain.model.Promise;
+import com.taarifu.accountability.domain.model.PromiseStatusEntry;
 import com.taarifu.accountability.domain.model.Rating;
+import com.taarifu.accountability.domain.model.RatingReply;
 import com.taarifu.accountability.domain.model.RepresentativeContribution;
 import com.taarifu.accountability.domain.model.enums.RatingSubjectType;
 import com.taarifu.accountability.domain.repository.AttendanceRepository;
@@ -85,6 +89,34 @@ public class AccountabilityMapper {
                 p.getStatus(),
                 p.getEvidenceRef(),
                 List.copyOf(p.getLinkedProjectIds()));
+    }
+
+    /**
+     * @param e a promise status-timeline entry.
+     * @return its public response DTO (one dated transition in the promise's timeline — US-6.3).
+     */
+    public PromiseStatusEntryDto toPromiseStatusEntryDto(PromiseStatusEntry e) {
+        return new PromiseStatusEntryDto(
+                e.getPublicId(),
+                e.getStatus(),
+                e.getEvidenceRef(),
+                e.getNote(),
+                e.getCreatedAt());
+    }
+
+    /**
+     * @param reply a representative right-of-reply entity.
+     * @return its public response DTO (shown with the rating it answers — the D-rated-fairness rule). The
+     *         author account is deliberately NOT surfaced publicly (only whether it was a curator on-behalf
+     *         reply).
+     */
+    public RatingReplyDto toRatingReplyDto(RatingReply reply) {
+        return new RatingReplyDto(
+                reply.getPublicId(),
+                reply.getRepresentativeId(),
+                reply.isOnBehalf(),
+                reply.getBody(),
+                reply.getCreatedAt());
     }
 
     /**

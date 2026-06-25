@@ -28,9 +28,11 @@ import java.util.UUID;
  * the <b>rule data</b> and a directory of who-handles-what.</p>
  *
  * <p>WHY category/sub-category are id references (not FKs): {@code IssueCategory} is owned by the
- * {@code reporting} module, built in parallel and not importable here (ARCHITECTURE.md §3.2). The rule
- * references categories by their public id and is resolved against reporting's API at routing time.
- * // TODO(wiring): validate {@code categoryPublicId}/{@code subCategoryPublicId} against reporting.</p>
+ * {@code reporting} module, a peer feature module not importable here (ARCHITECTURE.md §3.2). The rule
+ * references categories by their public id; existence is validated synchronously against reporting's
+ * published {@link com.taarifu.reporting.api.IssueCategoryQueryApi} on the create path
+ * ({@code ResponderAdminService.createRoutingRule}, sync {@code responders → reporting} — ADR-0013 §4a),
+ * and the routing handler resolves the report's category against the rule table at routing time.</p>
  *
  * <p>WHY an optional {@code preferredResponderId}: §24.2's "electricity → TANESCO" style rules can pin
  * a default provider directly; when {@link ProviderSelectionMode#CITIZEN_SELECTED} the field is left
@@ -47,7 +49,8 @@ public class RoutingRule extends BaseEntity {
 
     /**
      * The reporting-module category this rule routes (referenced by id, no FK). Required — every rule
-     * is keyed by at least a top-level category. // TODO(wiring): validate against reporting.
+     * is keyed by at least a top-level category. Existence is validated against reporting's published
+     * {@code IssueCategoryQueryApi} on the create path (ADR-0013 §4a).
      */
     @Column(name = "category_public_id", nullable = false)
     private UUID categoryPublicId;

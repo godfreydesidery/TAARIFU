@@ -74,9 +74,16 @@ public class Organisation extends BaseEntity {
     private String websiteUrl;
 
     /**
-     * The {@code identity} user who administers this organisation's workspace, referenced <b>by id</b>
-     * (no cross-module FK — ARCHITECTURE.md §3.2). Resolved via identity's public API when needed.
-     * Optional until an admin is bound. // TODO(wiring): resolve/validate against identity module.
+     * The {@code identity} account who administers this organisation's workspace, referenced <b>by id</b>
+     * (no cross-module FK — ARCHITECTURE.md §3.2). Optional until an admin is bound.
+     *
+     * <p>PHASE-3: the <i>admin-binding endpoint</i> that sets this is a Phase-2/3 B2B provider-admin feature
+     * (scoped {@code RESPONDER_ADMIN} role — see {@code ResponderAdminController} Javadoc, §24.4/§24.6); MVP
+     * keeps directory administration central to Moderator/Admin and never sets this field. When that endpoint
+     * lands, validate the bound id against identity's published {@link com.taarifu.identity.api.UserAdminQueryApi}
+     * (its {@code getUser(UUID)} throws {@code NOT_FOUND} for an unknown account) in the binding service — sync
+     * {@code responders → identity}, ADR-0013 §1 — so an organisation can never be bound to a non-existent
+     * account; resolution for display likewise goes through identity's published port, never its tables.</p>
      */
     @Column(name = "owner_user_public_id")
     private java.util.UUID ownerUserPublicId;
@@ -134,7 +141,11 @@ public class Organisation extends BaseEntity {
         this.verified = verified;
     }
 
-    /** Binds the administering identity user (by id). // TODO(wiring): validate via identity API. */
+    /**
+     * Binds the administering identity account (by id). The binding service validates the id against
+     * identity's published {@code UserAdminQueryApi} before calling this (see the {@code ownerUserPublicId}
+     * field PHASE-3 note); this setter is a pure state mutation.
+     */
     public void setOwnerUserPublicId(java.util.UUID ownerUserPublicId) {
         this.ownerUserPublicId = ownerUserPublicId;
     }

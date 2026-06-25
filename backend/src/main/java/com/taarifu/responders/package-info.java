@@ -19,9 +19,27 @@
  *
  * <p>Public surface: an unauthenticated provider directory ("who handles what", §24.1) and a
  * Moderator/Admin management surface (CRUD + verification + routing + assignment, §24.4). Cross-module
- * references (reporting categories, geography areas, identity users, the report itself) are by
- * {@code UUID} id only — this module does not import the parallel reporting/communications/tokens
- * modules; those linkages are a later wiring step (see {@code // TODO(wiring)} markers and the published
- * {@code api.event.ResponderAssignedEvent} seam).</p>
+ * references (reporting categories, geography areas, identity accounts, the report itself) are by
+ * {@code UUID} id only — this module never imports a sibling's {@code domain}/{@code infrastructure}
+ * (ARCHITECTURE.md §3.2). The cross-module linkages are wired per ADR-0013:</p>
+ * <ul>
+ *   <li><b>Synchronous reads ({@code responders → reporting}):</b> {@code reportId} existence via
+ *       {@code reporting.api.ReportQueryApi}, {@code categoryId} existence via
+ *       {@code reporting.api.IssueCategoryQueryApi}, and the responder-side case lifecycle via
+ *       {@code reporting.api.ReportLifecycleApi} (ADR-0013 §4a).</li>
+ *   <li><b>Asynchronous events (outbox):</b> consumes reporting's {@code REPORT_ROUTED} to create the OWNER
+ *       assignment ({@code RoutingHandler}, D21) and emits {@code api.event.ResponderAssignedEvent}
+ *       ({@code RESPONDER_ASSIGNED}) back so reporting closes the round-trip; an assignment-created
+ *       analytics fact rides the same outbox.</li>
+ *   <li><b>Owner → search:</b> pushes each organisation's public directory projection to
+ *       {@code search.api.SearchIndexApi} on the write path, and re-pushes all of them on demand via the
+ *       {@code OrganisationSearchBackfillSource} adapter ({@code search.domain.port.SearchBackfillSource},
+ *       ADR-0017 §1).</li>
+ * </ul>
+ *
+ * <p>Two PHASE-3 cross-module dependencies remain explicit (no port available yet): existence-validating a
+ * {@code Responder}'s coverage-area ids needs a geography area-by-id query port, and binding an
+ * {@code Organisation}'s admin account is a Phase-2/3 B2B feature gated behind {@code RESPONDER_ADMIN}
+ * (validated via {@code identity.api.UserAdminQueryApi} when it lands). See the respective entity Javadoc.</p>
  */
 package com.taarifu.responders;

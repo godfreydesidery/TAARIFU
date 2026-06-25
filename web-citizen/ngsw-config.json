@@ -1,0 +1,74 @@
+{
+  "$schema": "./node_modules/@angular/service-worker/config/schema.json",
+  "index": "/index.html",
+  "assetGroups": [
+    {
+      "name": "app-shell",
+      "installMode": "prefetch",
+      "updateMode": "prefetch",
+      "resources": {
+        "files": [
+          "/favicon.ico",
+          "/index.html",
+          "/manifest.webmanifest",
+          "/*.css",
+          "/*.js"
+        ]
+      }
+    },
+    {
+      "name": "assets",
+      "installMode": "lazy",
+      "updateMode": "prefetch",
+      "resources": {
+        "files": [
+          "/icons/**",
+          "/i18n/**",
+          "/*.(svg|png|webp|jpg|jpeg|gif)"
+        ]
+      }
+    }
+  ],
+  "dataGroups": [
+    {
+      "name": "read-cache-public",
+      "urls": [
+        "/api/v1/public/reports**",
+        "/api/v1/announcements/**",
+        "/api/v1/petitions**",
+        "/api/v1/issue-categories**",
+        "/api/v1/representatives**",
+        "/api/v1/regions**",
+        "/api/v1/districts/**",
+        "/api/v1/wards**",
+        "/api/v1/search**"
+      ],
+      "cacheConfig": {
+        "strategy": "freshness",
+        "maxSize": 200,
+        "maxAge": "3d",
+        "timeout": "4s"
+      }
+    },
+    {
+      "name": "read-cache-mine",
+      "urls": [
+        "/api/v1/reports**",
+        "/api/v1/feed**"
+      ],
+      "cacheConfig": {
+        "strategy": "freshness",
+        "maxSize": 100,
+        "maxAge": "1d",
+        "timeout": "4s"
+      }
+    }
+  ],
+  "navigationUrls": [
+    "/**",
+    "!/**/*.*",
+    "!/**/*__*",
+    "!/**/*__*/**",
+    "!/api/**"
+  ]
+}

@@ -1,0 +1,62 @@
+<section aria-labelledby="detail-title">
+  <a routerLink="/track" class="btn btn-link px-0">&larr; {{ 'common.back' | translate }}</a>
+
+  @if (loading()) {
+    <div class="tz-skeleton" style="height: 2rem; width: 60%"></div>
+    <div class="tz-skeleton mt-2" style="height: 8rem"></div>
+    <span class="sr-only">{{ 'common.loading' | translate }}</span>
+  } @else if (errored() || !report()) {
+    <div class="tz-card detail-empty" role="alert">
+      <p class="mb-0">{{ 'common.errorLoading' | translate }}</p>
+    </div>
+  } @else {
+    <div class="detail-head">
+      <span class="detail-cat">{{ report()!.categoryName }}</span>
+      <h1 id="detail-title" class="detail-title">{{ report()!.title }}</h1>
+      <div class="detail-meta">
+        <app-status-pill [status]="report()!.status" />
+        <span class="detail-code">{{ report()!.code }}</span>
+      </div>
+    </div>
+
+    <div class="tz-card detail-block">
+      <h2 class="detail-block-h">{{ 'track.details' | translate }}</h2>
+      <p class="detail-desc">{{ report()!.description }}</p>
+      <dl class="detail-dl">
+        <dt>{{ 'track.filed' | translate }}</dt>
+        <dd>{{ report()!.createdAt | date: 'medium' }}</dd>
+        @if (report()!.dueAt) {
+          <dt>{{ 'track.due' | translate }}</dt>
+          <dd>{{ report()!.dueAt | date: 'medium' }}</dd>
+        }
+        @if (report()!.resolution) {
+          <dt>{{ 'track.resolution' | translate }}</dt>
+          <dd>{{ report()!.resolution }}</dd>
+        }
+      </dl>
+    </div>
+
+    <!-- Status timeline -->
+    <div class="tz-card detail-block">
+      <h2 class="detail-block-h">{{ 'track.timeline' | translate }}</h2>
+      @if (timeline().length) {
+        <ol class="timeline">
+          @for (e of timeline(); track e.id) {
+            <li class="timeline__item">
+              <span class="timeline__dot" aria-hidden="true"></span>
+              <div class="timeline__body">
+                <div class="timeline__type">{{ 'report.event.' + e.eventType | translate }}</div>
+                @if (e.message) {
+                  <div class="timeline__msg">{{ e.message }}</div>
+                }
+                <time class="timeline__time">{{ e.createdAt | date: 'medium' }}</time>
+              </div>
+            </li>
+          }
+        </ol>
+      } @else {
+        <p class="text-muted mb-0">{{ 'track.noEvents' | translate }}</p>
+      }
+    </div>
+  }
+</section>

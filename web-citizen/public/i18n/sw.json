@@ -1,0 +1,166 @@
+{
+  "app": {
+    "title": "Taarifu — Sauti ya Mwananchi"
+  },
+  "common": {
+    "loading": "Inapakia…",
+    "retry": "Jaribu tena",
+    "back": "Rudi",
+    "cancel": "Ghairi",
+    "save": "Hifadhi",
+    "noData": "Hakuna data ya kuonyesha.",
+    "errorLoading": "Imeshindikana kupakia. Angalia mtandao kisha ujaribu tena.",
+    "unknownError": "Hitilafu isiyojulikana. Jaribu tena."
+  },
+  "a11y": {
+    "skipToContent": "Ruka hadi maudhui makuu",
+    "switchLanguage": "Badilisha lugha",
+    "primary": "Urambazaji mkuu"
+  },
+  "nav": {
+    "primary": "Urambazaji mkuu",
+    "home": "Nyumbani",
+    "reps": "Wawakilishi",
+    "report": "Ripoti",
+    "track": "Ripoti zangu",
+    "search": "Tafuta"
+  },
+  "offline": {
+    "youAreOffline": "Hauko mtandaoni — unaweza kusoma yaliyohifadhiwa.",
+    "draftsPending": "Ripoti {{count}} zinasubiri kutumwa zitakapopata mtandao.",
+    "draftsPendingShort": "Rasimu zinazosubiri"
+  },
+  "pwa": {
+    "updateAvailable": "Toleo jipya la Taarifu limepatikana. Tunasasisha…"
+  },
+  "auth": {
+    "signIn": "Ingia",
+    "tagline": "Ripoti changamoto. Fuatilia hatua. Ungana na wawakilishi wako.",
+    "enterPhoneTitle": "Weka namba yako ya simu",
+    "enterPhoneHelp": "Tutakutumia msimbo wa uthibitisho kwa SMS.",
+    "phoneLabel": "Namba ya simu",
+    "phoneFormatHint": "Tumia muundo wa kimataifa, mfano +255712345678.",
+    "phoneInvalid": "Tafadhali weka namba sahihi ya simu (mfano +255712345678).",
+    "sendCode": "Tuma msimbo",
+    "otpSent": "Msimbo umetumwa kwa SMS.",
+    "enterCodeTitle": "Weka msimbo",
+    "enterCodeHelp": "Weka msimbo wa tarakimu uliopokea kwa SMS.",
+    "codeLabel": "Msimbo wa uthibitisho",
+    "codeInvalid": "Msimbo si sahihi. Weka tarakimu 4 hadi 8.",
+    "verify": "Thibitisha",
+    "changePhone": "Badilisha namba ya simu",
+    "welcome": "Karibu Taarifu!",
+    "tierHint": "Uko ngazi {{tier}}. Unaweza kuripoti sasa; thibitisha kitambulisho ili kufungua zaidi.",
+    "staffUseConsole": "Akaunti hii ni ya wafanyakazi. Tafadhali tumia kituo cha wafanyakazi.",
+    "continueAsGuest": "Endelea kama mgeni",
+    "privacyNote": "Tunalinda taarifa zako kwa mujibu wa Sheria ya Ulinzi wa Data (PDPA)."
+  },
+  "feed": {
+    "title": "Karibu Taarifu",
+    "subtitle": "Habari na changamoto za eneo lako.",
+    "nearYou": "Karibu nawe",
+    "petitions": "Maombi ya wananchi",
+    "noReports": "Hakuna ripoti za umma kwa sasa.",
+    "noPetitions": "Hakuna maombi ya wananchi kwa sasa.",
+    "signatures": "Sahihi {{count}} kati ya {{goal}}",
+    "fileCta": "Wasilisha ripoti mpya"
+  },
+  "search": {
+    "title": "Tafuta",
+    "label": "Tafuta kwenye Taarifu",
+    "placeholder": "Tafuta wawakilishi, matangazo, ripoti…",
+    "prompt": "Andika neno kutafuta wawakilishi, mashirika, matangazo na ripoti za umma.",
+    "noResults": "Hakuna kinacholingana. Jaribu maneno mengine.",
+    "resultCount": "Matokeo {{count}}",
+    "type": {
+      "REPRESENTATIVE": "Mwakilishi",
+      "ORGANISATION": "Shirika",
+      "ANNOUNCEMENT": "Tangazo",
+      "ISSUE_CATEGORY": "Aina ya changamoto",
+      "PUBLIC_REPORT": "Ripoti ya umma"
+    }
+  },
+  "reps": {
+    "title": "Mwakilishi wangu",
+    "subtitle": "Chagua kata yako uone Mbunge na Diwani wako.",
+    "forWard": "Kwa kata ya {{ward}}",
+    "mp": "Mbunge (Jimbo)",
+    "councillor": "Diwani (Kata)",
+    "roleMp": "Mbunge",
+    "roleCouncillor": "Diwani",
+    "noMp": "Hakuna Mbunge aliyepatikana kwa eneo hili.",
+    "noCouncillor": "Hakuna Diwani aliyepatikana kwa kata hii.",
+    "unknownArea": "Eneo halijulikani",
+    "pickPrompt": "Chagua Mkoa, Wilaya na Kata yako hapo juu."
+  },
+  "geo": {
+    "region": "Mkoa",
+    "district": "Wilaya",
+    "ward": "Kata",
+    "choose": "— Chagua —"
+  },
+  "report": {
+    "title": "Wasilisha ripoti",
+    "subtitle": "Tuambie tatizo. Inachukua chini ya dakika mbili.",
+    "category": "Aina ya changamoto",
+    "chooseCategory": "— Chagua aina —",
+    "categoryRequired": "Tafadhali chagua aina ya changamoto.",
+    "sensitiveNote": "Hii ni aina nyeti. Ripoti zitakuwa za faragha; unaweza kuripoti bila kujitambulisha.",
+    "titleLabel": "Kichwa cha habari",
+    "titlePlaceholder": "Mfano: Taa za barabarani hazifanyi kazi",
+    "titleRequired": "Tafadhali weka kichwa cha habari.",
+    "descriptionLabel": "Maelezo",
+    "descriptionPlaceholder": "Eleza tatizo kwa ufupi…",
+    "descriptionRequired": "Tafadhali weka maelezo.",
+    "area": "Eneo (Kata)",
+    "wardRequired": "Tafadhali chagua kata yako.",
+    "location": "Mahali (hiari)",
+    "useMyLocation": "Tumia mahali nilipo",
+    "locationOptional": "Ni hiari. Tutatumia tu ukibofya.",
+    "clearLocation": "Ondoa mahali",
+    "geoCaptured": "Mahali pamepatikana.",
+    "geoDenied": "Hatukuweza kupata mahali. Unaweza kuendelea bila hilo.",
+    "geoUnavailable": "Kifaa chako hakiruhusu kupata mahali.",
+    "anonymous": "Ripoti bila kujitambulisha",
+    "anonymousHelp": "Jina lako halitahifadhiwa kwa ripoti hii (kwa aina nyeti tu).",
+    "send": "Tuma ripoti",
+    "offlineHint": "Ukiwa nje ya mtandao, ripoti itahifadhiwa na kutumwa utakapopata mtandao.",
+    "savedOffline": "Ripoti imehifadhiwa. Itatumwa utakapopata mtandao.",
+    "draftSynced": "Ripoti iliyokuwa imehifadhiwa sasa imetumwa.",
+    "filed": "Ripoti imewasilishwa. Namba: {{code}}",
+    "status": {
+      "SUBMITTED": "Imewasilishwa",
+      "TRIAGED": "Imepangwa",
+      "ASSIGNED": "Imekabidhiwa",
+      "IN_PROGRESS": "Inashughulikiwa",
+      "RESOLVED": "Imetatuliwa",
+      "CLOSED": "Imefungwa",
+      "REJECTED": "Imekataliwa",
+      "DUPLICATE": "Inajirudia"
+    },
+    "event": {
+      "STATUS_CHANGED": "Hali imebadilika",
+      "COMMENT_ADDED": "Maoni yameongezwa",
+      "ASSIGNED": "Imekabidhiwa",
+      "RESOLVED": "Imetatuliwa",
+      "CREATED": "Ripoti imefunguliwa"
+    }
+  },
+  "track": {
+    "title": "Ripoti zangu",
+    "pending": "Zinasubiri kutumwa",
+    "submitted": "Zilizowasilishwa",
+    "draftPending": "Itatumwa ikipata mtandao",
+    "draftSyncing": "Inatumwa…",
+    "draftFailed": "Imeshindikana — itajaribiwa tena",
+    "emptyTitle": "Bado hujawasilisha ripoti yoyote.",
+    "emptyHelp": "Bofya kitufe cha kuripoti kuanza.",
+    "details": "Maelezo",
+    "filed": "Imewasilishwa",
+    "due": "Muda wa kujibu",
+    "resolution": "Utatuzi",
+    "timeline": "Hatua za ufuatiliaji",
+    "noEvents": "Bado hakuna hatua za kuonyesha.",
+    "noReports": "Hakuna ripoti."
+  }
+}

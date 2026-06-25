@@ -1,0 +1,26 @@
+.file-h {
+  font-size: 1.4rem;
+  font-weight: 800;
+  margin-bottom: 0.1rem;
+}
+.file-block {
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.75rem;
+}
+.file-sensitive {
+  margin: 0.6rem 0 0;
+  font-size: 0.85rem;
+  color: #7a5300;
+  background: rgba(244, 168, 40, 0.14);
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.5rem;
+}
+.file-ward {
+  margin: 0.6rem 0 0;
+  font-weight: 700;
+  color: var(--tz-green-deep);
+}
+.file-geo {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}

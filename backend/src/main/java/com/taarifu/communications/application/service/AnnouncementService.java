@@ -245,6 +245,40 @@ public class AnnouncementService {
     }
 
     /**
+     * Takes an announcement out of public circulation — the <b>expiry / unpublish path</b> — and, critically,
+     * <b>removes its discovery-index projection</b> so an expired or unpublished announcement does not linger
+     * as a stale public search row (the wave-3 gap: publish upserted, but nothing removed when an announcement
+     * left the published state).
+     *
+     * <p>WHY this method exists: the {@code Announcement.expire()} domain transition existed and the
+     * {@link AnnouncementRepository#findDueForTransition expiry-sweep query} existed, but no application path
+     * drove the transition — so a published announcement that passed its {@code expireAt} stopped appearing in
+     * the feed (the feed query filters on the window) yet remained a {@code PUBLISHED} row in
+     * {@code search_document}, discoverable forever. This closes that leak. An expiry scheduler/operator
+     * unpublish action calls this; it transitions the row to {@code EXPIRED} and routes through the same single
+     * {@link #indexForDiscovery(Announcement)} fence, whose non-PUBLISHED branch <b>removes</b> the projection
+     * (idempotent — removing an absent/already-removed row is a no-op, ADR-0017 §1).</p>
+     *
+     * <p>Idempotent: an already-{@code EXPIRED} announcement is returned unchanged but still has its (absent)
+     * projection re-removed, so a redelivered sweep or a double unpublish never errors.</p>
+     *
+     * @param announcementPublicId the announcement to expire/unpublish.
+     * @return the now-{@code EXPIRED} announcement.
+     * @throws ApiException {@link ErrorCode#NOT_FOUND} if no such announcement.
+     */
+    @Transactional
+    public Announcement expire(UUID announcementPublicId) {
+        Announcement a = announcementRepository.findByPublicId(announcementPublicId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND));
+        a.expire();
+        Announcement saved = announcementRepository.save(a);
+        // No longer PUBLISHED → indexForDiscovery removes the projection so the expired/unpublished
+        // announcement is positively pulled from public discovery (the no-leak rule, PRD §18, ADR-0017 §1).
+        indexForDiscovery(saved);
+        return saved;
+    }
+
+    /**
      * Appends the {@link AnnouncementPublished} event to the transactional outbox — only when the
      * announcement actually went live now — so the fan-out intent commits atomically with the publish
      * (ADR-0014 §2/§5a). Called inside this service's {@code @Transactional}; {@link OutboxWriter#append}

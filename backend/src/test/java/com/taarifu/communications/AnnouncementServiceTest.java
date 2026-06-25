@@ -182,6 +182,23 @@ class AnnouncementServiceTest {
         assertThat(indexCaptor.getValue().visibility()).isEqualTo(SearchVisibility.PUBLIC);
     }
 
+    @Test
+    void expire_removesStaleDiscoveryRow_neverLingersAsPublic() {
+        // FIX-2 (the wave-3 gap): an expired/unpublished announcement must leave the discovery index so it does
+        // not linger as a stale PUBLIC search row. expire() transitions to EXPIRED and removes the projection.
+        // This assertion FAILS if the searchIndex.remove call is dropped from the expiry path.
+        Announcement published = published(null, null); // currently live/PUBLISHED
+        when(announcementRepository.findByPublicId(any())).thenReturn(Optional.of(published));
+
+        Announcement out = service.expire(UUID.randomUUID());
+
+        assertThat(out.getStatus()).isEqualTo(AnnouncementStatus.EXPIRED);
+        verify(searchIndex).remove(SearchEntityType.ANNOUNCEMENT, out.getPublicId());
+        verify(searchIndex, never()).upsert(any());
+        // Expiry is not a publish — no fan-out event is appended.
+        verify(outboxWriter, never()).append(any());
+    }
+
     /**
      * Builds a captor for {@link EventEnvelope} appends. The wildcard generic of {@code OutboxWriter.append}
      * lets {@code forClass} capture cleanly; confining it here keeps the assertions above readable.

@@ -15,6 +15,10 @@ import com.taarifu.engagement.domain.model.enums.SurveyStatus;
 import com.taarifu.engagement.domain.model.enums.SurveyType;
 import com.taarifu.engagement.domain.repository.SurveyRepository;
 import com.taarifu.engagement.domain.repository.SurveyResponseRepository;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -50,10 +54,17 @@ public class SurveyService {
             SurveyStatus.SCHEDULED, SurveyStatus.OPEN,
             SurveyStatus.CLOSED, SurveyStatus.ARCHIVED);
 
+    /**
+     * Max characters of the survey description carried in the public discovery snippet — a lean public
+     * preview only (PRD §15 data budget; well under ADR-0017's {@code snippet_*} 1024-char column).
+     */
+    private static final int SEARCH_SNIPPET_MAX = 480;
+
     private final SurveyRepository surveys;
     private final SurveyResponseRepository responses;
     private final EngagementMapper mapper;
     private final OutboxWriter outboxWriter;
+    private final SearchIndexApi searchIndex;
 
     /**
      * @param surveys      survey persistence port.
@@ -63,15 +74,23 @@ public class SurveyService {
      *                     fact in the response transaction so the analytics sink records it asynchronously, off
      *                     the responder's path (Appendix E, M15). The token ledger is NEVER consulted here (the
      *                     integrity fence, D18/§23.5).
+     * @param searchIndex  the search module's published inbound port (ADR-0017 §1, ADR-0013 §1). This service
+     *                     <b>pushes</b> a public, PII-free projection of a publicly-visible (non-DRAFT) survey
+     *                     or poll (indexed under {@code SearchEntityType.POLL} for both {@code SurveyType}s)
+     *                     into the discovery index on create/open/lifecycle-change and <b>removes</b> it when
+     *                     not (or no longer) public-safe — owner→search, an {@code api → api} call, never a
+     *                     reach-in. The questions JSON and response payloads are NEVER indexed (PRD §18).
      */
     public SurveyService(SurveyRepository surveys,
                          SurveyResponseRepository responses,
                          EngagementMapper mapper,
-                         OutboxWriter outboxWriter) {
+                         OutboxWriter outboxWriter,
+                         SearchIndexApi searchIndex) {
         this.surveys = surveys;
         this.responses = responses;
         this.mapper = mapper;
         this.outboxWriter = outboxWriter;
+        this.searchIndex = searchIndex;
     }
 
     /**
@@ -121,10 +140,12 @@ public class SurveyService {
         Survey survey = Survey.create(title, description, type, binding, audienceScope, questions,
                 startsAt, endsAt, anonymous, creatorPublicId, null);
         surveys.save(survey);
-        // TODO(wiring/search, ADR-0017 §1): on open/schedule (DRAFT -> SCHEDULED/OPEN) push a PUBLIC projection
-        // to search.api.SearchIndexApi.upsert (title + description as snippet; NEVER the questions JSON or any
-        // response payload); on close/archive/delete call remove(...). BLOCKED: SearchEntityType has no POLL
-        // value (search-owner CENTRAL NEED — see package-info). DRAFTs and anonymous response data are never indexed.
+        // SEARCH (ADR-0017 §1, ADR-0013 §1): keep the discovery projection in step with the survey's public
+        // visibility. A freshly-created survey is DRAFT, so reindexForDiscovery REMOVES (idempotent no-op on a
+        // never-indexed row) — a draft is NEVER discoverable (the no-leak fence, PRD §18). It is upserted once
+        // the survey opens (the open path), which routes through this same single helper. The questions JSON and
+        // any response payload are NEVER indexed (only the title + description snippet).
+        reindexForDiscovery(survey);
         return mapper.toSurveyDto(survey);
     }
 
@@ -193,10 +214,92 @@ public class SurveyService {
         return mapper.toSurveyDto(survey);
     }
 
+    /**
+     * Opens a survey/poll for responses (post-schedule) and makes it discoverable. Opening is the
+     * {@code DRAFT/SCHEDULED -> OPEN} visibility change, so it is when the survey first becomes public-safe and
+     * must enter discovery; routing it through the single {@link #reindexForDiscovery(Survey)} fence keeps the
+     * index-vs-no-index decision in one place (DRY).
+     *
+     * @param surveyPublicId the survey to open.
+     * @return the now-OPEN {@link SurveyDto}.
+     * @throws ResourceNotFoundException if the survey does not exist.
+     */
+    public SurveyDto open(UUID surveyPublicId) {
+        Survey survey = require(surveyPublicId);
+        survey.open();
+        // Now publicly visible (OPEN) → upsert the public projection into discovery (ADR-0017 §1).
+        reindexForDiscovery(survey);
+        return mapper.toSurveyDto(survey);
+    }
+
     /** Loads a survey by public id or throws a localised not-found. */
     private Survey require(UUID publicId) {
         return surveys.findByPublicId(publicId)
                 .orElseThrow(() -> new ResourceNotFoundException("engagement.survey.notFound", publicId));
+    }
+
+    /**
+     * Pushes (or removes) this survey/poll's <b>public, PII-free</b> discovery projection in the search index
+     * (ADR-0017 §1; ADR-0013 §1 owner→search). The single place the index-vs-no-index decision lives, so the
+     * privacy fence is enforced once across the create/open call sites — mirroring reporting's pattern.
+     *
+     * <p><b>The fence (PRD §18, ADR-0017 §1/§4):</b> a survey is indexed <b>only if</b> it is publicly visible
+     * — anything past {@code DRAFT} ({@link Survey#isPubliclyVisible()}). A {@code DRAFT} is <b>never</b>
+     * indexed; any non-public state is positively {@link SearchIndexApi#remove removed} (idempotent on an
+     * absent row).</p>
+     *
+     * <p><b>What is pushed (public-display + opaque ids only — never PII):</b> the survey
+     * {@link Survey#getTitle() title} as the discovery label and a {@link #snippet(String) snippet} of the
+     * description as the preview. <b>Never the questions JSON, never any response payload</b> (only the public
+     * title + description), and never the responder list (responses are private/anonymous — PRD §18).
+     * Indexed under {@link SearchEntityType#POLL} for both {@code SURVEY} and {@code POLL}
+     * {@link SurveyType}s — engagement models them as one {@code Survey} aggregate, so one search type serves
+     * both. {@code authoredByAccountId} carries the creator profile id solely for the search module's
+     * suspended-author visibility maintenance (ADR-0017 §3) — never returned.</p>
+     *
+     * @param survey the survey/poll whose discovery projection is being maintained.
+     */
+    private void reindexForDiscovery(Survey survey) {
+        if (!survey.isPubliclyVisible()) {
+            // DRAFT (or any non-public state): ensure it is absent from discovery (idempotent remove).
+            searchIndex.remove(SearchEntityType.POLL, survey.getPublicId());
+            return;
+        }
+        searchIndex.upsert(new SearchDocumentUpsert(
+                SearchEntityType.POLL,
+                survey.getPublicId(),
+                survey.getTitle(),
+                // The public description is the snippet for both locales (Swahili-first; the FTS config is
+                // `simple` — no per-language stemming — so one snippet serves SW/EN inputs). NEVER the
+                // questions JSON or any response data.
+                snippet(survey.getDescription()),
+                snippet(survey.getDescription()),
+                // Keywords: the type + binding-ness as searchable terms — public, non-PII.
+                survey.getType().name() + (survey.isBinding() ? " BINDING" : ""),
+                null,                                  // areaId: audience scope is a JSON descriptor, not a facet
+                null,                                  // categoryId: n/a for a survey
+                SearchVisibility.PUBLIC,
+                // authoredByAccountId: visibility-maintenance only (ADR-0017 §3); never returned. Null for an
+                // org-authored survey (an authorless row), which is fine.
+                survey.getCreatorProfileId()));
+    }
+
+    /**
+     * Truncates free text to a lean, index-safe discovery snippet ({@link #SEARCH_SNIPPET_MAX} chars),
+     * appending an ellipsis when cut. Keeps the index payload lean (PRD §15) and under the index column bound.
+     *
+     * @param text the source text (may be {@code null}).
+     * @return the trimmed snippet, or {@code null} if the input is {@code null}/blank.
+     */
+    private String snippet(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        String trimmed = text.strip();
+        if (trimmed.length() <= SEARCH_SNIPPET_MAX) {
+            return trimmed;
+        }
+        return trimmed.substring(0, SEARCH_SNIPPET_MAX) + "…";
     }
 
     /** Parses the raw survey type, mapping an unknown value to a clean {@link ErrorCode#BAD_REQUEST}. */

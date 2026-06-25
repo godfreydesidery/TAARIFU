@@ -21,6 +21,10 @@ import com.taarifu.reporting.domain.repository.CaseEventRepository;
 import com.taarifu.reporting.domain.repository.IssueCategoryRepository;
 import com.taarifu.reporting.domain.repository.ReportRepository;
 import com.taarifu.reporting.test.ReportingTestFixtures;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -56,6 +60,7 @@ class ReportServiceTest {
     private ClockPort clock;
     private OutboxWriter outboxWriter;
     private com.taarifu.reporting.domain.port.AttachmentValidator attachmentValidator;
+    private SearchIndexApi searchIndexApi;
     private ReportService service;
 
     private final UUID reporter = UUID.randomUUID();
@@ -73,9 +78,10 @@ class ReportServiceTest {
         clock = mock(ClockPort.class);
         outboxWriter = mock(OutboxWriter.class);
         attachmentValidator = mock(com.taarifu.reporting.domain.port.AttachmentValidator.class);
+        searchIndexApi = mock(SearchIndexApi.class);
         ReportingMapper mapper = new ReportingMapper();
         service = new ReportService(reportRepository, categoryRepository, caseEventRepository,
-                wardResolver, codeGenerator, mapper, clock, outboxWriter, attachmentValidator);
+                wardResolver, codeGenerator, mapper, clock, outboxWriter, attachmentValidator, searchIndexApi);
 
         when(clock.now()).thenReturn(now);
         when(codeGenerator.nextCode(any(), any(), org.mockito.ArgumentMatchers.anyInt()))
@@ -193,6 +199,82 @@ class ReportServiceTest {
         // Forced PRIVATE wins over the citizen's PUBLIC choice (Appendix D.4); anonymity honoured (no reporter).
         assertThat(dto.visibility()).isEqualTo(ReportVisibility.PRIVATE.name());
         assertThat(dto.anonymous()).isTrue();
+    }
+
+    // --------------------------- SEARCH discovery indexing (ADR-0017 §1) -------------------------
+
+    @Test
+    void fileReport_public_isIndexedForDiscovery_publicSafeProjectionOnly() {
+        // A PUBLIC report is pushed to the discovery index with public-display + opaque ids ONLY — title,
+        // a description snippet, ward (area) + category facets, visibility PUBLIC. FAILS if indexing is
+        // removed (proves the wiring, not just the happy path — CLAUDE.md §10).
+        IssueCategory category = ReportingTestFixtures.publicCategory("WATER_SANITATION");
+        when(categoryRepository.findByPublicId(category.getPublicId())).thenReturn(Optional.of(category));
+        FileReportDto request = new FileReportDto(category.getPublicId(), "Bomba limepasuka",
+                "Maji yanamwagika barabarani", wardId, null, null, "PUBLIC", false, null);
+
+        ReportDto dto = service.fileReport(reporter, request);
+
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndexApi).upsert(captor.capture());
+        verify(searchIndexApi, never()).remove(any(), any());
+        SearchDocumentUpsert pushed = captor.getValue();
+        assertThat(pushed.entityType()).isEqualTo(SearchEntityType.PUBLIC_REPORT);
+        assertThat(pushed.entityPublicId()).isEqualTo(dto.id());
+        assertThat(pushed.title()).isEqualTo("Bomba limepasuka");
+        assertThat(pushed.snippetSw()).isEqualTo("Maji yanamwagika barabarani");
+        assertThat(pushed.areaId()).isEqualTo(wardId);
+        assertThat(pushed.categoryId()).isEqualTo(category.getPublicId());
+        assertThat(pushed.visibility()).isEqualTo(SearchVisibility.PUBLIC);
+        // authoredByAccountId is the reporter (for the search module's suspended-author visibility maintenance).
+        assertThat(pushed.authoredByAccountId()).isEqualTo(reporter);
+    }
+
+    @Test
+    void fileReport_sensitiveForcedPrivateAnonymous_isNeverIndexed_andIsRemoved() {
+        // The IDOR/PDPA fence (PRD §25.3): a PRIVATE/sensitive/anonymous report is NEVER upserted into public
+        // discovery; the public-safe decision positively REMOVES any discovery row instead. FAILS the moment a
+        // private/anonymous report leaks into the index.
+        IssueCategory category = ReportingTestFixtures.sensitiveForcedPrivateCategory("CORRUPTION");
+        when(categoryRepository.findByPublicId(category.getPublicId())).thenReturn(Optional.of(category));
+        FileReportDto request = new FileReportDto(category.getPublicId(), "Rushwa", "Ofisa amedai rushwa",
+                wardId, null, null, "PUBLIC", true, null);
+
+        ReportDto dto = service.fileReport(reporter, request);
+
+        verify(searchIndexApi, never()).upsert(any());
+        verify(searchIndexApi).remove(SearchEntityType.PUBLIC_REPORT, dto.id());
+    }
+
+    @Test
+    void fileReport_rejected_neverTouchesSearchIndex() {
+        // No report created → no index call of any kind (an anonymous filing on a non-sensitive category is
+        // rejected before any side effect — the index must never see a report that was not filed).
+        IssueCategory category = ReportingTestFixtures.publicCategory("ROADS");
+        when(categoryRepository.findByPublicId(category.getPublicId())).thenReturn(Optional.of(category));
+        FileReportDto request = new FileReportDto(category.getPublicId(), "Shimo", "Barabara",
+                wardId, null, null, "PUBLIC", true, null);
+
+        assertThatThrownBy(() -> service.fileReport(reporter, request)).isInstanceOf(ApiException.class);
+        verify(searchIndexApi, never()).upsert(any());
+        verify(searchIndexApi, never()).remove(any(), any());
+    }
+
+    @Test
+    void resolve_reindexesPublicReportForDiscovery() {
+        // A lifecycle change (resolve) re-upserts the public report so the discovery projection stays fresh.
+        IssueCategory category = ReportingTestFixtures.publicCategory("WATER");
+        Report report = ReportingTestFixtures.report(reporter, category, ReportVisibility.PUBLIC);
+        report.setStatus(ReportStatus.IN_PROGRESS);
+        when(reportRepository.findByPublicIdWithCategory(report.getPublicId()))
+                .thenReturn(Optional.of(report));
+
+        service.resolve(report.getPublicId(), UUID.randomUUID(), "Imeshughulikiwa");
+
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndexApi).upsert(captor.capture());
+        assertThat(captor.getValue().entityPublicId()).isEqualTo(report.getPublicId());
+        assertThat(captor.getValue().visibility()).isEqualTo(SearchVisibility.PUBLIC);
     }
 
     @Test

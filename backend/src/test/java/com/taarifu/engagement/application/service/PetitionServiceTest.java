@@ -14,6 +14,10 @@ import com.taarifu.engagement.domain.repository.PetitionRepository;
 import com.taarifu.engagement.domain.repository.PetitionSignatureRepository;
 import com.taarifu.identity.api.ElectoralScopeApi;
 import com.taarifu.institutions.api.RepresentativeQueryApi;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,6 +32,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -61,6 +66,8 @@ class PetitionServiceTest {
     private AuditEventService audit;
     @Mock
     private OutboxWriter outboxWriter;
+    @Mock
+    private SearchIndexApi searchIndex;
 
     private final EngagementMapper mapper = new EngagementMapper();
     private PetitionService service;
@@ -71,7 +78,7 @@ class PetitionServiceTest {
     @BeforeEach
     void setUp() {
         service = new PetitionService(petitions, signatures, mapper, scopeGuard,
-                representativeQueryApi, electoralScopeApi, audit, outboxWriter);
+                representativeQueryApi, electoralScopeApi, audit, outboxWriter, searchIndex);
     }
 
     private Petition activeOfficePetition() {
@@ -110,6 +117,60 @@ class PetitionServiceTest {
         assertThat(fact.activeRole()).isEqualTo("CITIZEN");
         assertThat(fact.outcome()).isEqualTo(PetitionTargetType.OFFICE.name());
         assertThat(fact.actorRef()).isNull(); // no PII
+    }
+
+    @Test
+    void signOnActivePetition_upsertsPublicDiscoveryProjection_noPii() {
+        // SEARCH (ADR-0017 §1): a sign on an ACTIVE (publicly-visible) petition re-upserts a PUBLIC, PII-free
+        // projection — title + body snippet + status keyword, visibility PUBLIC. This assertion FAILS if the
+        // reindexForDiscovery call is removed from sign(), which is the wiring guard.
+        Petition petition = activeOfficePetition();
+        when(petitions.findByPublicId(petitionId)).thenReturn(Optional.of(petition));
+        when(signatures.existsByPetition_PublicIdAndSignerProfileId(petitionId, signer)).thenReturn(false);
+
+        service.sign(petitionId, signer, "ndio", false);
+
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndex).upsert(captor.capture());
+        verify(searchIndex, never()).remove(any(), any());
+        SearchDocumentUpsert pushed = captor.getValue();
+        assertThat(pushed.entityType()).isEqualTo(SearchEntityType.PETITION);
+        assertThat(pushed.entityPublicId()).isEqualTo(petition.getPublicId());
+        assertThat(pushed.title()).isEqualTo("Fix road");
+        assertThat(pushed.visibility()).isEqualTo(SearchVisibility.PUBLIC);
+        // No ward/category facet for a petition (addressee-targeted, not geo-scoped).
+        assertThat(pushed.areaId()).isNull();
+        assertThat(pushed.categoryId()).isNull();
+        // The signer comment ("ndio") must never reach the index (no PII).
+        assertThat(pushed.snippetSw()).doesNotContain("ndio");
+    }
+
+    @Test
+    void createDraft_removesFromDiscovery_neverIndexesADraft() {
+        // The no-leak fence: a freshly-created petition is DRAFT and must NOT be discoverable. The create path
+        // routes through reindexForDiscovery, whose non-public branch REMOVES (idempotent) — never upserts.
+        UUID target = UUID.randomUUID();
+        when(scopeGuard.isNotSelf(target)).thenReturn(true);
+
+        service.create("Title", "Body", "OFFICE", target, 50, null, signer);
+
+        verify(searchIndex, never()).upsert(any());
+        verify(searchIndex).remove(eq(SearchEntityType.PETITION), any());
+    }
+
+    @Test
+    void activate_upsertsPublicDiscoveryProjection() {
+        // DRAFT -> ACTIVE is the moment a petition becomes public-safe → it is upserted into discovery.
+        Petition draft = Petition.create("Diwani", "body", PetitionTargetType.OFFICE,
+                UUID.randomUUID(), 10, null, signer, null);
+        when(petitions.findByPublicId(petitionId)).thenReturn(Optional.of(draft));
+
+        service.activate(petitionId);
+
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndex).upsert(captor.capture());
+        assertThat(captor.getValue().entityType()).isEqualTo(SearchEntityType.PETITION);
+        assertThat(captor.getValue().visibility()).isEqualTo(SearchVisibility.PUBLIC);
     }
 
     @Test

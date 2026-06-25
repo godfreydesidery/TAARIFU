@@ -22,6 +22,10 @@ import com.taarifu.engagement.domain.repository.PetitionRepository;
 import com.taarifu.engagement.domain.repository.PetitionSignatureRepository;
 import com.taarifu.identity.api.ElectoralScopeApi;
 import com.taarifu.institutions.api.RepresentativeQueryApi;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -69,6 +73,14 @@ public class PetitionService {
     private final ElectoralScopeApi electoralScopeApi;
     private final AuditEventService audit;
     private final OutboxWriter outboxWriter;
+    private final SearchIndexApi searchIndex;
+
+    /**
+     * Max characters of the petition body carried in the public discovery snippet — a lean public preview
+     * only (PRD §15 data budget; well under ADR-0017's {@code snippet_*} 1024-char column). The full body is
+     * re-read from this module by id when a result is tapped (the index never returns the aggregate — ADR-0013).
+     */
+    private static final int SEARCH_SNIPPET_MAX = 480;
 
     /**
      * @param petitions              petition persistence port.
@@ -83,6 +95,13 @@ public class PetitionService {
      *                               analytics fact in the sign transaction so the analytics sink records it
      *                               asynchronously, off the signer's path (Appendix E, M15). The token ledger is
      *                               NEVER consulted on this path (the integrity fence, D18/§23.5).
+     * @param searchIndex            the search module's published inbound port (ADR-0017 §1, ADR-0013 §1). This
+     *                               service <b>pushes</b> a public, PII-free projection of a publicly-visible
+     *                               (non-DRAFT) petition into the discovery index on create/sign/lifecycle-change
+     *                               and <b>removes</b> it when the petition is not (or no longer) public-safe —
+     *                               owner→search direction, an {@code api → api} call, never a reach-in. Token
+     *                               balance is NEVER read on this path; indexing is a passive side-record, not a
+     *                               gate (the fence stays intact, D18/§23.5).
      */
     public PetitionService(PetitionRepository petitions,
                            PetitionSignatureRepository signatures,
@@ -91,7 +110,8 @@ public class PetitionService {
                            RepresentativeQueryApi representativeQueryApi,
                            ElectoralScopeApi electoralScopeApi,
                            AuditEventService audit,
-                           OutboxWriter outboxWriter) {
+                           OutboxWriter outboxWriter,
+                           SearchIndexApi searchIndex) {
         this.petitions = petitions;
         this.signatures = signatures;
         this.mapper = mapper;
@@ -100,6 +120,7 @@ public class PetitionService {
         this.electoralScopeApi = electoralScopeApi;
         this.audit = audit;
         this.outboxWriter = outboxWriter;
+        this.searchIndex = searchIndex;
     }
 
     /**
@@ -161,6 +182,11 @@ public class PetitionService {
         Petition petition = Petition.create(title, body, targetType, targetId,
                 signatureGoal, deadline, creatorPublicId, null);
         petitions.save(petition);
+        // SEARCH (ADR-0017 §1, ADR-0013 §1): keep the discovery projection in step with the petition's public
+        // visibility. A freshly-created petition is DRAFT, so reindexForDiscovery REMOVES (idempotent no-op on
+        // a never-indexed row) — a draft is NEVER discoverable (the no-leak fence, PRD §18). It is upserted only
+        // once moderation moves it to ACTIVE (the activate path), which routes through this same single helper.
+        reindexForDiscovery(petition);
         return mapper.toPetitionDto(petition);
     }
 
@@ -286,7 +312,97 @@ public class PetitionService {
                         petition.getTargetType().name()),     // outcome = REPRESENTATIVE / OFFICE (controlled vocab)
                 Instant.now()));
 
+        // SEARCH (ADR-0017 §1): a sign may flip the petition ACTIVE -> SUCCEEDED (both publicly visible), and it
+        // bumps the signature count shown on the discovery row. Re-index here — an idempotent PUBLIC upsert that
+        // keeps the projection fresh. WHY this does NOT breach the fence (D18/§23.5): the upsert is a passive
+        // side-record emitted AFTER the binding act; it reads no token balance and never influences the count.
+        reindexForDiscovery(petition);
         return mapper.toPetitionDto(petition);
+    }
+
+    /**
+     * Marks a petition {@code ACTIVE} (post-moderation, UC-E02) and makes it discoverable.
+     *
+     * <p>WHY this lives here (not only on the entity): activation is the {@code DRAFT -> ACTIVE} visibility
+     * change, so it is the moment the petition first becomes public-safe and must enter discovery. Routing it
+     * through the single {@link #reindexForDiscovery(Petition)} fence keeps the index-vs-no-index decision in
+     * one place (DRY), exactly as reporting re-indexes on every lifecycle move.</p>
+     *
+     * @param petitionPublicId the petition to activate.
+     * @return the now-ACTIVE {@link PetitionDto}.
+     * @throws ResourceNotFoundException if the petition does not exist.
+     */
+    public PetitionDto activate(UUID petitionPublicId) {
+        Petition petition = require(petitionPublicId);
+        petition.activate();
+        // Now publicly visible (ACTIVE) → upsert the public projection into discovery (ADR-0017 §1).
+        reindexForDiscovery(petition);
+        return mapper.toPetitionDto(petition);
+    }
+
+    /**
+     * Pushes (or removes) this petition's <b>public, PII-free</b> discovery projection in the search index
+     * (ADR-0017 §1; ADR-0013 §1 owner→search). The single place the index-vs-no-index decision lives, so the
+     * privacy fence is enforced once and cannot drift across the create/activate/sign call sites — mirroring
+     * reporting's {@code reindexForDiscovery}.
+     *
+     * <p><b>The fence (PRD §18, ADR-0017 §1/§4):</b> a petition is indexed <b>only if</b> it is publicly
+     * visible — anything past {@code DRAFT} ({@link Petition#isPubliclyVisible()}). A {@code DRAFT} is
+     * <b>never</b> indexed, and any time a petition is, or becomes, non-public this calls
+     * {@link SearchIndexApi#remove} so it is positively pulled from discovery (removing an absent row is an
+     * idempotent no-op — defence-in-depth).</p>
+     *
+     * <p><b>What is pushed (public-display + opaque ids only — never PII):</b> the petition
+     * {@link Petition#getTitle() title} as the discovery label and a short {@link #snippet(String) snippet} of
+     * the body as the preview (both already public for a non-DRAFT petition). The signature tally is encoded
+     * into the keywords so a search row reflects momentum without re-reading the aggregate. <b>Never</b> the
+     * signer list, the creator id, or any PII. {@code authoredByAccountId} is the creator profile id, carried
+     * solely for the search module's suspended-author visibility maintenance (ADR-0017 §3) — never returned.
+     * No area/category facet is set: a petition is targeted at an institutions-module addressee by id, not a
+     * ward/category, so those discovery facets are intentionally {@code null}.</p>
+     *
+     * @param petition the petition whose discovery projection is being maintained.
+     */
+    private void reindexForDiscovery(Petition petition) {
+        if (!petition.isPubliclyVisible()) {
+            // DRAFT (or any non-public state): ensure it is absent from discovery (idempotent remove).
+            searchIndex.remove(SearchEntityType.PETITION, petition.getPublicId());
+            return;
+        }
+        searchIndex.upsert(new SearchDocumentUpsert(
+                SearchEntityType.PETITION,
+                petition.getPublicId(),
+                petition.getTitle(),
+                // Swahili-first corpus: the citizen's free text serves both locales (no machine translation);
+                // the FTS config is `simple` (no per-language stemming), so one snippet serves SW/EN inputs.
+                snippet(petition.getBody()),
+                snippet(petition.getBody()),
+                // Keywords: the petition status as a searchable term (e.g. SUCCEEDED) — public, non-PII.
+                petition.getStatus().name(),
+                null,                                // areaId: a petition is addressee-targeted, not ward-scoped
+                null,                                // categoryId: n/a for a petition
+                SearchVisibility.PUBLIC,
+                // authoredByAccountId: visibility-maintenance only (ADR-0017 §3); never returned. Null for an
+                // org-authored petition, which is fine (an authorless row).
+                petition.getCreatorProfileId()));
+    }
+
+    /**
+     * Truncates citizen free text to a lean, index-safe discovery snippet ({@link #SEARCH_SNIPPET_MAX} chars),
+     * appending an ellipsis when cut. Keeps the index payload lean (PRD §15) and under the index column bound.
+     *
+     * @param text the source text (may be {@code null}).
+     * @return the trimmed snippet, or {@code null} if the input is {@code null}/blank.
+     */
+    private String snippet(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        String trimmed = text.strip();
+        if (trimmed.length() <= SEARCH_SNIPPET_MAX) {
+            return trimmed;
+        }
+        return trimmed.substring(0, SEARCH_SNIPPET_MAX) + "…";
     }
 
     /**

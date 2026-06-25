@@ -10,6 +10,10 @@ import com.taarifu.communications.domain.model.Announcement;
 import com.taarifu.communications.domain.model.enums.AnnouncementStatus;
 import com.taarifu.communications.domain.model.enums.Channel;
 import com.taarifu.communications.domain.repository.AnnouncementRepository;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -43,6 +47,7 @@ class AnnouncementServiceTest {
 
     private AnnouncementRepository announcementRepository;
     private OutboxWriter outboxWriter;
+    private SearchIndexApi searchIndex;
     private FixedClock clock;
     private AnnouncementService service;
 
@@ -53,8 +58,9 @@ class AnnouncementServiceTest {
     void setUp() {
         announcementRepository = mock(AnnouncementRepository.class);
         outboxWriter = mock(OutboxWriter.class);
+        searchIndex = mock(SearchIndexApi.class);
         clock = new FixedClock(Instant.parse("2026-06-23T12:00:00Z"));
-        service = new AnnouncementService(announcementRepository, outboxWriter, clock);
+        service = new AnnouncementService(announcementRepository, outboxWriter, clock, searchIndex);
         when(announcementRepository.save(any(Announcement.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -81,6 +87,30 @@ class AnnouncementServiceTest {
     }
 
     @Test
+    void trustedAuthor_publishes_indexesPublicSafeProjectionForDiscovery() {
+        // A published announcement is pushed to search as a PUBLIC, public-safe projection (ADR-0017 §1):
+        // title + localised snippet + area/category facets only — no full body beyond the snippet, no
+        // moderationHeld flag, no attachments/schedule. visibility=PUBLIC (published civic data, PRD §22.6).
+        Announcement a = service.publish(author, true, "Maji Tangazo",
+                "Maji yatakatika kesho katika kata.", "Water will be cut tomorrow in the ward.",
+                Set.of(area), null, null, Set.of("FEED"), null, null, null);
+
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndex).upsert(captor.capture());
+        verify(searchIndex, never()).remove(any(), any());
+        SearchDocumentUpsert pushed = captor.getValue();
+        assertThat(pushed.entityType()).isEqualTo(SearchEntityType.ANNOUNCEMENT);
+        assertThat(pushed.entityPublicId()).isEqualTo(a.getPublicId());
+        assertThat(pushed.title()).isEqualTo("Maji Tangazo");
+        assertThat(pushed.snippetSw()).isEqualTo("Maji yatakatika kesho katika kata.");
+        assertThat(pushed.snippetEn()).isEqualTo("Water will be cut tomorrow in the ward.");
+        assertThat(pushed.areaId()).isEqualTo(area);
+        assertThat(pushed.visibility()).isEqualTo(SearchVisibility.PUBLIC);
+        // authoredByAccountId is the author (visibility-maintenance only); never the full body or a PII field.
+        assertThat(pushed.authoredByAccountId()).isEqualTo(author);
+    }
+
+    @Test
     void newAuthor_isHeldForModeration_andAppendsNoEvent() {
         Announcement a = service.publish(author, false, "Title", "Mwili", null,
                 Set.of(area), null, null, Set.of("FEED"), null, null, null);
@@ -89,6 +119,9 @@ class AnnouncementServiceTest {
         assertThat(a.getStatus()).isEqualTo(AnnouncementStatus.DRAFT);
         assertThat(a.isModerationHeld()).isTrue();
         verify(outboxWriter, never()).append(any());
+        // A moderation-held draft must NEVER be discoverable — no upsert is pushed (the publish path that
+        // would index is not taken because the held author short-circuits before publish()/indexForDiscovery).
+        verify(searchIndex, never()).upsert(any());
     }
 
     @Test
@@ -100,6 +133,10 @@ class AnnouncementServiceTest {
         assertThat(a.getStatus()).isEqualTo(AnnouncementStatus.SCHEDULED);
         // A scheduled (not-yet-live) announcement does not fan out yet.
         verify(outboxWriter, never()).append(any());
+        // …and it is not yet publicly visible, so it must not be discoverable: the index call removes (not
+        // upserts) any non-PUBLISHED state — idempotent on a never-indexed row (ADR-0017 §1).
+        verify(searchIndex, never()).upsert(any());
+        verify(searchIndex).remove(SearchEntityType.ANNOUNCEMENT, a.getPublicId());
     }
 
     @Test
@@ -138,6 +175,28 @@ class AnnouncementServiceTest {
         ArgumentCaptor<EventEnvelope<?>> captor = envelopeCaptor();
         verify(outboxWriter).append(captor.capture());
         assertThat(captor.getValue().eventType()).isEqualTo(AnnouncementPublished.EVENT_TYPE);
+        // The moderator-approved announcement is now public → it is indexed for discovery (ADR-0017 §1).
+        ArgumentCaptor<SearchDocumentUpsert> indexCaptor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndex).upsert(indexCaptor.capture());
+        assertThat(indexCaptor.getValue().entityType()).isEqualTo(SearchEntityType.ANNOUNCEMENT);
+        assertThat(indexCaptor.getValue().visibility()).isEqualTo(SearchVisibility.PUBLIC);
+    }
+
+    @Test
+    void expire_removesStaleDiscoveryRow_neverLingersAsPublic() {
+        // FIX-2 (the wave-3 gap): an expired/unpublished announcement must leave the discovery index so it does
+        // not linger as a stale PUBLIC search row. expire() transitions to EXPIRED and removes the projection.
+        // This assertion FAILS if the searchIndex.remove call is dropped from the expiry path.
+        Announcement published = published(null, null); // currently live/PUBLISHED
+        when(announcementRepository.findByPublicId(any())).thenReturn(Optional.of(published));
+
+        Announcement out = service.expire(UUID.randomUUID());
+
+        assertThat(out.getStatus()).isEqualTo(AnnouncementStatus.EXPIRED);
+        verify(searchIndex).remove(SearchEntityType.ANNOUNCEMENT, out.getPublicId());
+        verify(searchIndex, never()).upsert(any());
+        // Expiry is not a publish — no fan-out event is appended.
+        verify(outboxWriter, never()).append(any());
     }
 
     /**

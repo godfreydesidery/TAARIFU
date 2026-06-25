@@ -11,6 +11,10 @@ import com.taarifu.communications.domain.model.Announcement;
 import com.taarifu.communications.domain.model.enums.AnnouncementStatus;
 import com.taarifu.communications.domain.model.enums.Channel;
 import com.taarifu.communications.domain.repository.AnnouncementRepository;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,13 +49,33 @@ import java.util.stream.Collectors;
  * listener could. The author's publish call still returns fast: the {@code OutboxRelay} dispatches the
  * fan-out asynchronously, off the request thread, and at-least-once with idempotent handlers
  * ({@code AnnouncementPublishedHandler}).</p>
+ *
+ * <p><b>Discovery indexing (ADR-0017 §1):</b> on the went-live funnel ({@link #emitIfPublished}, reached by
+ * both {@link #publish} and {@link #approveAndPublish}) this service also <b>pushes a public projection</b> of
+ * the announcement to the search index via the {@link SearchIndexApi} published port (owner→search, an
+ * {@code api → api} call — ADR-0013 §1). It indexes a {@code PUBLISHED} announcement and <b>removes</b> any
+ * other state (held/scheduled/expired) so a draft, a moderation-held author's post, or an unpublished item is
+ * never discoverable. Only <b>public-safe</b> fields are indexed — the public title + a localised body snippet
+ * + the area facet — <b>never</b> the draft, the {@code moderationHeld} flag, an internal note, the full body,
+ * or any PII (PRD §18, ADR-0017 §1). Indexing rides this service's transaction (a synchronous in-process call),
+ * so the projection and the announcement row commit together; a search-index failure would roll the publish
+ * back, which is acceptable here because the index call is a fast local DB upsert, not a remote hop.</p>
  */
 @Service
 public class AnnouncementService {
 
+    /**
+     * Max characters of body carried in the public discovery snippet — a lean, public preview only (PRD §15
+     * data budget; well under ADR-0017's {@code snippet_*} 1024-char column). The snippet is a truncated prefix
+     * of the public body; the full body is re-read from this module by id when a result is tapped (the index
+     * never returns the full aggregate — ADR-0013).
+     */
+    private static final int DISCOVERY_SNIPPET_LENGTH = 280;
+
     private final AnnouncementRepository announcementRepository;
     private final OutboxWriter outboxWriter;
     private final ClockPort clock;
+    private final SearchIndexApi searchIndex;
 
     /**
      * @param announcementRepository announcement persistence.
@@ -59,13 +83,19 @@ public class AnnouncementService {
      *                               event in this service's transaction so it commits atomically with the
      *                               publish (ADR-0014 §2) and is relayed to the fan-out handler.
      * @param clock                  injectable "now" for scheduling/transition (testability).
+     * @param searchIndex            the search module's published inbound index port (ADR-0017 §1); this
+     *                               service pushes a public, PII-free announcement projection on publish and
+     *                               removes it on any non-published state. Injected as the {@code api}
+     *                               interface, never search's implementation/internals (ADR-0013 §1).
      */
     public AnnouncementService(AnnouncementRepository announcementRepository,
                                OutboxWriter outboxWriter,
-                               ClockPort clock) {
+                               ClockPort clock,
+                               SearchIndexApi searchIndex) {
         this.announcementRepository = announcementRepository;
         this.outboxWriter = outboxWriter;
         this.clock = clock;
+        this.searchIndex = searchIndex;
     }
 
     /**
@@ -117,6 +147,7 @@ public class AnnouncementService {
         a.publish(clock.now());
         Announcement saved = announcementRepository.save(a);
         emitIfPublished(saved);
+        indexForDiscovery(saved);
         return saved;
     }
 
@@ -209,6 +240,41 @@ public class AnnouncementService {
         a.publish(clock.now());
         Announcement saved = announcementRepository.save(a);
         emitIfPublished(saved);
+        indexForDiscovery(saved);
+        return saved;
+    }
+
+    /**
+     * Takes an announcement out of public circulation — the <b>expiry / unpublish path</b> — and, critically,
+     * <b>removes its discovery-index projection</b> so an expired or unpublished announcement does not linger
+     * as a stale public search row (the wave-3 gap: publish upserted, but nothing removed when an announcement
+     * left the published state).
+     *
+     * <p>WHY this method exists: the {@code Announcement.expire()} domain transition existed and the
+     * {@link AnnouncementRepository#findDueForTransition expiry-sweep query} existed, but no application path
+     * drove the transition — so a published announcement that passed its {@code expireAt} stopped appearing in
+     * the feed (the feed query filters on the window) yet remained a {@code PUBLISHED} row in
+     * {@code search_document}, discoverable forever. This closes that leak. An expiry scheduler/operator
+     * unpublish action calls this; it transitions the row to {@code EXPIRED} and routes through the same single
+     * {@link #indexForDiscovery(Announcement)} fence, whose non-PUBLISHED branch <b>removes</b> the projection
+     * (idempotent — removing an absent/already-removed row is a no-op, ADR-0017 §1).</p>
+     *
+     * <p>Idempotent: an already-{@code EXPIRED} announcement is returned unchanged but still has its (absent)
+     * projection re-removed, so a redelivered sweep or a double unpublish never errors.</p>
+     *
+     * @param announcementPublicId the announcement to expire/unpublish.
+     * @return the now-{@code EXPIRED} announcement.
+     * @throws ApiException {@link ErrorCode#NOT_FOUND} if no such announcement.
+     */
+    @Transactional
+    public Announcement expire(UUID announcementPublicId) {
+        Announcement a = announcementRepository.findByPublicId(announcementPublicId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND));
+        a.expire();
+        Announcement saved = announcementRepository.save(a);
+        // No longer PUBLISHED → indexForDiscovery removes the projection so the expired/unpublished
+        // announcement is positively pulled from public discovery (the no-leak rule, PRD §18, ADR-0017 §1).
+        indexForDiscovery(saved);
         return saved;
     }
 
@@ -240,6 +306,75 @@ public class AnnouncementService {
                     payload,
                     payload.publishedAt()));
         }
+    }
+
+    /**
+     * Synchronises this announcement's <b>discovery-index</b> projection with its lifecycle state by pushing
+     * to the search module's published {@link SearchIndexApi} port (ADR-0017 §1; an {@code api → api}
+     * cross-module call — ADR-0013 §1). Called on the went-live funnel after the row is saved, inside this
+     * service's {@code @Transactional}.
+     *
+     * <p><b>Index ⇔ public visibility (the no-leak rule, PRD §18, ADR-0017 §1/§4):</b></p>
+     * <ul>
+     *   <li>{@code PUBLISHED} → <b>upsert</b> a {@code PUBLIC} projection so the announcement is discoverable;</li>
+     *   <li>any other state (DRAFT/held, SCHEDULED, EXPIRED) → <b>remove</b> the projection so a draft, a
+     *       moderation-held author's post, a not-yet-live, or an expired announcement is never discoverable.</li>
+     * </ul>
+     * The {@code remove} branch also makes a re-saved announcement that has <i>left</i> the published state drop
+     * out of discovery — so this single call keeps the index honest on a future unpublish/expire path too
+     * (idempotent: removing an unindexed row is a no-op — ADR-0017 §1).
+     *
+     * <p><b>🔒 What is indexed — public-safe only:</b> the public {@link Announcement#getTitle() title}, a short
+     * localised body snippet (SW always; EN only if an English body exists), and the <b>area facet</b> (the
+     * first audience area, the Ward-or-coarser filter dimension — ADR-0017 §2) plus the category facet. The
+     * <b>full body, the {@code moderationHeld} flag, attachment refs, the schedule, and any internal/draft
+     * field are NEVER indexed</b>. {@code visibility} is always {@code PUBLIC} (we only upsert a published row);
+     * a published announcement is public civic data (PRD §22.6, AC-T0), so there is no {@code STAFF}-tier
+     * announcement to gate. {@code authoredByAccountId} carries the author profile id solely for the
+     * suspended-author visibility-maintenance sweep (ADR-0017 §3); it is never returned to a reader.</p>
+     *
+     * @param a the just-saved announcement; its current {@link Announcement#getStatus() status} decides
+     *          upsert-vs-remove.
+     */
+    private void indexForDiscovery(Announcement a) {
+        if (a.getStatus() == AnnouncementStatus.PUBLISHED) {
+            UUID areaFacet = a.getAudienceAreaIds().stream().findFirst().orElse(null);
+            searchIndex.upsert(new SearchDocumentUpsert(
+                    SearchEntityType.ANNOUNCEMENT,
+                    a.getPublicId(),
+                    a.getTitle(),
+                    discoverySnippet(a.getBodySw()),
+                    discoverySnippet(a.getBodyEn()),
+                    null,
+                    areaFacet,
+                    a.getCategoryId(),
+                    SearchVisibility.PUBLIC,
+                    a.getAuthorProfileId()));
+        } else {
+            // Not publicly visible (draft/held/scheduled/expired) → must not be discoverable. Idempotent.
+            searchIndex.remove(SearchEntityType.ANNOUNCEMENT, a.getPublicId());
+        }
+    }
+
+    /**
+     * Builds a lean, public body snippet for the discovery index — a truncated prefix of the given body, or
+     * {@code null} if the body is absent/blank.
+     *
+     * <p>WHY truncate: the index carries only a short public preview (PRD §15 data budget; ADR-0017 keeps
+     * snippets short); the client re-reads the full body from this module by id when a result is tapped. This
+     * is the public body the citizen already sees in the feed — no draft, no internal field — so it is safe to
+     * index (PRD §18).</p>
+     *
+     * @param body the public body text (SW or EN), or {@code null}.
+     * @return a snippet of at most {@link #DISCOVERY_SNIPPET_LENGTH} characters, or {@code null}.
+     */
+    private String discoverySnippet(String body) {
+        if (body == null || body.isBlank()) {
+            return null;
+        }
+        return body.length() <= DISCOVERY_SNIPPET_LENGTH
+                ? body
+                : body.substring(0, DISCOVERY_SNIPPET_LENGTH);
     }
 
     /** Parses + validates channel names; an unknown/empty set is a localised validation failure. */

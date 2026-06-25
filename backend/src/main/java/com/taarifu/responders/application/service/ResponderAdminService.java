@@ -38,6 +38,10 @@ import com.taarifu.responders.domain.repository.OrganisationRepository;
 import com.taarifu.responders.domain.repository.ResponderAssignmentRepository;
 import com.taarifu.responders.domain.repository.ResponderRepository;
 import com.taarifu.responders.domain.repository.RoutingRuleRepository;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -81,6 +85,7 @@ public class ResponderAdminService {
     private final ResponderMapper mapper;
     private final ClockPort clock;
     private final OutboxWriter outboxWriter;
+    private final SearchIndexApi searchIndexApi;
 
     /**
      * @param organisationRepository organisation persistence.
@@ -100,6 +105,12 @@ public class ResponderAdminService {
      * @param outboxWriter           the transactional-outbox port; {@link #assignResponder} appends an
      *                               assignment-created analytics fact in the assignment transaction so the
      *                               analytics sink records it asynchronously, off the admin path (Appendix E, M15).
+     * @param searchIndexApi         search's published inbound port (ADR-0017 §1): the org CRUD/verification
+     *                               paths push an organisation's <b>public</b> directory projection (name +
+     *                               type facet) on create/update and re-push (visibility flip) on
+     *                               verify/un-verify, so the cross-entity discovery index mirrors the public
+     *                               provider directory. An {@code api → api} owner→search call (no reach-in,
+     *                               no cycle — ADR-0013 §1; ModuleBoundaryTest stays GREEN).
      */
     public ResponderAdminService(OrganisationRepository organisationRepository,
                                  ResponderRepository responderRepository,
@@ -112,7 +123,8 @@ public class ResponderAdminService {
                                  AuditEventService audit,
                                  ResponderMapper mapper,
                                  ClockPort clock,
-                                 OutboxWriter outboxWriter) {
+                                 OutboxWriter outboxWriter,
+                                 SearchIndexApi searchIndexApi) {
         this.organisationRepository = organisationRepository;
         this.responderRepository = responderRepository;
         this.routingRuleRepository = routingRuleRepository;
@@ -125,6 +137,7 @@ public class ResponderAdminService {
         this.mapper = mapper;
         this.clock = clock;
         this.outboxWriter = outboxWriter;
+        this.searchIndexApi = searchIndexApi;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -140,7 +153,9 @@ public class ResponderAdminService {
     public OrganisationDto createOrganisation(CreateOrganisationRequest request) {
         Organisation org = Organisation.create(request.name(), request.type());
         org.setContacts(request.contactPhone(), request.contactEmail(), request.websiteUrl());
-        return mapper.toOrganisationDto(organisationRepository.save(org));
+        Organisation saved = organisationRepository.save(org);
+        indexOrganisation(saved);
+        return mapper.toOrganisationDto(saved);
     }
 
     /**
@@ -157,6 +172,9 @@ public class ResponderAdminService {
         org.changeType(request.type());
         org.changeStatus(request.status());
         org.setContacts(request.contactPhone(), request.contactEmail(), request.websiteUrl());
+        // Re-push the projection: a rename/retype updates the title/facet, and a status change (e.g.
+        // ACTIVE→SUSPENDED) flips publicly-listable → visibility (ADR-0017 §1/§4). Idempotent upsert.
+        indexOrganisation(org);
         return mapper.toOrganisationDto(org);
     }
 
@@ -172,6 +190,10 @@ public class ResponderAdminService {
     public OrganisationDto setOrganisationVerified(UUID publicId, boolean verified) {
         Organisation org = requireOrganisation(publicId);
         org.setVerified(verified);
+        // Verification is the gate to public listing (§24.4): verifying an active org makes it PUBLIC in
+        // discovery; un-verifying immediately drops it to STAFF-only (ADR-0017 §4) — the same anti-spoofing
+        // rule the public directory enforces, now mirrored in search by an idempotent re-push.
+        indexOrganisation(org);
         return mapper.toOrganisationDto(org);
     }
 
@@ -489,6 +511,44 @@ public class ResponderAdminService {
     // ---------------------------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Pushes an organisation's public, searchable directory projection to the cross-entity discovery index
+     * (ADR-0017 §1) via search's published inbound {@link SearchIndexApi}. Called on create/update/verify; the
+     * upsert is idempotent on {@code (ORGANISATION, publicId)} so a re-push updates the single live row.
+     *
+     * <h3>What is indexed — and why no PII (PRD §18, ADR-0017 §1)</h3>
+     * <p>Only the <b>public directory identity</b>: the organisation name as the title, and the organisation
+     * type (e.g. PARASTATAL/GOVERNMENT_AGENCY) as an English keyword facet. The public contact phone/email/URL
+     * are directory display fields fetched from the full record on tap (the index stays lean — PRD §15) and are
+     * <b>not</b> pushed; {@code authoredByAccountId} is left {@code null} because an organisation is a directory
+     * entity, not an authored post (no author-suspension visibility maintenance applies — ADR-0017 §3). No
+     * citizen PII is ever involved (an organisation's contacts are the body's own public details).</p>
+     *
+     * <h3>Visibility (ADR-0017 §4) — mirror {@code isPubliclyListable}</h3>
+     * <p>The organisation is indexed {@code PUBLIC} only when it is {@link Organisation#isPubliclyListable()}
+     * (ACTIVE <b>and</b> verified — §24.4), exactly the rule {@link ResponderDirectoryService} enforces on the
+     * public directory; otherwise {@code STAFF}. So a PENDING/unverified/suspended org is discoverable by staff
+     * but never surfaces to a guest/citizen (anti-spoofing/anti-enumeration — the same guarantee as the
+     * directory). On verify/un-verify or a status change the {@code update}/{@code verify} paths re-push and the
+     * visibility flips automatically; we never delete the row on un-verify (an idempotent visibility flip keeps
+     * the row consistent and re-listable on re-verification).</p>
+     *
+     * @param org the persisted/managed organisation.
+     */
+    private void indexOrganisation(Organisation org) {
+        searchIndexApi.upsert(new SearchDocumentUpsert(
+                SearchEntityType.ORGANISATION,
+                org.getPublicId(),
+                org.getName(),
+                null,                       // snippetSw: name carries the label; no extra public snippet
+                null,                       // snippetEn
+                org.getType().name(),       // keyword facet: the organisation kind (enum name) — public, no PII
+                null,                       // areaId: an org is not pinned to a single ward (responders carry coverage)
+                null,                       // categoryId: capabilities (categories) live on Responder, not the org
+                org.isPubliclyListable() ? SearchVisibility.PUBLIC : SearchVisibility.STAFF,
+                null));                     // authoredByAccountId: a directory entity has no author
+    }
 
     /** Loads an organisation by public id or throws a localised not-found. */
     private Organisation requireOrganisation(UUID publicId) {

@@ -187,6 +187,40 @@ class AnalyticsIntegrationTest extends AbstractPostgisIntegrationTest {
     }
 
     @Test
+    void autoModerationTriaged_recordsAndIsQueryableByTypeAndSignal() {
+        // Mirrors exactly what moderation.AutoAssistService emits (ADR-0018 §3): event type
+        // AUTO_MODERATION_TRIAGED, activeRole MODERATOR, the top ContentSignal as the `outcome` code,
+        // and the held flag carried in the breach field (HELD/NOT_HELD are not BreachType members, so the
+        // handler maps them to null — here we record null breachType directly, the post-parse value).
+        // BEFORE V171 the catalogue lacked the value and the fact was dropped as a no-op; this proves it now
+        // persists and is queryable for the auto-vs-manual split KPI (US-12.3).
+        boolean recordedHeldProfanity = recordingService.record(new RecordEventCommand(
+                UUID.randomUUID(), AnalyticsEventType.AUTO_MODERATION_TRIAGED, base, null, null, null,
+                null, null, AnalyticsRole.MODERATOR, null, null, "PROFANITY"));
+        boolean recordedHeldPii = recordingService.record(new RecordEventCommand(
+                UUID.randomUUID(), AnalyticsEventType.AUTO_MODERATION_TRIAGED, base, null, null, null,
+                null, null, AnalyticsRole.MODERATOR, null, null, "PII"));
+        boolean recordedNotHeld = recordingService.record(new RecordEventCommand(
+                UUID.randomUUID(), AnalyticsEventType.AUTO_MODERATION_TRIAGED, base, null, null, null,
+                null, null, AnalyticsRole.MODERATOR, null, null, "PROFANITY"));
+
+        assertThat(recordedHeldProfanity).isTrue();
+        assertThat(recordedHeldPii).isTrue();
+        assertThat(recordedNotHeld).isTrue();
+
+        // Queryable by the new type (the headline auto-triage volume).
+        assertThat(events.countByType(AnalyticsEventType.AUTO_MODERATION_TRIAGED, from, to, null, null))
+                .isEqualTo(3);
+
+        // Queryable grouped by the top safety signal (the `outcome` dimension) — PROFANITY (2) tops PII (1).
+        var bySignal = events.countByTypeGroupedByOutcome(
+                AnalyticsEventType.AUTO_MODERATION_TRIAGED, from, to);
+        assertThat(bySignal).hasSize(2);
+        assertThat(bySignal.get(0).getKey()).isEqualTo("PROFANITY");
+        assertThat(bySignal.get(0).getCount()).isEqualTo(2);
+    }
+
+    @Test
     void reportsTrend_bucketsByDayViaDateTrunc() {
         UUID ward = UUID.randomUUID();
         Instant day1 = Instant.parse("2026-06-10T08:00:00Z");

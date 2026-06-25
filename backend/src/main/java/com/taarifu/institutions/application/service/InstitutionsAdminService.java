@@ -28,6 +28,10 @@ import com.taarifu.institutions.domain.repository.ParliamentRepository;
 import com.taarifu.institutions.domain.repository.ParliamentRoleRepository;
 import com.taarifu.institutions.domain.repository.PoliticalPartyRepository;
 import com.taarifu.institutions.domain.repository.RepresentativeRepository;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -87,6 +91,7 @@ public class InstitutionsAdminService {
     private final RepresentativeRepository representativeRepository;
     private final GeographyQueryService geographyQueryService;
     private final InstitutionsMapper mapper;
+    private final SearchIndexApi searchIndexApi;
 
     /**
      * @param partyRepository           party persistence port.
@@ -96,19 +101,27 @@ public class InstitutionsAdminService {
      * @param geographyQueryService     geography's public service for constituency/ward FK resolution
      *                                  (ADR-0013 — never geography's repositories).
      * @param mapper                    entity→DTO mapper.
+     * @param searchIndexApi            search's published inbound port (ADR-0017 §1): institutions pushes a
+     *                                  representative's <b>public</b> directory projection (name+seat facets,
+     *                                  never PII/bio) on create/update and removes it on delete, so the
+     *                                  cross-entity discovery index reflects the directory. This is an
+     *                                  {@code api → api} cross-module call (owner → search; no reach-in,
+     *                                  no cycle — ADR-0013 §1, ModuleBoundaryTest stays GREEN).
      */
     public InstitutionsAdminService(PoliticalPartyRepository partyRepository,
                                     ParliamentRepository parliamentRepository,
                                     ParliamentRoleRepository parliamentRoleRepository,
                                     RepresentativeRepository representativeRepository,
                                     GeographyQueryService geographyQueryService,
-                                    InstitutionsMapper mapper) {
+                                    InstitutionsMapper mapper,
+                                    SearchIndexApi searchIndexApi) {
         this.partyRepository = partyRepository;
         this.parliamentRepository = parliamentRepository;
         this.parliamentRoleRepository = parliamentRoleRepository;
         this.representativeRepository = representativeRepository;
         this.geographyQueryService = geographyQueryService;
         this.mapper = mapper;
+        this.searchIndexApi = searchIndexApi;
     }
 
     // =============================================================================================
@@ -289,7 +302,9 @@ public class InstitutionsAdminService {
     public RepresentativeDto createRepresentative(RepresentativeWriteDto dto) {
         Representative rep = Representative.create();
         applyRepresentative(rep, dto, NO_EXCLUDE);
-        return mapper.toDto(representativeRepository.save(rep));
+        Representative saved = representativeRepository.save(rep);
+        indexRepresentative(saved);
+        return mapper.toDto(saved);
     }
 
     /**
@@ -307,7 +322,12 @@ public class InstitutionsAdminService {
                 .orElseThrow(() ->
                         new ResourceNotFoundException(KEY_REPRESENTATIVE_NOT_FOUND, publicId));
         applyRepresentative(rep, dto, rep.getId());
-        return mapper.toDto(representativeRepository.save(rep));
+        Representative saved = representativeRepository.save(rep);
+        // Re-push the (possibly changed name/seat/status→visibility) projection — idempotent upsert keyed on
+        // (REPRESENTATIVE, publicId), so a status transition (PENDING→SITTING→FORMER) updates the one row and
+        // flips its visibility (a PENDING rep stays STAFF-only; a SITTING/FORMER rep is public) — ADR-0017 §1.
+        indexRepresentative(saved);
+        return mapper.toDto(saved);
     }
 
     /**
@@ -324,6 +344,9 @@ public class InstitutionsAdminService {
                         new ResourceNotFoundException(KEY_REPRESENTATIVE_NOT_FOUND, publicId));
         rep.markDeleted(currentActor());
         representativeRepository.save(rep);
+        // Remove the soft-deleted representative from discovery (idempotent — ADR-0017 §1). A deleted record
+        // must not surface in search even though its row survives for the historical/accountability record.
+        searchIndexApi.remove(SearchEntityType.REPRESENTATIVE, publicId);
     }
 
     // =============================================================================================
@@ -399,6 +422,115 @@ public class InstitutionsAdminService {
                 dto.parliamentId() != null ? resolveParliament(dto.parliamentId()) : null,
                 dto.parliamentRoleId() != null ? resolveParliamentRole(dto.parliamentRoleId()) : null,
                 status, dto.electedAt(), dto.bio());
+    }
+
+    // =============================================================================================
+    // Search indexing (ADR-0017 §1) — push the representative's PUBLIC directory projection.
+    // =============================================================================================
+
+    /**
+     * Pushes a representative's public, searchable directory projection to the cross-entity discovery index
+     * (ADR-0017 §1) via search's published inbound {@link SearchIndexApi}. Called on create/update; the upsert
+     * is idempotent on {@code (REPRESENTATIVE, publicId)} so a re-push updates the single live row.
+     *
+     * <h3>What is indexed — and why no PII (PRD §18, ADR-0017 §1)</h3>
+     * <p>Only the <b>public civic identity</b>: the seat label as the title (kind + seat name, e.g.
+     * "Mbunge — Rombo" / "Diwani — Mengwe (Kata)"), the type/mandate/legislature as Swahili+English keyword
+     * facets, and the area public id (constituency or ward) for the area filter. The representative's
+     * {@code bio} (moderated free text that can carry whatever the rep chooses) and any linked
+     * {@code profileId} (the citizen's account) are <b>deliberately NOT pushed</b> — the index is a lean
+     * discovery surface, not a profile mirror; {@code authoredByAccountId} is left {@code null} because a
+     * representative is a directory entity, not an authored post (no author-suspension visibility maintenance
+     * applies — ADR-0017 §3).</p>
+     *
+     * <h3>Visibility (ADR-0017 §4)</h3>
+     * <p>A {@link RepresentativeStatus#SITTING} or {@link RepresentativeStatus#FORMER} representative is
+     * public civic data (the directory + historical record are public — PRD §22.6), so {@code PUBLIC}. A
+     * {@link RepresentativeStatus#PENDING_VERIFICATION} record is not yet on the official list and must not
+     * surface to the public (anti-claim-spoofing, UC-A22/D-Q2), so it is indexed {@code STAFF} — discoverable
+     * by staff, invisible to guests/citizens until verified. On a status transition the {@code update} path
+     * re-pushes and the visibility flips automatically.</p>
+     *
+     * @param rep the persisted representative (its {@code constituency}/{@code ward} associations are read
+     *            here for the title/area facet; both may be {@code null} for special-seats/nominated).
+     */
+    private void indexRepresentative(Representative rep) {
+        searchIndexApi.upsert(new SearchDocumentUpsert(
+                SearchEntityType.REPRESENTATIVE,
+                rep.getPublicId(),
+                representativeTitle(rep),
+                null,                          // snippetSw: the seat label is in the title; no extra public snippet
+                null,                          // snippetEn
+                representativeKeywords(rep),   // SW+EN facet terms (kind/mandate/legislature) — public, no PII
+                representativeAreaId(rep),     // constituency or ward public id for the area filter
+                null,                          // categoryId: a representative is not category-scoped
+                representativeVisibility(rep),
+                null));                        // authoredByAccountId: a directory entity has no author (never the rep's account)
+    }
+
+    /**
+     * Resolves the Ward-or-coarser area public id for a representative's area facet (ADR-0017 §4): the
+     * constituency (Jimbo) for a constituency-mandate MP, the ward (Kata) for a councillor/ward-exec, or
+     * {@code null} for a seat-less (special-seats/nominated) member. A bare public id, never a FK
+     * (cross-module reference by id — ADR-0013).
+     */
+    private static UUID representativeAreaId(Representative rep) {
+        if (rep.getConstituency() != null) {
+            return rep.getConstituency().getPublicId();
+        }
+        if (rep.getWard() != null) {
+            return rep.getWard().getPublicId();
+        }
+        return null;
+    }
+
+    /**
+     * Builds the public display title for a representative document: the seat kind plus the seat name (Jimbo
+     * or Kata), e.g. {@code "Mbunge — Rombo"}, {@code "Diwani — Mengwe (Kata)"}, or just {@code "Mbunge"} for
+     * a seat-less (special-seats/nominated) member. Swahili-first (PRD §14): the civic role term is the
+     * Swahili one citizens search by. Carries no PII.
+     */
+    private static String representativeTitle(Representative rep) {
+        String role = switch (rep.getType()) {
+            case MP -> "Mbunge";
+            case COUNCILLOR -> "Diwani";
+            case WARD_EXEC -> "Mtendaji wa Kata";
+        };
+        if (rep.getConstituency() != null) {
+            return role + " — " + rep.getConstituency().getName();
+        }
+        if (rep.getWard() != null) {
+            return role + " — " + rep.getWard().getName() + " (Kata)";
+        }
+        return role;
+    }
+
+    /**
+     * Builds the public keyword facets for a representative document — Swahili and English role synonyms plus
+     * the mandate/legislature names — so a citizen typing {@code mbunge}, {@code mp}, {@code diwani},
+     * {@code councillor}, or a Viti Maalum term finds the right rows even though the {@code simple} FTS config
+     * does not stem Swahili (ADR-0017 §2). Enum names only; no PII.
+     */
+    private static String representativeKeywords(Representative rep) {
+        StringBuilder kw = new StringBuilder();
+        switch (rep.getType()) {
+            case MP -> kw.append("mbunge mp bunge");
+            case COUNCILLOR -> kw.append("diwani councillor halmashauri");
+            case WARD_EXEC -> kw.append("mtendaji ward executive kata");
+        }
+        kw.append(' ').append(rep.getMandate().name()).append(' ').append(rep.getLegislature().name());
+        return kw.toString();
+    }
+
+    /**
+     * Maps a representative's lifecycle status to its discovery visibility (ADR-0017 §4): SITTING/FORMER are
+     * public civic data ({@code PUBLIC}); a PENDING_VERIFICATION claim is staff-only ({@code STAFF}) until it
+     * is verified against the official list (UC-A22).
+     */
+    private static SearchVisibility representativeVisibility(Representative rep) {
+        return rep.getStatus() == RepresentativeStatus.PENDING_VERIFICATION
+                ? SearchVisibility.STAFF
+                : SearchVisibility.PUBLIC;
     }
 
     /** Clears the {@code current} flag of the existing current term of a legislature (excluding one id). */

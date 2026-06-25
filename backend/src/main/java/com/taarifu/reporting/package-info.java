@@ -24,5 +24,15 @@
  * lifecycle/analytics facts are emitted on the same outbox. STILL DEFERRED to later increments: SLA-breach
  * escalation scheduling and the attachment virus-scan hook. All cross-module seams reference other modules
  * by id (UUID) only and carry no PII (PRD §18).</p>
+ *
+ * <p><b>Discovery &amp; moderation seams (ADR-0017, ADR-0018; ADR-0013 §1/§4c):</b> reporting <b>pushes</b> a
+ * public, PII-free projection of a report (title, description snippet, ward area + category facets) into the
+ * search module's index via {@code search.api.SearchIndexApi} on file and on every lifecycle change, and
+ * <b>removes</b> it whenever the report is not (or no longer) public-safe — a PRIVATE, sensitive, or anonymous
+ * report is <b>never</b> indexed (the discovery IDOR fence — PRD §25.3, PDPA), and a PDPA erasure that
+ * anonymises a report removes its discovery row. Reporting also <b>publishes</b> {@code moderation.api}'s
+ * {@code SubjectContentQueryApi} for {@code FlagSubjectType.REPORT}, surfacing a flagged report's transient
+ * scorable text (title + description) to moderation's auto-assist scorer — text only, scored and discarded,
+ * never persisted or logged (PRD §18). Both are owner→foundation {@code api} edges (no reach-in, no cycle).</p>
  */
 package com.taarifu.reporting;

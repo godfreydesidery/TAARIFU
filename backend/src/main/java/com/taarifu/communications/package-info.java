@@ -23,6 +23,17 @@
  * and resolved through the owning module's public API (ARCHITECTURE §3.2). The {@code // TODO(wiring)}
  * notes mark the deferred cross-module integration points.</p>
  *
+ * <p><b>Discovery + moderation wiring (ADR-0017 / ADR-0018; outbound {@code api → api} — ADR-0013 §1):</b>
+ * on the went-live funnel ({@code AnnouncementService.publish}/{@code approveAndPublish}) this module pushes a
+ * <b>public, PII-free projection</b> of a {@code PUBLISHED} announcement (title + localised body snippet +
+ * area/category facets) to the search module's {@code SearchIndexApi}, and <b>removes</b> the projection for any
+ * non-published state (draft/held/scheduled/expired) so nothing in flight is ever discoverable (PRD §18). For
+ * moderation auto-assist it publishes {@code AnnouncementSubjectContentQuery} — the implementation of
+ * {@code moderation.api.SubjectContentQueryApi} for {@code FlagSubjectType.ANNOUNCEMENT} (the only moderatable
+ * surface this module owns; it has no comment/reply entity) — surfacing a flagged announcement's bilingual body
+ * <b>transiently</b> to the scorer. Both are sanctioned feature→foundation {@code api} dependencies (no cycle,
+ * no reach-in); auto-assist is assist-only and degrades to the human pipeline (EI-18).</p>
+ *
  * <p><b>Published command ports (ADR-0013 §1; A3/ADR-0019):</b> this module exposes two synchronous command
  * ports in {@code com.taarifu.communications.api} for sibling channels (above all {@code ussd}) that need SMS
  * delivery or an area follow but must not import this module's internals: {@code SmsSendApi} (façade over the

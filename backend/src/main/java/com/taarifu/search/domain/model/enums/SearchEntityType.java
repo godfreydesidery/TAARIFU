@@ -29,5 +29,27 @@ public enum SearchEntityType {
     ISSUE_CATEGORY,
 
     /** A publicly-visible issue report (ticket); owned by {@code reporting}. */
-    PUBLIC_REPORT
+    PUBLIC_REPORT,
+
+    /**
+     * A publicly-visible petition (non-DRAFT — ACTIVE/SUCCEEDED/RESPONDED/CLOSED); owned by
+     * {@code engagement}. Only its public title + lean summary + area/category facets are indexed — never
+     * a DRAFT, never the signer list, never any PII (the discovery fence, ADR-0017 §1, PRD §18).
+     */
+    PETITION,
+
+    /**
+     * A publicly-visible survey or poll (non-DRAFT — SCHEDULED/OPEN/CLOSED/ARCHIVED); owned by
+     * {@code engagement}. Covers BOTH the SURVEY and POLL {@code SurveyType}s (engagement models them as one
+     * {@code Survey} aggregate), so one value serves both. Only its public title + description snippet +
+     * area facet are indexed — never the questions JSON, never any response payload, never a DRAFT.
+     */
+    POLL,
+
+    /**
+     * A publicly-visible Q&amp;A question to a representative (OPEN/ANSWERED); owned by {@code engagement}.
+     * Only its public body snippet + the target-rep facet are indexed — never the asker id, never a
+     * DECLINED/MODERATED/hidden question.
+     */
+    QUESTION
 }

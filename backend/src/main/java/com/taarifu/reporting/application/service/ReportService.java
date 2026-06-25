@@ -29,6 +29,10 @@ import com.taarifu.reporting.domain.port.WardResolver;
 import com.taarifu.reporting.domain.repository.CaseEventRepository;
 import com.taarifu.reporting.domain.repository.IssueCategoryRepository;
 import com.taarifu.reporting.domain.repository.ReportRepository;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Point;
@@ -99,6 +103,15 @@ public class ReportService implements ReportLifecycleApi {
     private final ClockPort clock;
     private final OutboxWriter outboxWriter;
     private final AttachmentValidator attachmentValidator;
+    private final SearchIndexApi searchIndexApi;
+
+    /**
+     * Max length of the public discovery snippet pushed to the search index. A report's description can run
+     * to 4000 chars (the column cap); the discovery snippet is a lean preview only (PRD §15), and the index
+     * {@code snippet_*} columns are bounded at 1024 (ADR-0017 §2). We truncate well under that so the upsert
+     * never overruns the index column while still giving the FTS document useful body terms.
+     */
+    private static final int SEARCH_SNIPPET_MAX = 480;
 
     /**
      * @param reportRepository    report persistence port.
@@ -114,11 +127,16 @@ public class ReportService implements ReportLifecycleApi {
      * @param attachmentValidator validates+binds the citizen's media attachment refs at file time (delegates
      *                            to the media module's public api port; the bind runs in the file transaction
      *                            so a bad attachment set rolls the whole filing back).
+     * @param searchIndexApi      the search module's published inbound port (ADR-0017 §1, ADR-0013 §1). This
+     *                            service <b>pushes</b> a public, PII-free projection of a PUBLIC report into the
+     *                            discovery index on create/lifecycle-change and <b>removes</b> it when the
+     *                            report is not (or no longer) public-safe — owner→search direction, no reach-in.
      */
     public ReportService(ReportRepository reportRepository, IssueCategoryRepository categoryRepository,
                          CaseEventRepository caseEventRepository, WardResolver wardResolver,
                          CodeGenerator codeGenerator, ReportingMapper mapper, ClockPort clock,
-                         OutboxWriter outboxWriter, AttachmentValidator attachmentValidator) {
+                         OutboxWriter outboxWriter, AttachmentValidator attachmentValidator,
+                         SearchIndexApi searchIndexApi) {
         this.reportRepository = reportRepository;
         this.categoryRepository = categoryRepository;
         this.caseEventRepository = caseEventRepository;
@@ -128,6 +146,7 @@ public class ReportService implements ReportLifecycleApi {
         this.clock = clock;
         this.outboxWriter = outboxWriter;
         this.attachmentValidator = attachmentValidator;
+        this.searchIndexApi = searchIndexApi;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -228,6 +247,12 @@ public class ReportService implements ReportLifecycleApi {
         // filing) carries no actorRef — analytics still counts the volume without a person.
         emitAnalytics(report.getPublicId(), AnalyticsEventTypes.REPORT_FILED,
                 report.getReporterWardId(), category.getPublicId());
+
+        // SEARCH (ADR-0017 §1, ADR-0013 §1): push this report into the cross-entity discovery index — but ONLY
+        // if it is public-safe. A PRIVATE/sensitive/anonymous report is NEVER indexed (the index keeps
+        // private/sensitive content out of public discovery — PDPA, PRD §25.3, the IDOR fence). reindexForDiscovery
+        // decides upsert-vs-remove from the report's own visibility/anonymity, so the rule lives in one place.
+        reindexForDiscovery(report, category);
 
         return mapper.toReportDto(report);
     }
@@ -342,6 +367,9 @@ public class ReportService implements ReportLifecycleApi {
         }
         appendEvent(report, CaseEventType.STATUS_CHANGE, true, reporterProfileId,
                 "%s → %s".formatted(ReportStatus.RESOLVED, target));
+        // SEARCH: the citizen confirm/dispute moves the case CLOSED/REOPENED via applyConfirmation (not the
+        // shared transition() helper), so re-index here too — idempotent upsert for a public report (ADR-0017 §1).
+        reindexForDiscovery(report, report.getCategory());
         return mapper.toReportDto(report);
     }
 
@@ -491,6 +519,9 @@ public class ReportService implements ReportLifecycleApi {
         // the outbox in THIS transaction; recorded asynchronously by the analytics sink (off the actor path).
         emitAnalytics(report.getPublicId(), AnalyticsEventTypes.REPORT_RESOLVED,
                 report.getReporterWardId(), report.getCategory().getPublicId());
+        // SEARCH: keep the discovery row fresh after resolution (status-driven snippet) — idempotent upsert for
+        // a public report, remove for a non-public one (ADR-0017 §1).
+        reindexForDiscovery(report, report.getCategory());
         return mapper.toReportDto(report);
     }
 
@@ -536,6 +567,12 @@ public class ReportService implements ReportLifecycleApi {
         // AWAITING_INFO resume) routes through here. Ids/codes only (ward, category) — no actor PII, no message.
         emitAnalytics(report.getPublicId(), AnalyticsEventTypes.REPORT_STATUS_CHANGED,
                 report.getReporterWardId(), report.getCategory().getPublicId());
+        // SEARCH: every lifecycle move routes through here, so this is the single re-index point for status
+        // changes (assign/start/escalate/the AWAITING_INFO resume + the system routing assignment). Idempotent
+        // upsert for a public report, remove for a non-public one (ADR-0017 §1). The visibility axis itself never
+        // changes after filing in this module, but re-indexing on every move keeps the projection eventually
+        // self-healing and is cheap (one keyed upsert).
+        reindexForDiscovery(report, report.getCategory());
     }
 
     /**
@@ -579,6 +616,77 @@ public class ReportService implements ReportLifecycleApi {
                 reportPublicId,
                 CivicActivityRecorded.of(analyticsEventType, wardId, categoryId, null, clock.now()),
                 clock.now()));
+    }
+
+    /**
+     * Pushes (or removes) this report's <b>public, PII-free</b> discovery projection in the search index
+     * (ADR-0017 §1; ADR-0013 §1 owner→search). This is the single place the index-vs-no-index decision lives,
+     * so the privacy fence is enforced once and cannot drift across the create/lifecycle call sites.
+     *
+     * <p><b>🔒 The fence (PRD §18, §25.3, PDPA — the IDOR fence on discovery):</b> a report is indexed
+     * <b>only if</b> it is {@link ReportVisibility#PUBLIC} <i>and</i> not {@link Report#isAnonymous()
+     * anonymous}. A PRIVATE report (forced PRIVATE for a sensitive GBV/Corruption category, or the citizen's
+     * own private choice) and an anonymous report are <b>never</b> indexed — and any time a report is, or
+     * becomes, non-public-safe this calls {@link SearchIndexApi#remove} so a row that should not be discoverable
+     * is positively pulled from the index (defence-in-depth: removing an absent row is an idempotent no-op).
+     * Anonymity is screened explicitly even though sensitive categories already force PRIVATE — belt-and-braces,
+     * so an anonymous report can never leak into public discovery regardless of category config.</p>
+     *
+     * <p><b>What is pushed (public-display + opaque ids only — never PII):</b> the report {@link Report#getTitle()
+     * title} as the discovery label, a short {@link #snippet(String) snippet} of the description as the body
+     * preview (both citizen civic content, already public for a PUBLIC report), the {@link Report#getReporterWardId()
+     * ward} as the area facet, and the category public id as the category facet. The reporter linkage is passed as
+     * {@code authoredByAccountId} solely for the search module's author-level visibility maintenance (hide a
+     * suspended author's rows — ADR-0017 §3); it is never returned to a reader. No geo-point, no phone/ID, no
+     * private body crosses into the index.</p>
+     *
+     * @param report   the report whose discovery projection is being maintained.
+     * @param category the report's category (passed in to avoid re-touching a lazy association at call sites).
+     */
+    private void reindexForDiscovery(Report report, IssueCategory category) {
+        boolean publicSafe = report.getVisibility() == ReportVisibility.PUBLIC && !report.isAnonymous();
+        if (!publicSafe) {
+            // Not (or no longer) public-safe: ensure it is absent from discovery (idempotent remove).
+            searchIndexApi.remove(SearchEntityType.PUBLIC_REPORT, report.getPublicId());
+            return;
+        }
+        searchIndexApi.upsert(new SearchDocumentUpsert(
+                SearchEntityType.PUBLIC_REPORT,
+                report.getPublicId(),
+                report.getTitle(),
+                // Swahili-first corpus: the citizen's free text is the snippet for both locales (we do not
+                // machine-translate); the FTS config is `simple` (no per-language stemming), so one snippet
+                // serves both SW/EN search inputs (ADR-0017 §2).
+                snippet(report.getDescription()),
+                snippet(report.getDescription()),
+                // Keywords: the ticket code + the category name as extra searchable terms (Swahili synonyms /
+                // codes a citizen might type) — all public.
+                report.getCode() + " " + category.getName(),
+                report.getReporterWardId(),
+                category.getPublicId(),
+                SearchVisibility.PUBLIC,
+                // authoredByAccountId: used ONLY for the search module's suspended-author visibility maintenance
+                // (ADR-0017 §3), never returned. Null here would only ever happen for an anonymous report, which
+                // is already excluded above.
+                report.getReporterProfileId()));
+    }
+
+    /**
+     * Truncates citizen free text to a lean, index-safe discovery snippet ({@link #SEARCH_SNIPPET_MAX} chars),
+     * appending an ellipsis when cut. Keeps the index payload lean (PRD §15) and under the index column bound.
+     *
+     * @param text the source text (may be {@code null}).
+     * @return the trimmed snippet, or {@code null} if the input is {@code null}/blank.
+     */
+    private String snippet(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        String trimmed = text.strip();
+        if (trimmed.length() <= SEARCH_SNIPPET_MAX) {
+            return trimmed;
+        }
+        return trimmed.substring(0, SEARCH_SNIPPET_MAX) + "…";
     }
 
     /**

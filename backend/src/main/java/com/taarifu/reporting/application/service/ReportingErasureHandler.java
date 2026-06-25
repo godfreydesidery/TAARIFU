@@ -12,6 +12,8 @@ import com.taarifu.reporting.domain.model.CaseEvent;
 import com.taarifu.reporting.domain.model.Report;
 import com.taarifu.reporting.domain.repository.CaseEventRepository;
 import com.taarifu.reporting.domain.repository.ReportRepository;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -56,6 +58,7 @@ public class ReportingErasureHandler implements DomainEventHandler {
     private final CaseEventRepository caseEventRepository;
     private final AuditEventService audit;
     private final ObjectMapper objectMapper;
+    private final SearchIndexApi searchIndexApi;
 
     /**
      * @param reportRepository    the subject's filed reports (reporter-linkage sever target).
@@ -64,15 +67,20 @@ public class ReportingErasureHandler implements DomainEventHandler {
      *                            never mutates the hash-chain, L-1).
      * @param objectMapper        shared Jackson mapper; converts the relay's tree payload back into the typed
      *                            {@link ErasureRequested} record (the relay is payload-agnostic).
+     * @param searchIndexApi      the search module's published inbound port (ADR-0017 §1). A severed report
+     *                            becomes {@link Report#isAnonymous() anonymous}, so it must be pulled from public
+     *                            discovery — the handler removes its discovery row as part of the erasure.
      */
     public ReportingErasureHandler(ReportRepository reportRepository,
                                    CaseEventRepository caseEventRepository,
                                    AuditEventService audit,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   SearchIndexApi searchIndexApi) {
         this.reportRepository = reportRepository;
         this.caseEventRepository = caseEventRepository;
         this.audit = audit;
         this.objectMapper = objectMapper;
+        this.searchIndexApi = searchIndexApi;
     }
 
     /**
@@ -104,6 +112,10 @@ public class ReportingErasureHandler implements DomainEventHandler {
         List<Report> reports = reportRepository.findAllByReporterProfileId(subjectPublicId);
         for (Report report : reports) {
             report.anonymiseReporter();
+            // SEARCH (ADR-0017 §1): a severed report is now anonymous, so it must not be discoverable — pull its
+            // public-discovery row. Idempotent: removing an absent row (it was PRIVATE/anonymous and never
+            // indexed, or already removed) is a no-op, so this stays at-least-once safe alongside the sever.
+            searchIndexApi.remove(SearchEntityType.PUBLIC_REPORT, report.getPublicId());
         }
         List<CaseEvent> events = caseEventRepository.findByActorProfileId(subjectPublicId);
         for (CaseEvent caseEvent : events) {

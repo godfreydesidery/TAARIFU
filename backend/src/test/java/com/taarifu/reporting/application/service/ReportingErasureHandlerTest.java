@@ -10,6 +10,8 @@ import com.taarifu.reporting.domain.model.CaseEvent;
 import com.taarifu.reporting.domain.model.Report;
 import com.taarifu.reporting.domain.repository.CaseEventRepository;
 import com.taarifu.reporting.domain.repository.ReportRepository;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -51,13 +53,16 @@ class ReportingErasureHandlerTest {
     private CaseEventRepository caseEventRepository;
     @Mock
     private AuditEventService audit;
+    @Mock
+    private SearchIndexApi searchIndexApi;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID subject = UUID.randomUUID();
     private final UUID dsr = UUID.randomUUID();
 
     private ReportingErasureHandler handler() {
-        return new ReportingErasureHandler(reportRepository, caseEventRepository, audit, objectMapper);
+        return new ReportingErasureHandler(reportRepository, caseEventRepository, audit, objectMapper,
+                searchIndexApi);
     }
 
     private EventEnvelope<?> event() {
@@ -69,6 +74,8 @@ class ReportingErasureHandlerTest {
     @Test
     void handle_seversReporterAndActorLinkage_appendsAuditTombstone() {
         Report report = mock(Report.class);
+        UUID reportPublicId = UUID.randomUUID();
+        when(report.getPublicId()).thenReturn(reportPublicId);
         CaseEvent caseEvent = mock(CaseEvent.class);
         when(reportRepository.findAllByReporterProfileId(subject)).thenReturn(List.of(report));
         when(caseEventRepository.findByActorProfileId(subject)).thenReturn(List.of(caseEvent));
@@ -78,6 +85,10 @@ class ReportingErasureHandlerTest {
         // Reporter linkage and actor linkage severed (civic record kept).
         verify(report).anonymiseReporter();
         verify(caseEvent).anonymiseActor();
+
+        // SEARCH (ADR-0017 §1): the now-anonymous report is pulled from public discovery. Fails if the
+        // erasure stops removing the discovery row (a leak: a de-identified report still surfacing in search).
+        verify(searchIndexApi).remove(SearchEntityType.PUBLIC_REPORT, reportPublicId);
 
         // Exactly one SUBJECT_DATA_ERASED tombstone APPENDED, with references + counts (no PII).
         ArgumentCaptor<AuditEvent> ev = ArgumentCaptor.forClass(AuditEvent.class);

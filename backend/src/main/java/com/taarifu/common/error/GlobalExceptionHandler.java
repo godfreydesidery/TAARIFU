@@ -15,6 +15,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
 
@@ -125,6 +126,22 @@ public class GlobalExceptionHandler {
         log.warn("Optimistic lock conflict: {}", ex.getMessage());
         return ResponseEntity.status(ErrorCode.CONFLICT.httpStatus())
                 .body(responses.error(ErrorCode.CONFLICT, (List<ErrorDetail>) null));
+    }
+
+    /**
+     * A request whose path matches no controller mapping (and no static resource) — return a clean
+     * {@code 404} envelope instead of letting it fall through to the {@link #handleUnexpected catch-all},
+     * which would mislabel an unknown URL as a {@code 500 INTERNAL_ERROR}. Spring 6.1 raises
+     * {@link NoResourceFoundException} once an unmatched path reaches the resource handler.
+     *
+     * @param ex the no-resource exception (carries the unmatched path).
+     * @return a {@link ErrorCode#NOT_FOUND} envelope (no internals leaked).
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<ApiError>> handleNoResource(NoResourceFoundException ex) {
+        log.warn("No handler/resource for path: {}", ex.getResourcePath());
+        return ResponseEntity.status(ErrorCode.NOT_FOUND.httpStatus())
+                .body(responses.error(ErrorCode.NOT_FOUND, (List<ErrorDetail>) null));
     }
 
     /**

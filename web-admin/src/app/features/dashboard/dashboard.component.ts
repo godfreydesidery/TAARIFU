@@ -27,9 +27,10 @@ interface LegendEntry {
  *
  * <p>Responsibility: the post-login home. A row of KPI stat tiles (open cases, SLA breaches, pending
  * moderation, verification-queue depth) from the single aggregate `GET /admin/stats`, followed by an
- * elegant chart grid fed by `GET /admin/analytics/*`: reports-by-status (bar), channel mix (doughnut),
- * the T0→T3 verification funnel (bar with conversion), SLA breaches by type, moderation actions by
- * outcome, and TTFR/TTR responsiveness tiles. EVERY data source degrades independently — a tri-state
+ * elegant chart grid: reports-by-status (bar) is derived from that same `GET /admin/stats` payload, while
+ * the remaining charts are fed by `GET /admin/analytics/*` — channel mix (doughnut), the T0→T3 verification
+ * funnel (bar with conversion), SLA breaches by type, moderation actions by outcome, and TTFR/TTR
+ * responsiveness tiles. EVERY data source degrades independently — a tri-state
  * (`undefined`=loading skeleton, `null`=unavailable empty state, value=render) per tile — so a missing or
  * `404` analytics endpoint never blocks the page (PRD §15 resilience). Each chart is paired with an
  * accessible numeric legend so the data is never chart-only (WCAG 2.1 AA). Subscriptions use

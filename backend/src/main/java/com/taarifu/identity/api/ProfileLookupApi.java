@@ -15,12 +15,14 @@ import java.util.UUID;
  * {@code app_user} (1:1) aggregate that identity owns — and nothing else:</p>
  * <ol>
  *   <li>"given a citizen's <b>account</b> public id, what is their <b>profile</b> public id?" — the exact need
- *       behind the engagement {@code // TODO(wiring): resolve creatorPublicId (account) -> identity Profile
- *       public id} markers on petition/poll/question authoring (PRD §12.2). Those create paths carry the
- *       authenticated <b>account</b> id (from {@code CurrentUser}); to record/display the author by profile they
- *       must map it through identity, which owns the 1:1 link — they must NOT reach into identity's tables;</li>
- *   <li>"given a <b>profile</b> public id, what is its public <b>display name</b>?" — the profile-public-id ↔
- *       display lookup a feed/list/detail view uses to label an author.</li>
+ *       the engagement petition/poll/question authoring paths resolve through this port (the
+ *       {@code resolve creatorPublicId (account) → identity Profile public id} seam, PRD §12.2). Those create
+ *       paths carry the authenticated <b>account</b> id (from {@code CurrentUser}); to record/display the author
+ *       by profile they map it through identity, which owns the 1:1 link — they must NOT reach into identity's
+ *       tables;</li>
+ *   <li>"given a <b>profile</b> public id, what is its public <b>display name</b> and <b>trust tier</b>?" — the
+ *       profile-public-id ↔ (display-name, tier) lookup a feed/list/detail view uses to label an author and show
+ *       their verification badge (PRD §7.3).</li>
  * </ol>
  *
  * <p>The {@code communications}/{@code engagement}/{@code accountability} modules call this synchronously
@@ -30,8 +32,9 @@ import java.util.UUID;
  * {@code @Transactional(readOnly = true)} {@code @Service}; callers inject this interface, never the impl
  * (ADR-0013 §1).</p>
  *
- * <p><b>🔒 PII discipline (PRD §18, PDPA — data minimisation):</b> this port exposes <b>only</b> public ids and
- * the public display name (via {@link com.taarifu.identity.domain.model.Profile#displayName()}). It returns
+ * <p><b>🔒 PII discipline (PRD §18, PDPA — data minimisation):</b> this port exposes <b>only</b> public ids,
+ * the public display name (via {@link com.taarifu.identity.domain.model.Profile#displayName()}), and the public
+ * trust-tier <b>name</b> (the non-sensitive "how verified is this author?" badge, PRD §7.3). It returns
  * <b>no</b> national/voter {@code idNo} or blind index, <b>no</b> phone/email (contact PII has its own
  * consent-fenced {@code RecipientContactApi} dispatch path), and <b>no</b> demographic — see
  * {@link ProfileSummary}. WHY a dedicated narrow port (not a field added to a broader profile DTO): least
@@ -57,12 +60,13 @@ public interface ProfileLookupApi {
     Optional<UUID> profileIdForAccount(UUID accountPublicId);
 
     /**
-     * Resolves a <b>profile</b> public id to its public summary (profile id + display name) for author
-     * labelling — the profile-public-id ↔ display lookup.
+     * Resolves a <b>profile</b> public id to its public summary (profile id + display name + live trust-tier
+     * name) for author labelling — the profile-public-id ↔ (display, tier) lookup. The tier is resolved
+     * server-side from live state (the single tier authority, MF-2), never the JWT tier hint.
      *
      * @param profilePublicId the profile's public id; {@code null} resolves to empty.
-     * @return the profile's privacy-minimised summary (id + public display name only — no PII), or
-     *         {@link Optional#empty()} if no profile resolves for the id (deny-by-default).
+     * @return the profile's privacy-minimised summary (id + public display name + public tier name only —
+     *         no PII), or {@link Optional#empty()} if no profile resolves for the id (deny-by-default).
      */
     Optional<ProfileSummary> profileSummary(UUID profilePublicId);
 }

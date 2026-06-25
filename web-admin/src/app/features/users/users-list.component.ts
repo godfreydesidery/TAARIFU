@@ -8,6 +8,10 @@ import { TranslateModule } from '@ngx-translate/core';
 import { PageMeta } from '../../core/api/api-response.model';
 import { AuthService } from '../../core/auth/auth.service';
 import { PaginationComponent } from '../../shared/components/pagination.component';
+import { StatePanelComponent } from '../../shared/components/state-panel.component';
+import { SkeletonTableComponent } from '../../shared/components/skeleton.component';
+import { StatusBadgeComponent } from '../../shared/components/status-badge.component';
+import { statusTone } from '../../shared/util/status-tone.util';
 import {
   Me,
   ROLE_CATALOGUE,
@@ -30,7 +34,16 @@ import { UsersService } from './users.service';
 @Component({
   selector: 'app-users-list',
   standalone: true,
-  imports: [RouterLink, FormsModule, DatePipe, TranslateModule, PaginationComponent],
+  imports: [
+    RouterLink,
+    FormsModule,
+    DatePipe,
+    TranslateModule,
+    PaginationComponent,
+    StatePanelComponent,
+    SkeletonTableComponent,
+    StatusBadgeComponent,
+  ],
   templateUrl: './users-list.component.html',
 })
 export class UsersListComponent implements OnInit {
@@ -118,4 +131,7 @@ export class UsersListComponent implements OnInit {
   effectiveRoles(): string[] {
     return this.me()?.roles ?? this.sessionRoles()?.roles ?? [];
   }
+
+  /** Maps an account status token to a badge tone (shared design-system mapping). */
+  tone = statusTone;
 }

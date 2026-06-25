@@ -1,64 +1,73 @@
 <!-- Responder organisations admin list: verify gate + create/detail + routing rules link. -->
 <section>
-  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
-    <h1 class="h3 mb-0">{{ 'responders.title' | translate }}</h1>
-    <div class="d-flex gap-2">
+  <header class="page-header">
+    <div class="page-header__titles">
+      <h1 class="page-header__title">{{ 'responders.title' | translate }}</h1>
+      <p class="page-header__subtitle">{{ 'responders.subtitle' | translate }}</p>
+    </div>
+    <div class="page-header__actions">
       <a routerLink="/responders/routing-rules" class="btn btn-outline-secondary btn-sm">
         {{ 'responders.routingRules' | translate }}
       </a>
       <a routerLink="/responders/new" class="btn btn-primary btn-sm">+ {{ 'responders.newOrganisation' | translate }}</a>
     </div>
-  </div>
+  </header>
 
-  @if (loading()) {
-    <div class="text-center py-5" role="status" aria-live="polite">
-      <span class="spinner-border" aria-hidden="true"></span>
-      <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
-    </div>
-  } @else if (errored()) {
-    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
-      <span>{{ 'common.errorLoading' | translate }}</span>
-      <button type="button" class="btn btn-sm btn-outline-danger" (click)="loadPage(0)">{{ 'common.retry' | translate }}</button>
-    </div>
-  } @else if (rows().length === 0) {
-    <div class="alert alert-info" role="status">{{ 'responders.noResults' | translate }}</div>
+  @if (errored()) {
+    <app-state-panel kind="error" icon="⚠" [title]="'common.errorLoading' | translate" (retry)="loadPage(0)" />
+  } @else if (!loading() && rows().length === 0) {
+    <app-state-panel kind="empty" icon="⚙" [title]="'responders.noResults' | translate" [text]="'responders.noResultsHint' | translate" />
   } @else {
-    <div class="table-responsive">
-      <table class="table table-hover align-middle">
-        <thead>
-          <tr>
-            <th scope="col">{{ 'responders.name' | translate }}</th>
-            <th scope="col">{{ 'responders.type' | translate }}</th>
-            <th scope="col">{{ 'responders.status' | translate }}</th>
-            <th scope="col">{{ 'responders.verified' | translate }}</th>
-            <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          @for (org of rows(); track org.id) {
+    <div class="table-card">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
             <tr>
-              <td>{{ org.name }}</td>
-              <td>{{ 'responders.typeValue.' + org.type | translate }}</td>
-              <td>{{ 'responders.statusValue.' + org.status | translate }}</td>
-              <td>
-                @if (org.verified) {
-                  <span class="badge text-bg-success">{{ 'responders.isVerified' | translate }}</span>
-                } @else {
-                  <span class="badge text-bg-warning">{{ 'responders.unverified' | translate }}</span>
-                }
-              </td>
-              <td class="text-end">
-                <a [routerLink]="['/responders', org.id]" class="btn btn-sm btn-outline-secondary me-1">
-                  {{ 'responders.manage' | translate }}
-                </a>
-                <button type="button" class="btn btn-sm" [class.btn-outline-danger]="org.verified" [class.btn-outline-success]="!org.verified" (click)="toggleVerified(org)">
-                  {{ (org.verified ? 'responders.unverify' : 'responders.verify') | translate }}
-                </button>
-              </td>
+              <th scope="col">{{ 'responders.name' | translate }}</th>
+              <th scope="col">{{ 'responders.type' | translate }}</th>
+              <th scope="col">{{ 'responders.status' | translate }}</th>
+              <th scope="col">{{ 'responders.verified' | translate }}</th>
+              <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
             </tr>
+          </thead>
+          @if (loading()) {
+            <tbody app-skeleton-table [rows]="6" [cols]="5"></tbody>
+          } @else {
+            <tbody>
+              @for (org of rows(); track org.id) {
+                <tr>
+                  <td class="fw-medium">{{ org.name }}</td>
+                  <td>{{ 'responders.typeValue.' + org.type | translate }}</td>
+                  <td>
+                    <app-status-badge [tone]="tone(org.status)" [label]="'responders.statusValue.' + org.status | translate" />
+                  </td>
+                  <td>
+                    @if (org.verified) {
+                      <app-status-badge tone="success" [label]="'responders.isVerified' | translate" />
+                    } @else {
+                      <app-status-badge tone="warning" [label]="'responders.unverified' | translate" />
+                    }
+                  </td>
+                  <td class="text-end">
+                    <a [routerLink]="['/responders', org.id]" class="btn btn-sm btn-outline-primary me-1">
+                      {{ 'responders.manage' | translate }}
+                    </a>
+                    <button
+                      type="button"
+                      class="btn btn-sm"
+                      [class.btn-outline-danger]="org.verified"
+                      [class.btn-outline-success]="!org.verified"
+                      (click)="toggleVerified(org)"
+                    >
+                      {{ (org.verified ? 'responders.unverify' : 'responders.verify') | translate }}
+                    </button>
+                  </td>
+                </tr>
+              }
+            </tbody>
           }
-        </tbody>
-      </table>
+        </table>
+      </div>
     </div>
 
     <app-pagination [meta]="meta()" (pageChange)="loadPage($event)" />

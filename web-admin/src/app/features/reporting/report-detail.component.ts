@@ -6,6 +6,9 @@ import { Router, RouterLink } from '@angular/router';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 
 import { ToastService } from '../../core/notifications/toast.service';
+import { StatePanelComponent } from '../../shared/components/state-panel.component';
+import { StatusBadgeComponent } from '../../shared/components/status-badge.component';
+import { statusTone } from '../../shared/util/status-tone.util';
 import { AdminReportDetail } from './reporting.models';
 import { ReportingService } from './reporting.service';
 
@@ -27,7 +30,7 @@ import { ReportingService } from './reporting.service';
 @Component({
   selector: 'app-report-detail',
   standalone: true,
-  imports: [RouterLink, FormsModule, DatePipe, TranslateModule],
+  imports: [RouterLink, FormsModule, DatePipe, TranslateModule, StatePanelComponent, StatusBadgeComponent],
   templateUrl: './report-detail.component.html',
 })
 export class ReportDetailComponent implements OnInit {
@@ -135,4 +138,7 @@ export class ReportDetailComponent implements OnInit {
       error: () => this.acting.set(false),
     });
   }
+
+  /** Maps a status/priority token to a badge tone (shared design-system mapping). */
+  tone = statusTone;
 }

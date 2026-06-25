@@ -8,6 +8,10 @@ import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { PageMeta } from '../../core/api/api-response.model';
 import { ToastService } from '../../core/notifications/toast.service';
 import { PaginationComponent } from '../../shared/components/pagination.component';
+import { StatePanelComponent } from '../../shared/components/state-panel.component';
+import { SkeletonTableComponent } from '../../shared/components/skeleton.component';
+import { StatusBadgeComponent } from '../../shared/components/status-badge.component';
+import { statusTone } from '../../shared/util/status-tone.util';
 import {
   MODERATION_ACTION_TYPES,
   MODERATION_STATUSES,
@@ -27,7 +31,17 @@ import { ModerationService } from './moderation.service';
 @Component({
   selector: 'app-moderation-queue',
   standalone: true,
-  imports: [FormsModule, DatePipe, RouterLink, RouterLinkActive, TranslateModule, PaginationComponent],
+  imports: [
+    FormsModule,
+    DatePipe,
+    RouterLink,
+    RouterLinkActive,
+    TranslateModule,
+    PaginationComponent,
+    StatePanelComponent,
+    SkeletonTableComponent,
+    StatusBadgeComponent,
+  ],
   templateUrl: './moderation-queue.component.html',
 })
 export class ModerationQueueComponent implements OnInit {
@@ -139,4 +153,7 @@ export class ModerationQueueComponent implements OnInit {
         error: () => this.acting.set(false),
       });
   }
+
+  /** Maps a severity/status token to a badge tone (shared design-system mapping). */
+  tone = statusTone;
 }

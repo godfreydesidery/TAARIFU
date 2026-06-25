@@ -8,6 +8,10 @@ import { TranslateModule } from '@ngx-translate/core';
 import { PageMeta } from '../../core/api/api-response.model';
 import { PaginationComponent } from '../../shared/components/pagination.component';
 import { WardPickerComponent } from '../../shared/components/ward-picker.component';
+import { StatePanelComponent } from '../../shared/components/state-panel.component';
+import { SkeletonTableComponent } from '../../shared/components/skeleton.component';
+import { StatusBadgeComponent } from '../../shared/components/status-badge.component';
+import { statusTone } from '../../shared/util/status-tone.util';
 import { IssueCategory } from '../categories/category.models';
 import { CategoryService } from '../categories/category.service';
 import { AdminReportSummary, REPORT_STATUSES } from './reporting.models';
@@ -26,7 +30,17 @@ import { ReportingService } from './reporting.service';
 @Component({
   selector: 'app-reports-list',
   standalone: true,
-  imports: [RouterLink, FormsModule, DatePipe, TranslateModule, PaginationComponent, WardPickerComponent],
+  imports: [
+    RouterLink,
+    FormsModule,
+    DatePipe,
+    TranslateModule,
+    PaginationComponent,
+    WardPickerComponent,
+    StatePanelComponent,
+    SkeletonTableComponent,
+    StatusBadgeComponent,
+  ],
   templateUrl: './reports-list.component.html',
 })
 export class ReportsListComponent implements OnInit {
@@ -117,4 +131,7 @@ export class ReportsListComponent implements OnInit {
   applyFilters(): void {
     this.loadPage(0);
   }
+
+  /** Maps a status/priority token to a badge tone (shared design-system mapping). */
+  tone = statusTone;
 }

@@ -2,10 +2,43 @@
 /// (backend `com.taarifu.communications.api.dto`).
 library;
 
-/// A single feed item (backend `FeedItemDto`): a lean announcement snippet.
+/// The kind of a feed item, used purely to style its card (badge + accent).
+///
+/// WHY a closed enum with an [FeedItemKind.announcement] fallback: the feed is a
+/// mixed civic stream (announcements, public reports, petitions, polls). The
+/// backend tags each item with a `kind`; an unknown/absent tag degrades to a
+/// neutral announcement card rather than failing to render (EI-7, fail-safe).
+enum FeedItemKind {
+  /// An official announcement (the current backend default).
+  announcement,
+
+  /// A public citizen report surfaced in the area feed.
+  report,
+
+  /// A petition the citizen can view/sign.
+  petition,
+
+  /// A poll/survey the citizen can respond to.
+  poll;
+
+  /// Maps a backend `kind` string to a [FeedItemKind], defaulting to
+  /// [announcement] for anything unrecognised (forward-compatible).
+  static FeedItemKind fromCode(String? code) => switch (code?.toUpperCase()) {
+    'REPORT' => FeedItemKind.report,
+    'PETITION' => FeedItemKind.petition,
+    'POLL' || 'SURVEY' => FeedItemKind.poll,
+    _ => FeedItemKind.announcement,
+  };
+}
+
+/// A single feed item (backend `FeedItemDto`): a lean civic-update snippet.
 ///
 /// Items are deliberately lean (snippet only, no body) for the feature-phone
-/// data budget (PRD §15); the full announcement is fetched on tap.
+/// data budget (PRD §15); the full item is fetched on tap. The social fields
+/// ([kind], [authorName], [areaName], [imageUrl], [reactionCount]) are all
+/// OPTIONAL — the card renders elegantly whether or not the backend supplies
+/// them, so this stays forward-compatible with the existing `/feed` contract and
+/// never fabricates data the server did not send.
 class FeedItem {
   /// Creates a feed item.
   const FeedItem({
@@ -13,6 +46,11 @@ class FeedItem {
     required this.title,
     required this.snippet,
     this.publishedAt,
+    this.kind = FeedItemKind.announcement,
+    this.authorName,
+    this.areaName,
+    this.imageUrl,
+    this.reactionCount = 0,
   });
 
   /// Item public id (UUID string).
@@ -27,12 +65,39 @@ class FeedItem {
   /// Publish instant, or `null`.
   final DateTime? publishedAt;
 
-  /// Parses a feed-item node.
+  /// The item's kind (drives the card badge + accent); defaults to announcement.
+  final FeedItemKind kind;
+
+  /// The author/issuer name (e.g. the council or representative), or `null`.
+  final String? authorName;
+
+  /// The geographic area label (Kata/Wilaya) the item relates to, or `null`.
+  final String? areaName;
+
+  /// An optional thumbnail/cover image URL. Honoured only when data-saver is off
+  /// (the card decides) so a low-bundle citizen is never charged for imagery.
+  final String? imageUrl;
+
+  /// Engagement/reaction count, or 0 when the backend does not track it.
+  final int reactionCount;
+
+  /// Parses a feed-item node. Unknown/absent optional fields degrade gracefully.
   factory FeedItem.fromJson(Map<String, dynamic> json) => FeedItem(
     id: json['id'] as String,
     title: json['title'] as String? ?? '',
     snippet: json['snippet'] as String? ?? '',
     publishedAt: DateTime.tryParse(json['publishedAt'] as String? ?? ''),
+    kind: FeedItemKind.fromCode(json['kind'] as String?),
+    authorName: (json['authorName'] as String?)?.trim().isEmpty ?? true
+        ? null
+        : json['authorName'] as String?,
+    areaName: (json['areaName'] as String?)?.trim().isEmpty ?? true
+        ? null
+        : json['areaName'] as String?,
+    imageUrl: (json['imageUrl'] as String?)?.trim().isEmpty ?? true
+        ? null
+        : json['imageUrl'] as String?,
+    reactionCount: (json['reactionCount'] as num?)?.toInt() ?? 0,
   );
 }
 

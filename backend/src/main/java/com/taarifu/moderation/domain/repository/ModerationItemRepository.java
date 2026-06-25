@@ -3,10 +3,15 @@ package com.taarifu.moderation.domain.repository;
 import com.taarifu.moderation.domain.model.ModerationItem;
 import com.taarifu.moderation.api.FlagSubjectType;
 import com.taarifu.moderation.domain.model.enums.ModerationItemStatus;
+import com.taarifu.moderation.domain.repository.projection.CountByKeyProjection;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -40,4 +45,25 @@ public interface ModerationItemRepository extends JpaRepository<ModerationItem, 
      * @return the paged queue.
      */
     Page<ModerationItem> findByStatus(ModerationItemStatus status, Pageable pageable);
+
+    // --- Transparency report aggregations (§25, M-Phase 3; ADR-0018) — PII-free counts only -------------
+
+    /**
+     * Counts queue items opened in {@code [from, to)} split by origin — {@code AUTO_ASSISTED} vs
+     * {@code MANUAL} — the US-12.3 auto-vs-manual breakdown for the transparency report (§25). Returns
+     * code-keyed counts only; no subject, author, or content. The {@code auto_assisted} boolean is mapped to a
+     * stable string key in SQL so the report needs no post-processing.
+     *
+     * @param from inclusive window start (UTC).
+     * @param to   exclusive window end (UTC).
+     * @return one {@link CountByKeyProjection} per origin mode present in the window.
+     */
+    @Query("""
+            SELECT CASE WHEN i.autoAssisted = true THEN 'AUTO_ASSISTED' ELSE 'MANUAL' END AS key,
+                   COUNT(i) AS count
+            FROM ModerationItem i
+            WHERE i.createdAt >= :from AND i.createdAt < :to
+            GROUP BY CASE WHEN i.autoAssisted = true THEN 'AUTO_ASSISTED' ELSE 'MANUAL' END
+            """)
+    List<CountByKeyProjection> countByAssistModeInWindow(@Param("from") Instant from, @Param("to") Instant to);
 }

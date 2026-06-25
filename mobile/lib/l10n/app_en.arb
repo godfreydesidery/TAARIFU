@@ -26,6 +26,21 @@
   "feedTitle": "Home",
   "feedEmpty": "No updates yet. Follow areas or topics to see updates here.",
   "feedSignInPrompt": "Sign in to see updates relevant to you.",
+  "feedSignInButton": "Sign in",
+  "feedGreetingMorning": "Good morning",
+  "feedGreetingAfternoon": "Good afternoon",
+  "feedGreetingEvening": "Good evening",
+  "feedKindAnnouncement": "Announcement",
+  "feedKindReport": "Report",
+  "feedKindPetition": "Petition",
+  "feedKindPoll": "Poll",
+  "feedReadMore": "Read more",
+  "feedReactLike": "Support",
+  "feedReactCount": "{count}",
+  "@feedReactCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "feedShare": "Share",
 
   "myRepsTitle": "My Representatives",
   "myRepsPickWard": "Choose your ward",
@@ -44,6 +59,7 @@
   "errorUnknown": "Something went wrong. Please try again.",
 
   "navReport": "Report",
+  "navTrack": "Track",
   "navMyReports": "My reports",
   "navEngage": "Engage",
   "navProfile": "Profile",
@@ -219,6 +235,10 @@
   "settingsDataHeader": "Data usage",
   "settingsDataSaverLabel": "Data saver",
   "settingsDataSaverSubtitle": "Reduce heavy images and sync lightly on metered networks.",
+  "settingsAppearanceHeader": "Appearance",
+  "settingsThemeSystem": "Follow device",
+  "settingsThemeLight": "Light",
+  "settingsThemeDark": "Dark",
   "settingsVersionLabel": "App version",
   "settingsSignOutConfirm": "Are you sure you want to sign out? You'll need to sign in again."
 }

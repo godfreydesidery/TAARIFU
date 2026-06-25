@@ -6,6 +6,8 @@ import com.taarifu.analytics.api.dto.BreakdownDto;
 import com.taarifu.analytics.api.dto.FunnelDto;
 import com.taarifu.analytics.api.dto.LatencyStatsDto;
 import com.taarifu.analytics.api.dto.MetricPointDto;
+import com.taarifu.analytics.api.dto.TimeBucket;
+import com.taarifu.analytics.api.dto.TimeSeriesDto;
 import com.taarifu.analytics.api.dto.VolumeReportDto;
 import com.taarifu.analytics.application.service.AnalyticsQueryService;
 import com.taarifu.analytics.application.service.AnalyticsRecordingService;
@@ -61,11 +63,18 @@ class AnalyticsIntegrationTest extends AbstractPostgisIntegrationTest {
         events.deleteAll();
     }
 
-    /** Records a fact via the public API. */
+    /** Records a fact via the public API at the fixed {@link #base} instant. */
     private boolean record(AnalyticsEventType type, UUID geo, UUID cat, AnalyticsTier tier,
                            AnalyticsChannel channel, Long latency, BreachType breach, String outcome) {
+        return recordAt(base, type, geo, cat, tier, channel, latency, breach, outcome);
+    }
+
+    /** Records a fact via the public API at an explicit {@code occurredAt} (used by the trend tests). */
+    private boolean recordAt(Instant occurredAt, AnalyticsEventType type, UUID geo, UUID cat,
+                             AnalyticsTier tier, AnalyticsChannel channel, Long latency, BreachType breach,
+                             String outcome) {
         return recordingService.record(new RecordEventCommand(
-                UUID.randomUUID(), type, base, "ref-" + UUID.randomUUID(), geo, cat, tier, channel,
+                UUID.randomUUID(), type, occurredAt, "ref-" + UUID.randomUUID(), geo, cat, tier, channel,
                 AnalyticsRole.CITIZEN, latency, breach, outcome));
     }
 
@@ -175,6 +184,70 @@ class AnalyticsIntegrationTest extends AbstractPostgisIntegrationTest {
         assertThat(dto.total()).isEqualTo(3);
         assertThat(dto.points().get(0).key()).isEqualTo("REMOVE");
         assertThat(dto.points().get(0).count()).isEqualTo(2);
+    }
+
+    @Test
+    void reportsTrend_bucketsByDayViaDateTrunc() {
+        UUID ward = UUID.randomUUID();
+        Instant day1 = Instant.parse("2026-06-10T08:00:00Z");
+        Instant day1Later = Instant.parse("2026-06-10T20:00:00Z"); // same day, different hour
+        Instant day3 = Instant.parse("2026-06-12T09:00:00Z");
+        recordAt(day1, AnalyticsEventType.REPORT_FILED, ward, null, AnalyticsTier.T2, AnalyticsChannel.APP, null, null, null);
+        recordAt(day1Later, AnalyticsEventType.REPORT_FILED, ward, null, AnalyticsTier.T2, AnalyticsChannel.USSD, null, null, null);
+        recordAt(day3, AnalyticsEventType.REPORT_FILED, ward, null, AnalyticsTier.T2, AnalyticsChannel.APP, null, null, null);
+
+        TimeSeriesDto series = queryService.reportsTrend(TimeBucket.DAY, from, to, null, null);
+
+        // Two non-empty day buckets; the two same-day events collapse to one bucket (date_trunc to midnight).
+        assertThat(series.bucket()).isEqualTo(TimeBucket.DAY);
+        assertThat(series.points()).hasSize(2);
+        // Chronological order (oldest → newest) and correct per-bucket counts.
+        assertThat(series.points().get(0).bucketStart()).isEqualTo(Instant.parse("2026-06-10T00:00:00Z"));
+        assertThat(series.points().get(0).count()).isEqualTo(2);
+        assertThat(series.points().get(1).bucketStart()).isEqualTo(Instant.parse("2026-06-12T00:00:00Z"));
+        assertThat(series.points().get(1).count()).isEqualTo(1);
+    }
+
+    @Test
+    void slaBreachTrend_countsOnlyEscalationsWithBreachType() {
+        UUID ward = UUID.randomUUID();
+        Instant day1 = Instant.parse("2026-06-10T08:00:00Z");
+        Instant day2 = Instant.parse("2026-06-11T08:00:00Z");
+        // Two real SLA breaches on day1, one on day2.
+        recordAt(day1, AnalyticsEventType.REPORT_ESCALATED, ward, null, null, null, null, BreachType.TTFR, "SLA_BREACH");
+        recordAt(day1, AnalyticsEventType.REPORT_ESCALATED, ward, null, null, null, null, BreachType.TTR, "SLA_BREACH");
+        recordAt(day2, AnalyticsEventType.REPORT_ESCALATED, ward, null, null, null, null, BreachType.TTFR, "SLA_BREACH");
+        // A manual escalation WITHOUT a breach clock must NOT be counted in the SLA-breach trend.
+        recordAt(day2, AnalyticsEventType.REPORT_ESCALATED, ward, null, null, null, null, null, "MANUAL");
+        // A filed report is irrelevant to this trend.
+        recordAt(day1, AnalyticsEventType.REPORT_FILED, ward, null, AnalyticsTier.T2, AnalyticsChannel.APP, null, null, null);
+
+        TimeSeriesDto series = queryService.slaBreachTrend(TimeBucket.DAY, from, to, null, null);
+
+        assertThat(series.metric()).isEqualTo("SLA_BREACH");
+        assertThat(series.points()).hasSize(2);
+        assertThat(series.points().get(0).count()).isEqualTo(2); // day1 breaches
+        assertThat(series.points().get(1).count()).isEqualTo(1); // day2 breach (manual escalation excluded)
+    }
+
+    @Test
+    void overview_composesHeadlineKpisOverOneWindow() {
+        UUID ward = UUID.randomUUID();
+        UUID cat = UUID.randomUUID();
+        record(AnalyticsEventType.REPORT_FILED, ward, cat, AnalyticsTier.T2, AnalyticsChannel.USSD, null, null, null);
+        record(AnalyticsEventType.REPORT_FILED, ward, cat, AnalyticsTier.T2, AnalyticsChannel.APP, null, null, null);
+        record(AnalyticsEventType.REPORT_RESOLVED, ward, cat, AnalyticsTier.T2, AnalyticsChannel.APP, 300L, null, null);
+        record(AnalyticsEventType.ACCOUNT_SIGNED_UP, ward, null, AnalyticsTier.T1, AnalyticsChannel.APP, null, null, null);
+
+        var overview = queryService.overview(from, to, null);
+
+        assertThat(overview.from()).isEqualTo(from);
+        assertThat(overview.to()).isEqualTo(to);
+        assertThat(overview.reportsVolumeTotal()).isEqualTo(2);
+        assertThat(overview.ttr().sampleCount()).isEqualTo(1);
+        assertThat(overview.ttr().p50Seconds()).isEqualTo(300.0);
+        assertThat(overview.channelMix().total()).isEqualTo(2); // two filed reports across channels
+        assertThat(overview.verificationFunnel().steps().get(0).count()).isEqualTo(1); // one signup
     }
 
     @Test

@@ -41,6 +41,38 @@ public interface TokenLedgerApi {
                        String refEntityType, UUID refEntityId, String idempotencyKey);
 
     /**
+     * Credits a settled <b>purchase top-up</b> (mobile-money/card) of spendable convenience tokens to an
+     * owner's wallet, <b>idempotently</b> on {@code paymentReference} (PRD §23.4/§23.6; ADR-0015 §4). This is
+     * the typed cross-module seam the {@code payments} module calls on a SUCCEEDED settlement (replacing the
+     * temporary reflective bridge); it appends a {@code PURCHASE}-kind append-only ledger entry and advances
+     * the wallet's cached balance in the same transaction.
+     *
+     * <p><b>🔒 Civic-integrity fence (binding — D18, PRD §23.5):</b> a top-up adds <b>only</b> spendable
+     * convenience tokens — it MUST NOT grant a role, a vote, a signature, a rating, a poll outcome,
+     * routing/SLA/priority, or a verification status. There is deliberately <b>no balance returned</b> and no
+     * path from this method to any democratic-weight effect, and — like the rest of this API — no binding
+     * democratic action may consult a balance through it. A purchased token buys convenience/reach only,
+     * never democratic weight. This method is the convenience-credit door; the democratic-weight door does
+     * not exist on this contract by design.</p>
+     *
+     * <p><b>Idempotency:</b> {@code paymentReference} is the credit's unique key (the payments
+     * {@code credit_event_id}). A redelivered/out-of-order mobile-money webhook or a retried credit under the
+     * same reference credits the wallet <b>exactly once</b> — a replay credits nothing (no double-credit,
+     * PRD §23.5 anti-fraud).</p>
+     *
+     * @param ownerType        owner class (USER/ORGANIZATION).
+     * @param accountPublicId  the wallet owner's public id (opaque UUID; never a national/voter ID — no PII).
+     * @param amount           positive number of tokens purchased.
+     * @param paymentReference the originating payment's settlement/credit reference; doubles as the
+     *                         idempotency key (a machine reference, never PII).
+     * @return {@code true} (a credit is posted, or idempotently confirmed already-posted under this
+     *         reference). The wallet is correctly credited exactly once in both cases.
+     * @throws com.taarifu.common.error.ApiException if {@code amount <= 0} (a top-up of zero/negative tokens
+     *         is rejected).
+     */
+    boolean topUp(WalletOwnerType ownerType, UUID accountPublicId, long amount, String paymentReference);
+
+    /**
      * Credits an earned reward for an <b>already-validated</b> civic behaviour, honouring the per-behaviour
      * anti-farming cap and ledger idempotency (PRD §23.3, §23.5).
      *

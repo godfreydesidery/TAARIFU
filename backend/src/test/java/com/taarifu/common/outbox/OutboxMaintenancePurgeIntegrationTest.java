@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -45,6 +46,10 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  */
 @SpringBootTest
 @ActiveProfiles("test")
+// Disable the background @Scheduled OutboxRelay for this class: it directly seeds and deletes outbox_event
+// rows, so the 1s poller would otherwise claim/version-bump the seeded PENDING rows concurrently and cause a
+// StaleObjectStateException. This test exercises the purge transaction boundary, not dispatch.
+@TestPropertySource(properties = "taarifu.outbox.relay.enabled=false")
 class OutboxMaintenancePurgeIntegrationTest extends AbstractPostgisIntegrationTest {
 
     private static final Instant NOW = Instant.parse("2026-06-24T12:00:00Z");

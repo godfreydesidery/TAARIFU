@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/network/failure_messages.dart';
+import '../../../core/theme/app_palette.dart';
 import '../../../core/widgets/status_views.dart';
 import '../../../features/geography/data/geography_models.dart';
 import '../../../features/geography/data/geography_repository.dart';
@@ -156,149 +157,221 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     ReportFormState state,
   ) {
     final submitting = state.status == ReportFormStatus.submitting;
+    final scheme = Theme.of(context).colorScheme;
     return Form(
       key: _formKey,
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppPalette.spaceLg),
         children: [
-          DropdownButtonFormField<IssueCategory>(
-            initialValue: _category,
-            isExpanded: true,
-            decoration: InputDecoration(
-              labelText: l10n.reportCategoryLabel,
-              hintText: l10n.reportCategoryHint,
-            ),
-            items: [
-              for (final c in state.categories)
-                DropdownMenuItem(value: c, child: Text(c.name)),
-            ],
-            validator: (v) => v == null ? l10n.requiredField : null,
-            onChanged: submitting
-                ? null
-                : (v) => setState(() {
-                    _category = v;
-                    if (v?.forcePrivate ?? false) _visibility = 'PRIVATE';
-                  }),
-          ),
-          if (_category?.sensitive ?? false)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                l10n.reportSensitiveNote,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+          // --- Step 1: category --------------------------------------------
+          _SectionCard(
+            step: 1,
+            icon: Icons.category_outlined,
+            title: l10n.reportCategoryLabel,
+            child: FormField<IssueCategory>(
+              initialValue: _category,
+              validator: (v) => v == null ? l10n.requiredField : null,
+              builder: (field) => Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: AppPalette.spaceSm,
+                    runSpacing: AppPalette.spaceSm,
+                    children: [
+                      for (final c in state.categories)
+                        ChoiceChip(
+                          label: Text(c.name),
+                          selected: _category == c,
+                          onSelected: submitting
+                              ? null
+                              : (_) {
+                                  setState(() {
+                                    _category = c;
+                                    if (c.forcePrivate) _visibility = 'PRIVATE';
+                                  });
+                                  field.didChange(c);
+                                },
+                        ),
+                    ],
+                  ),
+                  if (field.hasError)
+                    Padding(
+                      padding: const EdgeInsets.only(top: AppPalette.spaceSm),
+                      child: Text(
+                        field.errorText!,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.error,
+                        ),
+                      ),
+                    ),
+                  if (_category?.sensitive ?? false)
+                    Padding(
+                      padding: const EdgeInsets.only(top: AppPalette.spaceSm),
+                      child: Text(
+                        l10n.reportSensitiveNote,
+                        style: TextStyle(color: scheme.error),
+                      ),
+                    ),
+                  if ((_category?.defaultSlaTtfrMinutes ?? 0) > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: AppPalette.spaceSm),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.schedule_outlined,
+                            size: 16,
+                            color: scheme.primary,
+                          ),
+                          const SizedBox(width: AppPalette.spaceXs),
+                          Expanded(
+                            child: Text(
+                              l10n.reportSlaNote(
+                                (_category!.defaultSlaTtfrMinutes / 60).ceil(),
+                              ),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
               ),
             ),
-          if ((_category?.defaultSlaTtfrMinutes ?? 0) > 0)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                l10n.reportSlaNote(
-                  (_category!.defaultSlaTtfrMinutes / 60).ceil(),
-                ),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-          const SizedBox(height: 16),
-          TextFormField(
-            controller: _titleController,
-            decoration: InputDecoration(labelText: l10n.reportTitleLabel),
-            maxLength: 200,
-            validator: (v) =>
-                (v == null || v.trim().isEmpty) ? l10n.requiredField : null,
           ),
-          const SizedBox(height: 8),
-          TextFormField(
-            controller: _descController,
-            decoration: InputDecoration(
-              labelText: l10n.reportDescriptionLabel,
-              helperText: l10n.reportVoiceHint,
-              // Voice-to-text seam (EI-17) — disabled until the engine is wired.
-              suffixIcon: IconButton(
-                tooltip: l10n.reportVoiceHint,
-                icon: const Icon(Icons.mic_none),
-                onPressed: null,
-              ),
-            ),
-            maxLines: 4,
-            maxLength: 4000,
-            validator: (v) =>
-                (v == null || v.trim().isEmpty) ? l10n.requiredField : null,
-          ),
-          const SizedBox(height: 8),
-          // Photo-attach (EI-8): live camera/gallery capture seam. Captured items
-          // queue their refs in the draft (local until the upload endpoint lands).
-          _AttachmentsSection(
-            attachments: state.attachments,
-            busy: state.attachmentBusy,
-            submitting: submitting,
-          ),
-          const SizedBox(height: 16),
-          // Ward chosen through the manual ward picker (no hand-typed UUID).
-          Card(
-            margin: EdgeInsets.zero,
-            child: ListTile(
-              leading: const Icon(Icons.location_city_outlined),
-              title: Text(
-                _ward == null
-                    ? l10n.reportWardLabel
-                    : l10n.wardPickerChosenLabel(_ward!.qualifiedLabel),
-              ),
-              trailing: TextButton(
-                onPressed: submitting ? null : _pickWard,
-                child: Text(
-                  _ward == null
-                      ? l10n.wardPickerChooseButton
-                      : l10n.wardPickerChangeButton,
-                ),
-              ),
-              onTap: submitting ? null : _pickWard,
-            ),
-          ),
-          const SizedBox(height: 8),
-          // GPS resolve seam (EI-7) — disabled until geolocator + resolve wired.
-          OutlinedButton.icon(
-            onPressed: null,
-            icon: const Icon(Icons.my_location),
-            label: Text(l10n.reportUseGpsButton),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            l10n.reportVisibilityLabel,
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          RadioGroup<String>(
-            groupValue: _visibility,
-            // RadioGroup.onChanged is non-nullable; when the choice is locked
-            // (submitting, or a sensitive category forced PRIVATE) we ignore it.
-            onChanged: (v) {
-              if (submitting || _forcedPrivate || v == null) return;
-              setState(() => _visibility = v);
-            },
+          const SizedBox(height: AppPalette.spaceMd),
+          // --- Step 2: what happened ---------------------------------------
+          _SectionCard(
+            step: 2,
+            icon: Icons.edit_note_outlined,
+            title: l10n.reportTitleLabel,
             child: Column(
               children: [
-                RadioListTile<String>(
-                  value: 'PUBLIC',
-                  title: Text(l10n.reportVisibilityPublic),
+                TextFormField(
+                  controller: _titleController,
+                  decoration: InputDecoration(labelText: l10n.reportTitleLabel),
+                  maxLength: 200,
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? l10n.requiredField
+                      : null,
                 ),
-                RadioListTile<String>(
-                  value: 'PRIVATE',
-                  title: Text(l10n.reportVisibilityPrivate),
+                const SizedBox(height: AppPalette.spaceSm),
+                TextFormField(
+                  controller: _descController,
+                  decoration: InputDecoration(
+                    labelText: l10n.reportDescriptionLabel,
+                    helperText: l10n.reportVoiceHint,
+                    // Voice-to-text seam (EI-17) — disabled until wired.
+                    suffixIcon: IconButton(
+                      tooltip: l10n.reportVoiceHint,
+                      icon: const Icon(Icons.mic_none),
+                      onPressed: null,
+                    ),
+                  ),
+                  maxLines: 4,
+                  maxLength: 4000,
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? l10n.requiredField
+                      : null,
                 ),
               ],
             ),
           ),
-          if (_category?.sensitive ?? false)
-            SwitchListTile(
-              value: _anonymous,
-              onChanged: submitting
-                  ? null
-                  : (v) => setState(() => _anonymous = v),
-              title: Text(l10n.reportAnonymousLabel),
+          const SizedBox(height: AppPalette.spaceMd),
+          // --- Step 3: photos (optional) -----------------------------------
+          _SectionCard(
+            step: 3,
+            icon: Icons.add_a_photo_outlined,
+            title: l10n.reportPhotoLabel,
+            // Photo-attach (EI-8): live camera/gallery capture seam. Captured
+            // items queue their refs in the draft (local until upload lands).
+            child: _AttachmentsSection(
+              attachments: state.attachments,
+              busy: state.attachmentBusy,
+              submitting: submitting,
             ),
-          const SizedBox(height: 16),
-          FilledButton(
+          ),
+          const SizedBox(height: AppPalette.spaceMd),
+          // --- Step 4: location --------------------------------------------
+          _SectionCard(
+            step: 4,
+            icon: Icons.place_outlined,
+            title: l10n.reportWardLabel,
+            child: Column(
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.location_city_outlined),
+                  title: Text(
+                    _ward == null
+                        ? l10n.wardPickerChooseButton
+                        : l10n.wardPickerChosenLabel(_ward!.qualifiedLabel),
+                  ),
+                  trailing: TextButton(
+                    onPressed: submitting ? null : _pickWard,
+                    child: Text(
+                      _ward == null
+                          ? l10n.wardPickerChooseButton
+                          : l10n.wardPickerChangeButton,
+                    ),
+                  ),
+                  onTap: submitting ? null : _pickWard,
+                ),
+                // GPS resolve seam (EI-7) — disabled until geolocator wired.
+                OutlinedButton.icon(
+                  onPressed: null,
+                  icon: const Icon(Icons.my_location),
+                  label: Text(l10n.reportUseGpsButton),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppPalette.spaceMd),
+          // --- Step 5: visibility ------------------------------------------
+          _SectionCard(
+            step: 5,
+            icon: Icons.visibility_outlined,
+            title: l10n.reportVisibilityLabel,
+            child: Column(
+              children: [
+                RadioGroup<String>(
+                  groupValue: _visibility,
+                  // onChanged is non-nullable; when the choice is locked
+                  // (submitting, or a sensitive category forced PRIVATE) ignore.
+                  onChanged: (v) {
+                    if (submitting || _forcedPrivate || v == null) return;
+                    setState(() => _visibility = v);
+                  },
+                  child: Column(
+                    children: [
+                      RadioListTile<String>(
+                        contentPadding: EdgeInsets.zero,
+                        value: 'PUBLIC',
+                        title: Text(l10n.reportVisibilityPublic),
+                      ),
+                      RadioListTile<String>(
+                        contentPadding: EdgeInsets.zero,
+                        value: 'PRIVATE',
+                        title: Text(l10n.reportVisibilityPrivate),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_category?.sensitive ?? false)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: _anonymous,
+                    onChanged: submitting
+                        ? null
+                        : (v) => setState(() => _anonymous = v),
+                    title: Text(l10n.reportAnonymousLabel),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppPalette.spaceXl),
+          FilledButton.icon(
             onPressed: submitting ? null : () => _submit(l10n),
-            child: submitting
+            icon: submitting
                 ? const SizedBox(
                     height: 20,
                     width: 20,
@@ -307,8 +380,10 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                       color: Colors.white,
                     ),
                   )
-                : Text(l10n.reportSubmitButton),
+                : const Icon(Icons.send_rounded),
+            label: Text(l10n.reportSubmitButton),
           ),
+          const SizedBox(height: AppPalette.spaceXl),
         ],
       ),
     );
@@ -364,6 +439,66 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 }
 
+/// An elegant, numbered section card wrapping one step of the report flow. The
+/// number badge gives the form a clear, low-literacy-friendly "step N of the
+/// form" rhythm (icons + numerals) without a heavy modal stepper that would be
+/// fiddly on a small screen.
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    required this.step,
+    required this.icon,
+    required this.title,
+    required this.child,
+  });
+
+  final int step;
+  final IconData icon;
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppPalette.spaceLg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 14,
+                  backgroundColor: scheme.primary.withValues(alpha: 0.14),
+                  foregroundColor: scheme.primary,
+                  child: Text(
+                    '$step',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppPalette.spaceMd),
+                Icon(icon, size: 20, color: scheme.onSurfaceVariant),
+                const SizedBox(width: AppPalette.spaceSm),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppPalette.spaceMd),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// The attachment capture + preview block: camera/gallery buttons and a
 /// thumbnail strip of held items, each removable. Reads the cubit directly so it
 /// stays a small, const-friendly widget.
@@ -386,8 +521,6 @@ class _AttachmentsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(l10n.reportPhotoLabel, style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 8),
         Row(
           children: [
             Expanded(

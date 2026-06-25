@@ -18,5 +18,19 @@
  * <p>Integrity invariant (D16, §25.8): a moderator may not moderate their own content, nor handle an
  * appeal of their own action — enforced via {@code @taarifuAuthz.isNotSelf(...)} on the queue-action
  * endpoint and a distinct-moderator check on the appeal-decision endpoint, both audited.</p>
+ *
+ * <p><b>Auto-assist (US-12.3, UC-H05, EI-18, D-Q8; ADR-0018):</b> the automated half of the hybrid model.
+ * A pluggable {@code ContentSafety} port ({@code HeuristicContentSafetyScorer} default — Swahili+English,
+ * evasion-normalised, conservative-threshold, zero external calls; a real ML adapter swaps in later) scores
+ * content; {@code AutoAssistService} <b>holds-and-prioritises</b> risky content for human review (reusing the
+ * §25.8 {@code SeverityPolicy} SLA chain) and emits an {@code auto_moderation_triaged} fact. It is <b>assist
+ * only — it never auto-removes</b> (R21): only the D16-guarded human action path can take a takedown, and when
+ * no provider scores anything everything routes to human moderators (EI-18 degradation). The human pipeline is
+ * always the floor.</p>
+ *
+ * <p><b>Transparency reporting (§18, §25, M-Phase 3; ADR-0018):</b> {@code TransparencyReportService} +
+ * {@code GET /moderation/transparency} aggregate moderation's own (append-only, tamper-evident) tables into a
+ * <b>PII-free</b> report — action mix, appeal outcomes, flags-by-reason, and the auto-vs-manual split — keyed
+ * only on codes/enums (no person, location, or content), safe to publish.</p>
  */
 package com.taarifu.moderation;

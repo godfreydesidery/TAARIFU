@@ -1,0 +1,287 @@
+# =============================================================================
+# Taarifu Helm chart — DEFAULT values (safe, prod-shaped, NO secrets).
+#
+# Every secret is referenced by the NAME of a Kubernetes Secret (existingSecret),
+# NEVER an inline value — the Secret itself is created out-of-band via Sealed
+# Secrets / External Secrets (see deploy/helm/secrets/ and deploy/README §5).
+# Overriding a *.value in here with a real secret would commit a secret — DO NOT.
+#
+# Grounding: application.yml TAARIFU_* env surface, ARCHITECTURE §9, PRD §15/§18,
+# deploy/README §5/§7. Override per-env with values-staging.yaml / values-prod.yaml.
+# =============================================================================
+
+# Stamped onto pod labels / Prometheus external labels so dashboards slice per env.
+environment: prod
+
+nameOverride: ""
+fullnameOverride: ""
+
+# -----------------------------------------------------------------------------
+# Backend (Spring Boot modular monolith) — the API. :8081, context-path /api/v1.
+# -----------------------------------------------------------------------------
+backend:
+  image:
+    # registry/repository:tag — tag is OVERRIDDEN at deploy time with the immutable
+    # git-sha CI built+scanned (deploy/README §5). Never deploy :latest.
+    repository: ghcr.io/REPLACE_ORG/taarifu-backend
+    tag: ""                 # MUST be set via --set image.tag=<git-sha>; empty fails the deploy guard
+    pullPolicy: IfNotPresent
+
+  # Start at 2 for HA (PodDisruptionBudget needs >1 to allow voluntary evictions).
+  replicaCount: 2
+
+  # Container port = SERVER_PORT (application.yml default 8081).
+  containerPort: 8081
+  contextPath: /api/v1
+
+  # JVM container-awareness: cap heap as a % of the cgroup memory limit so the JVM
+  # never overruns the limit and gets OOMKilled (RUNBOOK #jvm).
+  jvmOpts: "-XX:MaxRAMPercentage=70 -XX:InitialRAMPercentage=40 -XX:+ExitOnOutOfMemoryError"
+
+  # Resource requests/limits (PRD §15 — must be set so the scheduler + HPA work).
+  # Tune against the load test (P1). Requests sized for a JRE + modular monolith.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 768Mi
+    limits:
+      cpu: "2"
+      memory: 1536Mi
+
+  # --- Probes (deploy/README §7; ARCHITECTURE §9). All under the context-path. ---
+  # startup: gives a slow first boot (Flyway migrate + validate) up to ~150s before
+  #          liveness/readiness begin — so a slow migration never gets the pod killed.
+  # liveness: cheap; liveness group EXCLUDES external deps (a slow DB must not kill the pod).
+  # readiness: includes DB (readiness group = readinessState,db) so traffic only routes
+  #            to a pod that can actually serve (deploy/README §7).
+  probes:
+    startup:
+      path: /api/v1/actuator/health/liveness
+      periodSeconds: 5
+      failureThreshold: 30        # ~150s budget for Flyway migrate+validate on first boot
+    liveness:
+      path: /api/v1/actuator/health/liveness
+      initialDelaySeconds: 0
+      periodSeconds: 15
+      timeoutSeconds: 3
+      failureThreshold: 3
+    readiness:
+      path: /api/v1/actuator/health/readiness
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+  # --- Horizontal Pod Autoscaler (PRD §15 scale; capacity headroom for spikes). ---
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    # Conservative scale-down so an announcement-burst spike (PRD §13) doesn't flap.
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+      scaleUp:
+        stabilizationWindowSeconds: 30
+
+  # PodDisruptionBudget — keep at least 1 pod during voluntary disruptions (node drain).
+  pdb:
+    enabled: true
+    minAvailable: 1
+
+  # Graceful shutdown: give in-flight requests + the outbox relay time to settle.
+  terminationGracePeriodSeconds: 45
+
+  # --- Non-secret application config (12-factor; mirrors application.yml selectors). ---
+  # Secrets are NOT here — they come from the referenced Secrets below.
+  config:
+    SPRING_PROFILES_ACTIVE: prod
+    SERVER_PORT: "8081"
+    # Rate-limit backend MUST be redis in multi-instance prod (application.yml W3-2 / TR-3).
+    TAARIFU_RATELIMIT_BACKEND: redis
+    TAARIFU_JWT_ISSUER: taarifu
+    TAARIFU_JWT_AUDIENCE: taarifu-clients
+    TAARIFU_GEOCODER: postgis
+    TAARIFU_VERIFICATION_PROVIDER: operator-assisted
+    # MFA second factor MUST stay enforced in prod (N-4 / RUNBOOK #mfa). Never "false".
+    TAARIFU_MFA_ENFORCED: "true"
+    # Communications adapters default to the safe logging stub; flip to real providers
+    # per-env once credentials + shortcode are live (LAUNCH-READINESS §2.2D, R27).
+    TAARIFU_SMS_PROVIDER: logging
+    TAARIFU_PUSH_PROVIDER: logging
+    TAARIFU_EMAIL_PROVIDER: logging
+
+  # --- CORS allow-list (PRD §18) — explicit prod origins ONLY, never '*'+credentials. ---
+  corsOrigins: "https://admin.taarifu.example,https://app.taarifu.example"
+
+  # --- Secret references (names of K8s Secrets created by Sealed/External Secrets). ---
+  # The chart maps documented keys from these Secrets onto the TAARIFU_* env. The
+  # Secret OBJECTS are never created by this chart (no secret in source).
+  secrets:
+    # Required core secrets (backend fails fast at boot if JWT/crypto/DB are absent).
+    core:
+      existingSecret: taarifu-backend-secrets   # keys: TAARIFU_JWT_SECRET, TAARIFU_CRYPTO_DEV_KEY, TAARIFU_DB_PASSWORD
+    # Optional integration secrets — only referenced when the matching provider is enabled.
+    integrations:
+      existingSecret: taarifu-integration-secrets  # keys: TAARIFU_SMS_API_KEY, TAARIFU_USSD_GATEWAY_SECRET, TAARIFU_MEDIA_SCANNER_SECRET, ...
+      enabled: false
+
+  # --- Actuator/Prometheus scrape annotations (ARCHITECTURE §9; internal-only). ---
+  metrics:
+    enabled: true
+    path: /api/v1/actuator/prometheus
+    # prometheus-operator ServiceMonitor (set true if you run the operator).
+    serviceMonitor:
+      enabled: false
+      interval: 15s
+
+  service:
+    type: ClusterIP
+    port: 8081
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -----------------------------------------------------------------------------
+# Database — PostgreSQL 16 + PostGIS 3.4.
+# DEFAULT OFF: prefer a MANAGED, in-country Postgres (residency D-Q9; durability +
+# backups handled by the provider). The in-cluster option exists for dev clusters
+# and air-gapped in-country racks where no managed PostGIS exists (ADR-0021).
+# -----------------------------------------------------------------------------
+postgresql:
+  # When false, the backend connects to an EXTERNAL DB via external.url below.
+  deployInCluster: false
+
+  # External (managed) DB connection — used when deployInCluster=false.
+  external:
+    # Host/port/db of the managed in-country PostGIS. The PASSWORD comes from the
+    # core Secret (TAARIFU_DB_PASSWORD), never here.
+    host: REPLACE_DB_HOST
+    port: 5432
+    database: taarifu
+    username: taarifu
+
+  # In-cluster StatefulSet settings (only when deployInCluster=true).
+  image:
+    repository: postgis/postgis
+    tag: "16-3.4"
+  database: taarifu
+  username: taarifu
+  # Password sourced from the core Secret key TAARIFU_DB_PASSWORD (shared with backend).
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: ""        # "" = cluster default; set to an in-country, encrypted-at-rest class
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+# -----------------------------------------------------------------------------
+# Redis 7 — OTP / idempotency / USSD session state + the multi-instance limiters.
+# In-cluster single replica is fine for MVP (state is short-TTL + reconstructable).
+# -----------------------------------------------------------------------------
+redis:
+  deployInCluster: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+  # AOF persistence so OTP/idempotency survive a restart (mirrors compose).
+  appendOnly: true
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # External Redis (when deployInCluster=false).
+  external:
+    host: REPLACE_REDIS_HOST
+    port: 6379
+
+# -----------------------------------------------------------------------------
+# Web admin — Angular 18 static bundle served by nginx.
+# The image is built from web-admin/ (a separate CI artefact). API calls go to the
+# backend Service via the ingress path /api/v1 (no hardcoded backend URL in the SPA).
+# -----------------------------------------------------------------------------
+webAdmin:
+  enabled: true
+  image:
+    repository: ghcr.io/REPLACE_ORG/taarifu-web-admin
+    tag: ""                 # set to the matching git-sha at deploy time
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  containerPort: 8080       # nginx listens on 8080 (non-root)
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+  service:
+    type: ClusterIP
+    port: 80
+
+# -----------------------------------------------------------------------------
+# Ingress — TLS terminates here; routes /api/v1 -> backend, / -> web-admin.
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    # cert-manager issues + rotates the TLS cert (no manual cert handling).
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Compress responses for Tanzania's expensive/intermittent data (deploy/README data-budget).
+    nginx.ingress.kubernetes.io/use-gzip: "true"
+    # Restrict /actuator/{metrics,prometheus} to the scrape net at the edge (deploy/README §10);
+    # health/info stay public. (Path-level allow-list also enforced by NetworkPolicy below.)
+  hosts:
+    - host: admin.taarifu.example
+      paths:
+        - path: /api/v1
+          pathType: Prefix
+          service: backend
+        - path: /
+          pathType: Prefix
+          service: web-admin
+  tls:
+    - hosts:
+        - admin.taarifu.example
+      secretName: taarifu-tls   # populated by cert-manager
+
+# -----------------------------------------------------------------------------
+# NetworkPolicy — deny-by-default; only the paths we need (PRD §18 defence-in-depth).
+# -----------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+  # CIDR/namespace the Prometheus scraper lives in (so only it can hit /actuator/prometheus).
+  monitoringNamespace: monitoring
+
+# -----------------------------------------------------------------------------
+# Pod-level security context (non-root, read-only FS, drop caps — defence in depth).
+# -----------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+imagePullSecrets: []

@@ -1,0 +1,100 @@
+// =============================================================================
+// Taarifu Admin — Bootstrap variable overrides
+// -----------------------------------------------------------------------------
+// Maps our design tokens onto Bootstrap 5.3's SCSS variables BEFORE Bootstrap is
+// imported, so every native Bootstrap component (buttons, cards, forms, tables,
+// badges, alerts, nav) inherits the brand without per-component CSS. This keeps
+// us on the Bootstrap lineage the legacy console used (CLAUDE.md §5) while
+// modernising the look. Only the dials that change the brand are touched —
+// Bootstrap's defaults are otherwise kept (KISS).
+// =============================================================================
+@use 'tokens' as *;
+
+// --- Theme colours -----------------------------------------------------------
+$primary:   $brand-primary;
+$secondary: $neutral-500;
+$success:   $status-success;
+$info:      $status-info;
+$warning:   $status-warning;
+$danger:    $status-danger;
+$light:     $neutral-50;
+$dark:      $neutral-900;
+
+// --- Typography --------------------------------------------------------------
+$font-family-sans-serif: $font-family-base;
+$font-family-monospace:  $font-family-mono;
+$font-size-root:         $fs-root;
+$font-size-base:         1rem;
+$headings-font-weight:   $fw-semibold;
+$headings-line-height:   $lh-tight;
+$line-height-base:       $lh-base;
+
+// --- Surfaces & body ---------------------------------------------------------
+$body-bg:        $neutral-25;
+$body-color:     $neutral-800;
+$body-secondary-color: $neutral-500;
+$border-color:   $neutral-200;
+
+// --- Shape -------------------------------------------------------------------
+$border-radius-sm: $radius-sm;
+$border-radius:    $radius;
+$border-radius-lg: $radius-lg;
+$border-radius-xl: $radius-xl;
+
+// --- Links -------------------------------------------------------------------
+$link-color:            $brand-primary-600;
+$link-hover-color:      $brand-primary-700;
+$link-decoration:       none;
+$link-hover-decoration: underline;
+
+// --- Components ---------------------------------------------------------------
+// Cards: soft border + our radius; shadow applied via utility/classes.
+$card-border-color:        $neutral-200;
+$card-border-radius:       $radius-lg;
+$card-cap-bg:              transparent;
+$card-spacer-y:            $space-4;
+$card-spacer-x:            $space-4;
+
+// Buttons: a touch more padding + weight for a confident, tappable target
+// (WCAG 2.5.5 target size; usable on a cheap Android).
+$btn-font-weight:          $fw-medium;
+$btn-border-radius:        $radius;
+$btn-border-radius-sm:     $radius-sm;
+$btn-border-radius-lg:     $radius;
+$btn-focus-width:          0.2rem;
+
+// Forms: clearer focus ring (the brand colour), rounded controls.
+$input-border-color:       $neutral-300;
+$input-border-radius:      $radius;
+$input-border-radius-sm:   $radius-sm;
+$input-focus-border-color: $brand-primary-300;
+$input-focus-box-shadow:   0 0 0 0.2rem rgba($brand-primary, 0.18);
+$form-label-font-weight:   $fw-medium;
+$form-label-margin-bottom: $space-1;
+
+// Tables: airy rows, subtle hover, light striping.
+$table-cell-padding-y:     0.6rem;
+$table-cell-padding-x:     0.75rem;
+$table-border-color:       $neutral-100;
+$table-hover-bg:           $brand-primary-100;
+$table-striped-bg:         rgba($neutral-100, 0.5);
+
+// Badges: pill-ish, medium weight (reads as a "chip" not a shout).
+$badge-font-weight:        $fw-medium;
+$badge-border-radius:      $radius-sm;
+$badge-padding-y:          0.32em;
+$badge-padding-x:          0.6em;
+
+// Alerts: our radius.
+$alert-border-radius:      $radius;
+
+// Nav / dropdown / toast polish.
+$dropdown-border-color:    $neutral-200;
+$dropdown-border-radius:   $radius;
+$dropdown-box-shadow:      $shadow;
+$toast-border-radius:      $radius;
+$toast-box-shadow:         $shadow;
+
+// Focus ring colour app-wide (accessibility — visible keyboard focus).
+$focus-ring-color:         rgba($brand-primary, 0.30);
+$focus-ring-width:         0.2rem;

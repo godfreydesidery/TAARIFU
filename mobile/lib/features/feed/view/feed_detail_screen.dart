@@ -16,6 +16,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/network/failure_messages.dart';
+import '../../../core/theme/app_palette.dart';
+import '../../../core/util/relative_time.dart';
 import '../../../l10n/app_localizations.dart';
 import '../bloc/announcement_detail_cubit.dart';
 import '../data/feed_models.dart';
@@ -46,20 +48,50 @@ class FeedDetailScreen extends StatelessWidget {
               announcement == null;
           final failed = state.status == AnnouncementDetailStatus.failure;
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppPalette.spaceLg),
             children: [
+              // A small kind + relative-time header so the detail matches the
+              // social feed card's voice.
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppPalette.spaceMd,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(
+                        AppPalette.radiusChip,
+                      ),
+                    ),
+                    child: Text(
+                      l10n.feedKindAnnouncement,
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  if (publishedAt != null) ...[
+                    const SizedBox(width: AppPalette.spaceMd),
+                    Text(
+                      formatRelativeTime(l10n, publishedAt),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: AppPalette.spaceLg),
               Text(title, style: Theme.of(context).textTheme.headlineSmall),
-              if (publishedAt != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  publishedAt.toLocal().toString().split('.').first,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-              const SizedBox(height: 16),
+              const SizedBox(height: AppPalette.spaceLg),
               if (loading)
                 const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
+                  padding: EdgeInsets.symmetric(vertical: AppPalette.spaceSm),
                   child: LinearProgressIndicator(),
                 ),
               Text(body, style: Theme.of(context).textTheme.bodyLarge),

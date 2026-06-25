@@ -1,0 +1,18 @@
+# Taarifu perf — never commit real tokens or local result artefacts.
+# (CLAUDE.md §12: no secrets in source.)
+
+# Real token pools (only the *.example.csv templates are committed).
+k6/data/citizen-tokens.csv
+k6/data/*-tokens.csv
+!k6/data/*.example.csv
+
+# Local env overrides.
+.env
+*.local.env
+
+# k6 result outputs.
+results/
+*.json.gz
+summary.json
+summary.html
+*.csv.out

@@ -109,6 +109,61 @@ class WalletServiceTest {
                 .isEqualTo(ErrorCode.BAD_REQUEST);
     }
 
+    /**
+     * A settled purchase top-up appends a {@code PURCHASE} ledger entry of exactly the purchased amount and
+     * advances the cached balance — the credit side of the mobile-money flow (ADR-0015; PRD §23.4).
+     */
+    @Test
+    void purchaseTopUp_creditsPurchaseEntry() {
+        Wallet wallet = walletWithId(7L);
+        when(ledger.findByIdempotencyKey("credit-evt-1")).thenReturn(Optional.empty());
+        when(wallets.findForUpdate(WalletOwnerType.USER, ownerId)).thenReturn(Optional.of(wallet));
+        when(ledger.latestBalanceForWallet(7L)).thenReturn(Optional.of(0L));
+        when(ledger.save(any(TokenTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TokenTransaction tx = service.purchaseTopUp(WalletOwnerType.USER, ownerId, 100,
+                "MPESA-REF-9", "credit-evt-1");
+
+        assertThat(tx.getType()).isEqualTo(TokenTransactionType.PURCHASE);
+        assertThat(tx.getAmount()).isEqualTo(100);
+        assertThat(tx.getBalanceAfter()).isEqualTo(100);
+        // The settlement reference is recorded as the (non-PII) audit reason; ref entity type is PAYMENT.
+        assertThat(tx.getReason()).contains("MPESA-REF-9");
+        assertThat(tx.getRefEntityType()).isEqualTo("PAYMENT");
+        assertThat(wallet.getCachedBalance()).isEqualTo(100);
+    }
+
+    /**
+     * A redelivered settlement under the SAME credit key returns the existing entry and writes nothing new —
+     * exactly-once credit on a duplicate/out-of-order mobile-money webhook (PRD §23.5, anti-fraud).
+     */
+    @Test
+    void purchaseTopUp_isIdempotentOnReplay() {
+        Wallet wallet = walletWithId(8L);
+        TokenTransaction existing = TokenTransaction.Builder
+                .of(wallet, TokenTransactionType.PURCHASE, 100)
+                .balanceAfter(100)
+                .idempotencyKey("credit-evt-dup")
+                .build();
+        when(ledger.findByIdempotencyKey("credit-evt-dup")).thenReturn(Optional.of(existing));
+
+        TokenTransaction tx = service.purchaseTopUp(WalletOwnerType.USER, ownerId, 100,
+                "MPESA-REF-DUP", "credit-evt-dup");
+
+        assertThat(tx).isSameAs(existing);
+        verify(ledger, never()).save(any());   // no second credit
+        verify(wallets, never()).save(any());
+    }
+
+    /** A non-positive purchase amount is a bad request (you cannot buy zero/negative tokens). */
+    @Test
+    void purchaseTopUp_rejectsNonPositiveAmount() {
+        assertThatThrownBy(() -> service.purchaseTopUp(WalletOwnerType.USER, ownerId, 0, "REF", "k"))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
     /** Earning credits the configured reward when under the cap. */
     @Test
     void earn_creditsRewardUnderCap() {

@@ -2,6 +2,7 @@ package com.taarifu.moderation.domain.model;
 
 import com.taarifu.common.domain.model.BaseEntity;
 import com.taarifu.moderation.api.FlagSubjectType;
+import com.taarifu.moderation.domain.model.enums.ContentSignal;
 import com.taarifu.moderation.domain.model.enums.ModerationItemStatus;
 import com.taarifu.moderation.domain.model.enums.ModerationSeverity;
 import jakarta.persistence.Column;
@@ -98,6 +99,26 @@ public class ModerationItem extends BaseEntity {
     @Column(name = "closed_at")
     private Instant closedAt;
 
+    /**
+     * Whether the auto-assist scorer raised/held this item (US-12.3, UC-H05). Drives the auto-vs-manual
+     * transparency split and {@code moderation_action_taken.was_auto_assisted} when a moderator later
+     * actions it. Default {@code false} — a citizen-flagged-only item is manual.
+     *
+     * <p>WHY a held auto-assisted item never bypasses a human: auto-assist is assist only (D-Q8, R21). This
+     * flag records that the screen <i>raised</i> the item for review — it never marks it actioned/removed.</p>
+     */
+    @Column(name = "auto_assisted", nullable = false)
+    private boolean autoAssisted = false;
+
+    /** The top content-safety signal the scorer raised, or {@code null} when not auto-assisted. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "auto_signal", length = 16)
+    private ContentSignal autoSignal;
+
+    /** The scorer's confidence in {@link #autoSignal} ({@code [0,1]}), or {@code null} when not auto-assisted. */
+    @Column(name = "auto_confidence")
+    private Double autoConfidence;
+
     /** JPA requires a no-arg constructor; application code uses the factory below. */
     protected ModerationItem() {
     }
@@ -135,6 +156,28 @@ public class ModerationItem extends BaseEntity {
      */
     public void recordFlag(ModerationSeverity escalateTo, Instant now) {
         this.flagCount += 1;
+        if (escalateTo != null && escalateTo.ordinal() > this.severity.ordinal()) {
+            this.severity = escalateTo;
+            this.slaDueAt = now.plus(escalateTo.reviewTarget());
+        }
+    }
+
+    /**
+     * Marks this item as <b>raised/held by auto-assist</b> (US-12.3, UC-H05), recording the top signal and
+     * confidence and, if the signal implies a higher severity than the current one, escalating it (tightening
+     * the SLA — §25.8). This <b>never</b> closes or actions the item — auto-assist is assist only (D-Q8, R21);
+     * the item remains for a human moderator to decide.
+     *
+     * @param signal     the top content-safety signal the scorer raised (never {@code null}).
+     * @param confidence the scorer's confidence in the signal ({@code [0,1]}).
+     * @param escalateTo a severity to raise to if higher than the current one; {@code null} to leave as-is.
+     * @param now        the current instant for any SLA re-stamp.
+     */
+    public void markAutoAssisted(ContentSignal signal, double confidence, ModerationSeverity escalateTo,
+                                 Instant now) {
+        this.autoAssisted = true;
+        this.autoSignal = signal;
+        this.autoConfidence = confidence;
         if (escalateTo != null && escalateTo.ordinal() > this.severity.ordinal()) {
             this.severity = escalateTo;
             this.slaDueAt = now.plus(escalateTo.reviewTarget());
@@ -210,5 +253,20 @@ public class ModerationItem extends BaseEntity {
     /** @return the terminal-close instant, or {@code null}. */
     public Instant getClosedAt() {
         return closedAt;
+    }
+
+    /** @return whether the auto-assist scorer raised/held this item (US-12.3). */
+    public boolean isAutoAssisted() {
+        return autoAssisted;
+    }
+
+    /** @return the top content-safety signal raised, or {@code null} when not auto-assisted. */
+    public ContentSignal getAutoSignal() {
+        return autoSignal;
+    }
+
+    /** @return the scorer confidence in {@link #getAutoSignal()}, or {@code null} when not auto-assisted. */
+    public Double getAutoConfidence() {
+        return autoConfidence;
     }
 }

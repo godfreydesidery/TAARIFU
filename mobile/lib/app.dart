@@ -46,10 +46,15 @@ class TaarifuApp extends StatelessWidget {
         ),
       ],
       child: BlocBuilder<SettingsCubit, AppSettings>(
-        buildWhen: (p, c) => p.languageCode != c.languageCode,
+        buildWhen: (p, c) =>
+            p.languageCode != c.languageCode || p.themeMode != c.themeMode,
         builder: (context, settings) => MaterialApp(
           onGenerateTitle: (context) => AppLocalizations.of(context).appTitle,
           theme: AppTheme.light(),
+          darkTheme: AppTheme.dark(),
+          // Honour the citizen's theme choice (Settings); defaults to following
+          // the device (system) so night mode just works.
+          themeMode: settings.themeMode,
           // Swahili first (PRD §14, ADR-0010); the citizen may switch to English
           // in Settings — the chosen locale drives the whole app here.
           locale: Locale(settings.languageCode),
@@ -81,9 +86,7 @@ class _Root extends StatelessWidget {
       builder: (context, state) {
         switch (state.status) {
           case AuthStatus.unknown:
-            return const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
-            );
+            return const _SplashScreen();
           case AuthStatus.unauthenticated:
           case AuthStatus.otpSent:
             return const OnboardingScreen();
@@ -91,6 +94,67 @@ class _Root extends StatelessWidget {
             return HomeShell(dependencies: dependencies);
         }
       },
+    );
+  }
+}
+
+/// A branded boot splash shown while the session is resolved (`AuthStatus
+/// .unknown`). A soft civic-green gradient with the app mark and a quiet
+/// progress indicator — far more polished than a bare centred spinner, and it
+/// holds for only the brief session check.
+class _SplashScreen extends StatelessWidget {
+  const _SplashScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      body: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [scheme.primary, scheme.primaryContainer],
+          ),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  color: scheme.onPrimary.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.campaign_rounded,
+                  size: 52,
+                  color: scheme.onPrimary,
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                AppLocalizations.of(context).appTitle,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: scheme.onPrimary,
+                  letterSpacing: 1,
+                ),
+              ),
+              const SizedBox(height: 28),
+              SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  color: scheme.onPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

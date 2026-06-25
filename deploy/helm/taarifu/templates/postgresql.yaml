@@ -1,0 +1,102 @@
+# =============================================================================
+# PostgreSQL 16 + PostGIS 3.4 — IN-CLUSTER option (deployInCluster=true).
+#
+# DEFAULT OFF (values.yaml): production should prefer a MANAGED, in-country Postgres
+# so backups/PITR/HA are the provider's concern and the residency footprint is
+# explicit (ADR-0021, D-Q9). This StatefulSet exists for dev clusters and air-gapped
+# in-country racks with no managed PostGIS. A single replica — NOT an HA cluster;
+# do not run a national prod load on this without a real operator (e.g. CNPG).
+#
+# The password is read from the SAME core Secret the backend uses (TAARIFU_DB_PASSWORD)
+# so there is one source of truth and no secret in source (PRD §18).
+# =============================================================================
+{{- if .Values.postgresql.deployInCluster }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "taarifu.fullname" . }}-db
+  labels:
+    {{- include "taarifu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+spec:
+  type: ClusterIP
+  clusterIP: None        # headless — stable network id for the StatefulSet pod
+  selector:
+    {{- include "taarifu.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "taarifu.fullname" . }}-db
+  labels:
+    {{- include "taarifu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+spec:
+  serviceName: {{ include "taarifu.fullname" . }}-db
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "taarifu.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: db
+  template:
+    metadata:
+      labels:
+        {{- include "taarifu.labels" . | nindent 8 }}
+        app.kubernetes.io/component: db
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: postgres
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresql.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.secrets.core.existingSecret }}
+                  key: TAARIFU_DB_PASSWORD
+            # postgres writes to a subdir so the mounted volume root can stay clean.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }}"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }}"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "taarifu.labels" . | nindent 10 }}
+          app.kubernetes.io/component: db
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.postgresql.persistence.storageClass }}
+        storageClassName: {{ .Values.postgresql.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.persistence.size }}
+{{- end }}

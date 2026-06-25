@@ -1,0 +1,33 @@
+# =============================================================================
+# ServiceMonitor — prometheus-operator scrape config for the backend (ARCHITECTURE
+# §9). Only rendered when you run the operator (backend.metrics.serviceMonitor.enabled).
+# For a plain Prometheus, the pod annotations on the Deployment drive discovery instead.
+#
+# Scrapes /api/v1/actuator/prometheus. NOTE (mirrors prometheus.yml): the endpoint
+# only exists once micrometer-registry-prometheus is on the backend classpath — it
+# already is (application.yml comment), so this returns metrics, not 404.
+# =============================================================================
+{{- if and .Values.backend.metrics.enabled .Values.backend.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "taarifu.fullname" . }}-backend
+  labels:
+    {{- include "taarifu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  selector:
+    matchLabels:
+      {{- include "taarifu.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  endpoints:
+    - port: http
+      path: {{ .Values.backend.metrics.path }}
+      interval: {{ .Values.backend.metrics.serviceMonitor.interval }}
+      scheme: http
+{{- end }}
+{{- if and .Values.networkPolicy.enabled (not .Values.backend.metrics.serviceMonitor.enabled) }}
+# (no-op marker: when using a plain Prometheus, scrape via pod annotations — see
+#  backend-deployment.yaml — and ensure it lives in the monitoring namespace allowed
+#  by the NetworkPolicy.)
+{{- end }}

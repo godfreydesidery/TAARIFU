@@ -7,6 +7,7 @@
 /// is surfaced here as the single source of truth rather than a scattered flag.
 library;
 
+import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'app_settings.dart';
@@ -35,6 +36,14 @@ class SettingsCubit extends Cubit<AppSettings> {
   Future<void> setDataSaver(bool enabled) async {
     if (enabled == state.dataSaver) return;
     final next = state.copyWith(dataSaver: enabled);
+    emit(next);
+    await _store.save(next);
+  }
+
+  /// Switches the theme mode (system/light/dark) and persists it.
+  Future<void> setThemeMode(ThemeMode mode) async {
+    if (mode == state.themeMode) return;
+    final next = state.copyWith(themeMode: mode);
     emit(next);
     await _store.save(next);
   }

@@ -3,6 +3,8 @@ package com.taarifu.analytics.api.controller;
 import com.taarifu.analytics.api.dto.BreakdownDto;
 import com.taarifu.analytics.api.dto.FunnelDto;
 import com.taarifu.analytics.api.dto.LatencyStatsDto;
+import com.taarifu.analytics.api.dto.TimeBucket;
+import com.taarifu.analytics.api.dto.TimeSeriesDto;
 import com.taarifu.analytics.api.dto.VolumeReportDto;
 import com.taarifu.analytics.application.service.AnalyticsQueryService;
 import com.taarifu.analytics.domain.model.enums.AnalyticsEventType;
@@ -146,6 +148,52 @@ public class AnalyticsDashboardController {
             @RequestParam(required = false) UUID geoAreaId,
             @RequestParam(required = false) UUID categoryId) {
         return responses.ok(queryService.slaBreaches(from, to, geoAreaId, categoryId));
+    }
+
+    /**
+     * Reports-volume <b>trend</b>: filed-report counts per time bucket (day/week/month) — the volume-over-time
+     * line chart (PRD §3.3 trends; Appendix C).
+     *
+     * @param bucket     optional time-bucket granularity ({@code DAY}/{@code WEEK}/{@code MONTH}); defaults to {@code DAY}.
+     * @param from       optional inclusive window start (UTC).
+     * @param to         optional exclusive window end (UTC).
+     * @param geoAreaId  optional area filter.
+     * @param categoryId optional category filter.
+     * @return an envelope carrying the {@link TimeSeriesDto} labelled {@code REPORT_FILED}.
+     */
+    @GetMapping("/reports/trend")
+    @PreAuthorize(DASHBOARD_ROLES)
+    @Operation(summary = "Reports-volume trend per time bucket (day/week/month)")
+    public ApiResponse<TimeSeriesDto> reportsTrend(
+            @RequestParam(required = false) TimeBucket bucket,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
+            @RequestParam(required = false) UUID geoAreaId,
+            @RequestParam(required = false) UUID categoryId) {
+        return responses.ok(queryService.reportsTrend(bucket, from, to, geoAreaId, categoryId));
+    }
+
+    /**
+     * SLA-breach <b>trend</b>: escalation-with-breach counts per time bucket — the SLA-breach-over-time
+     * line chart used to spot deteriorating responsiveness (PRD §3.3; Appendix C "SLA-breach trend").
+     *
+     * @param bucket     optional time-bucket granularity ({@code DAY}/{@code WEEK}/{@code MONTH}); defaults to {@code DAY}.
+     * @param from       optional inclusive window start (UTC).
+     * @param to         optional exclusive window end (UTC).
+     * @param geoAreaId  optional area filter.
+     * @param categoryId optional category filter.
+     * @return an envelope carrying the {@link TimeSeriesDto} labelled {@code SLA_BREACH}.
+     */
+    @GetMapping("/reports/sla-breach-trend")
+    @PreAuthorize(DASHBOARD_ROLES)
+    @Operation(summary = "SLA-breach trend per time bucket (day/week/month)")
+    public ApiResponse<TimeSeriesDto> slaBreachTrend(
+            @RequestParam(required = false) TimeBucket bucket,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
+            @RequestParam(required = false) UUID geoAreaId,
+            @RequestParam(required = false) UUID categoryId) {
+        return responses.ok(queryService.slaBreachTrend(bucket, from, to, geoAreaId, categoryId));
     }
 
     /**

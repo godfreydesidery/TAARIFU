@@ -1,7 +1,8 @@
 {
   "app": {
     "title": "Taarifu — Admin Console",
-    "shortTitle": "Taarifu Admin"
+    "shortTitle": "Taarifu Admin",
+    "consoleLabel": "Admin Console"
   },
   "common": {
     "loading": "Loading…",
@@ -46,7 +47,15 @@
     "users": "Users & Roles",
     "logout": "Log out",
     "language": "Language",
-    "menu": "Menu"
+    "menu": "Menu",
+    "skipToContent": "Skip to content",
+    "breadcrumbs": "Breadcrumb",
+    "themeDark": "Switch to dark theme",
+    "themeLight": "Switch to light theme",
+    "sectionOverview": "Overview",
+    "sectionOperations": "Operations",
+    "sectionCivic": "Civic data",
+    "sectionAdmin": "Administration"
   },
   "auth": {
     "loginTitle": "Sign in to the Admin Console",
@@ -82,7 +91,53 @@
     "qaNewCategory": "New category",
     "manage": "Manage",
     "statOpenCases": "Open cases",
-    "statSlaBreached": "SLA breached"
+    "statSlaBreached": "SLA breached",
+    "statVerificationQueue": "Verification queue",
+    "respondersCard": "Manage responder organisations and routing."
+  },
+  "analytics": {
+    "reportsByStatus": "Reports by status",
+    "reportsByStatusHint": "Live distribution of cases across the lifecycle.",
+    "channelMix": "Channel mix",
+    "channelMixHint": "How reports reach us — app, web, USSD or SMS.",
+    "funnel": "Verification funnel (T0 → T3)",
+    "funnelHint": "Sign-up to verified-identity conversion.",
+    "funnelConversion": "Reached T3",
+    "slaBreaches": "SLA breaches",
+    "slaBreachesHint": "Breaches split by first-response vs resolution.",
+    "moderationActions": "Moderation actions",
+    "moderationActionsHint": "Actions taken by outcome.",
+    "responsiveness": "Responsiveness",
+    "responsivenessHint": "Median and p90 latencies over the last 30 days.",
+    "ttfrMedian": "Median TTFR",
+    "ttrMedian": "Median TTR",
+    "p90": "p90",
+    "noData": "No data for this period yet.",
+    "channelValue": {
+      "APP": "App",
+      "WEB": "Web",
+      "PWA": "PWA",
+      "USSD": "USSD",
+      "SMS": "SMS",
+      "IVR": "IVR",
+      "SYSTEM": "System"
+    },
+    "outcomeValue": {
+      "APPROVE": "Approve",
+      "HIDE": "Hide",
+      "REMOVE": "Remove",
+      "WARN": "Warn",
+      "SUSPEND": "Suspend",
+      "DISMISS": "Dismiss",
+      "VERIFY": "Verify",
+      "ESCALATE": "Escalate"
+    },
+    "funnelStep": {
+      "ACCOUNT_SIGNED_UP": "Signed up",
+      "PROFILE_COMPLETED": "Profile completed",
+      "IDENTITY_VERIFICATION_STARTED": "Verification started",
+      "IDENTITY_VERIFIED": "Verified"
+    }
   },
   "geography": {
     "regionsTitle": "Regions",
@@ -135,6 +190,8 @@
   },
   "reports": {
     "title": "Report Queue",
+    "subtitle": "Triage, assign, and resolve citizen reports.",
+    "noResultsHint": "Try clearing a filter or widening the area.",
     "code": "Code",
     "titleCol": "Title",
     "category": "Category",
@@ -200,6 +257,8 @@
   },
   "responders": {
     "title": "Responder Organisations",
+    "subtitle": "Government, parastatal, and private bodies that handle cases.",
+    "noResultsHint": "Create the first organisation to start routing cases.",
     "name": "Name",
     "type": "Type",
     "status": "Status",
@@ -258,6 +317,8 @@
   },
   "moderation": {
     "title": "Moderation Queue",
+    "subtitle": "Review flagged content, ordered by severity and SLA.",
+    "noItemsHint": "Nothing needs your attention in this status.",
     "status": "Status",
     "subject": "Subject",
     "severity": "Severity",
@@ -404,6 +465,8 @@
   },
   "users": {
     "title": "Users & Roles",
+    "subtitle": "One account per person; roles are additive and scoped.",
+    "noResultsHint": "Adjust the filters to find an account.",
     "myIdentity": "My identity",
     "tier": "Tier",
     "roles": "Roles",

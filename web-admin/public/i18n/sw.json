@@ -1,7 +1,8 @@
 {
   "app": {
     "title": "Taarifu — Kituo cha Usimamizi",
-    "shortTitle": "Taarifu Admin"
+    "shortTitle": "Taarifu Admin",
+    "consoleLabel": "Kituo cha Usimamizi"
   },
   "common": {
     "loading": "Inapakia…",
@@ -46,7 +47,15 @@
     "users": "Watumiaji na Majukumu",
     "logout": "Toka",
     "language": "Lugha",
-    "menu": "Menyu"
+    "menu": "Menyu",
+    "skipToContent": "Rukia hadi maudhui",
+    "breadcrumbs": "Njia ya urambazaji",
+    "themeDark": "Badili kuwa hali ya giza",
+    "themeLight": "Badili kuwa hali ya mwanga",
+    "sectionOverview": "Muhtasari",
+    "sectionOperations": "Uendeshaji",
+    "sectionCivic": "Data ya kiraia",
+    "sectionAdmin": "Utawala"
   },
   "auth": {
     "loginTitle": "Ingia kwenye Kituo cha Usimamizi",
@@ -82,7 +91,53 @@
     "qaNewCategory": "Aina mpya",
     "manage": "Simamia",
     "statOpenCases": "Kesi zinazoendelea",
-    "statSlaBreached": "SLA imepitwa"
+    "statSlaBreached": "SLA imepitwa",
+    "statVerificationQueue": "Foleni ya uthibitisho",
+    "respondersCard": "Simamia mashirika ya watoa huduma na uelekezaji."
+  },
+  "analytics": {
+    "reportsByStatus": "Ripoti kwa hali",
+    "reportsByStatusHint": "Mgawanyo wa moja kwa moja wa kesi katika mzunguko.",
+    "channelMix": "Mchanganyiko wa njia",
+    "channelMixHint": "Jinsi ripoti zinavyofika — programu, wavuti, USSD au SMS.",
+    "funnel": "Mfereji wa uthibitisho (T0 → T3)",
+    "funnelHint": "Ubadilishaji kutoka kujisajili hadi utambulisho uliothibitishwa.",
+    "funnelConversion": "Walifika T3",
+    "slaBreaches": "Ukiukaji wa SLA",
+    "slaBreachesHint": "Ukiukaji uliogawanywa kwa jibu la kwanza dhidi ya utatuzi.",
+    "moderationActions": "Vitendo vya usimamizi",
+    "moderationActionsHint": "Vitendo vilivyochukuliwa kwa matokeo.",
+    "responsiveness": "Uharakishaji",
+    "responsivenessHint": "Wastani na p90 wa muda katika siku 30 zilizopita.",
+    "ttfrMedian": "Wastani wa TTFR",
+    "ttrMedian": "Wastani wa TTR",
+    "p90": "p90",
+    "noData": "Bado hakuna data kwa kipindi hiki.",
+    "channelValue": {
+      "APP": "Programu",
+      "WEB": "Wavuti",
+      "PWA": "PWA",
+      "USSD": "USSD",
+      "SMS": "SMS",
+      "IVR": "IVR",
+      "SYSTEM": "Mfumo"
+    },
+    "outcomeValue": {
+      "APPROVE": "Idhinisha",
+      "HIDE": "Ficha",
+      "REMOVE": "Ondoa",
+      "WARN": "Onya",
+      "SUSPEND": "Simamisha",
+      "DISMISS": "Tupilia mbali",
+      "VERIFY": "Thibitisha",
+      "ESCALATE": "Pandisha"
+    },
+    "funnelStep": {
+      "ACCOUNT_SIGNED_UP": "Amejisajili",
+      "PROFILE_COMPLETED": "Wasifu umekamilika",
+      "IDENTITY_VERIFICATION_STARTED": "Uthibitisho umeanza",
+      "IDENTITY_VERIFIED": "Amethibitishwa"
+    }
   },
   "geography": {
     "regionsTitle": "Mikoa",
@@ -135,6 +190,8 @@
   },
   "reports": {
     "title": "Foleni ya Ripoti",
+    "subtitle": "Panga, gawa, na tatua ripoti za wananchi.",
+    "noResultsHint": "Jaribu kuondoa kichujio au kupanua eneo.",
     "code": "Msimbo",
     "titleCol": "Kichwa",
     "category": "Aina",
@@ -200,6 +257,8 @@
   },
   "responders": {
     "title": "Mashirika ya Watoa Huduma",
+    "subtitle": "Taasisi za serikali, mashirika ya umma, na binafsi zinazoshughulikia kesi.",
+    "noResultsHint": "Tengeneza shirika la kwanza ili kuanza kuelekeza kesi.",
     "name": "Jina",
     "type": "Aina",
     "status": "Hali",
@@ -258,6 +317,8 @@
   },
   "moderation": {
     "title": "Foleni ya Usimamizi wa Maudhui",
+    "subtitle": "Pitia maudhui yaliyoripotiwa, kwa mpangilio wa ukali na SLA.",
+    "noItemsHint": "Hakuna kinachohitaji uangalizi wako katika hali hii.",
     "status": "Hali",
     "subject": "Mada",
     "severity": "Ukali",
@@ -404,6 +465,8 @@
   },
   "users": {
     "title": "Watumiaji na Majukumu",
+    "subtitle": "Akaunti moja kwa kila mtu; majukumu yanaongezeka na yana mipaka.",
+    "noResultsHint": "Rekebisha vichujio ili kupata akaunti.",
     "myIdentity": "Utambulisho wangu",
     "tier": "Ngazi",
     "roles": "Majukumu",

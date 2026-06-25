@@ -90,6 +90,16 @@ public class SecurityConfig {
             "/petitions/**",
             "/surveys/**",
             "/questions/**",
+            // Public discovery/search (search module, ADR-0017 §4). WHY public: cross-entity discovery of
+            // the PUBLIC civic graph is a civic-core read no citizen (including an unauthenticated guest)
+            // should be gated out of (PRD §18 inclusion) — mirrors the open `/representatives/**` and
+            // `/announcements/*` reads. The real control is NOT this URL filter but a SERVER-SIDE
+            // visibility predicate in SearchQueryService: for a guest/non-staff caller the FTS query
+            // hard-restricts to `visibility = 'PUBLIC'` (and re-states `deleted = FALSE`), so STAFF /
+            // private / sensitive / suspended-author rows are FILTERED OUT of the result set — never 403'd
+            // per row (anti-enumeration). A blank query returns an empty page (no corpus dump). Opening
+            // this is therefore safe: the URL is auth, the predicate is the gate (SearchController Javadoc).
+            "/search/**",
             // Announcements public civic graph (M11) — single-segment so it matches the public
             // detail read `/announcements/{publicId}`; `/announcements/mine` is one segment too but
             // its own @PreAuthorize denies anonymous, so least-privilege still holds. Published +
@@ -127,7 +137,17 @@ public class SecurityConfig {
             // USSD aggregator webhook (W3-1): permitted at the URL filter because there is no user token;
             // UssdGatewaySecretFilter authenticates the aggregator by a fail-closed shared secret and a
             // per-MSISDN rate-limit guards no-OTP account-creation abuse (TR-1/TR-3, wave3-review).
-            "/ussd/gateway"
+            "/ussd/gateway",
+            // Mobile-money settlement webhook (payments module, ADR-0015 §3). WHY public: the aggregator
+            // posting a provider callback (e.g. POST /payments/webhook/MPESA) holds NO user JWT — like the
+            // /ussd/gateway precedent. The real authentication is the HMAC-SHA256 signature over the RAW
+            // body, verified FAIL-CLOSED inside PaymentWebhookController before any state change
+            // (AbstractHmacMobileMoneyGateway.verifyCallbackSignature, constant-time compare; an invalid /
+            // missing signature → benign 200, no credit, no forgery oracle). Settlement is additionally
+            // never-trust-the-callback (provider re-confirmed) and idempotent in ReconciliationService.
+            // Without this entry the HMAC-secured endpoint is 401'd at the URL filter and payments cannot
+            // settle anonymously. The pattern is `/**` because the rail is a path segment.
+            "/payments/webhook/**"
     };
 
     /**

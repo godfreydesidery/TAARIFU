@@ -72,4 +72,47 @@ class AnalyticsSecurityIntegrationTest extends AbstractHttpIntegrationTest {
         mockMvc.perform(get("/api/v1/admin/analytics/reports/ttr"))
                 .andExpect(status().isOk());
     }
+
+    @Test
+    void reportsTrend_unauthenticated_is401() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/analytics/reports/trend"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @WithMockUser(roles = "CITIZEN")
+    void slaBreachTrend_asCitizen_is403() throws Exception {
+        // A plain citizen must never read the SLA-breach trend (Admin/authority only — US-15.1).
+        mockMvc.perform(get("/api/v1/admin/analytics/reports/sla-breach-trend"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void reportsTrend_asAdmin_is2xx() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/analytics/reports/trend"))
+                .andExpect(status().isOk());
+    }
+
+    // --- The admin-module composed overview surface (ADR-0020 §3) ---------------------------------
+
+    @Test
+    void adminOverview_unauthenticated_is401() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/analytics/overview"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @WithMockUser(roles = "CITIZEN")
+    void adminOverview_asCitizen_is403() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/analytics/overview"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void adminOverview_asAdmin_is2xx() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/analytics/overview"))
+                .andExpect(status().isOk());
+    }
 }

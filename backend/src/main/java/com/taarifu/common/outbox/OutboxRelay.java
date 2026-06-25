@@ -6,6 +6,7 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.outbox.domain.model.OutboxEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -50,8 +51,16 @@ import java.util.concurrent.ThreadLocalRandom;
  * reads <b>committed</b> rows, so it is crash-safe and retryable by construction (ADR-0014 §3). The cost —
  * up to one poll interval of latency before a handler runs — is acceptable for fan-out/routing (PRD §15
  * budgets the citizen write, not the downstream effect).</p>
+ *
+ * <p><b>Operability toggle.</b> The background poller is gated by
+ * {@code taarifu.outbox.relay.enabled} (default {@code true}). Leaving it unset keeps the relay running
+ * everywhere (prod + tests). It can be turned off to (a) pin the poller to a subset of instances, (b) pause
+ * dispatch during a maintenance window, or (c) keep the {@code @Scheduled} poller from racing a test that
+ * manipulates {@code outbox_event} rows directly. Disabling only removes the polling bean — the outbox is
+ * still written transactionally; rows simply wait until a relay runs.</p>
  */
 @Component
+@ConditionalOnProperty(name = "taarifu.outbox.relay.enabled", havingValue = "true", matchIfMissing = true)
 public class OutboxRelay {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);

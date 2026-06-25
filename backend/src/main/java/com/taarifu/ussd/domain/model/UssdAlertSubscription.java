@@ -21,10 +21,12 @@ import java.util.UUID;
  * <p>WHY this lives in the ussd module and not directly as a communications {@code Subscription}: the
  * isolation rule forbids this module from writing communications' tables, and communications'
  * {@code Subscription} is keyed by a profile id on an authenticated path — neither available cleanly on the
- * USSD webhook. So the intent is captured locally and (once a published communications command port exists)
- * forwarded to register the real follow/notification preference — see {@code // TODO(wiring)} in
- * {@code UssdAlertService} and CENTRAL INTEGRATION NEEDS. Both ids are bare {@code UUID}s (identity account,
- * geography ward), never FKs (ARCHITECTURE §3.2).</p>
+ * USSD webhook. So the intent is captured locally as the durable record and forwarded — through communications'
+ * published {@code AreaSubscriptionApi} (A3/ADR-0019), via {@code UssdAlertService} — to register the real
+ * {@code AREA} follow, then {@link #markForwarded() marked forwarded}. The forward is config-gated until
+ * identity exposes account→profile resolution so the follow is keyed at the fan-out's profile grain
+ * (see {@code UssdAlertService} and CENTRAL INTEGRATION NEEDS). Both ids are bare {@code UUID}s (identity
+ * account, geography ward), never FKs (ARCHITECTURE §3.2).</p>
  *
  * <p>WHY uniqueness is scoped to live rows: a citizen subscribes a given area at most once; unsubscribe is a
  * soft-delete so the history stays auditable (PRD §9) and a re-subscribe inserts a fresh row. JPA cannot
@@ -53,8 +55,10 @@ public class UssdAlertSubscription extends BaseEntity {
     private UUID wardId;
 
     /**
-     * Whether the intent has been forwarded to communications. {@code false} until a published
-     * communications command port exists to register the real area-alert preference ({@code // TODO(wiring)}).
+     * Whether the intent has been forwarded to communications (the real {@code AREA} follow registered via
+     * {@code AreaSubscriptionApi}). {@code false} for a locally-captured intent that has not yet been forwarded
+     * — including while the config-gated forward is off pending the account→profile grain CENTRAL NEED
+     * (A3/ADR-0019); set {@code true} by {@link #markForwarded()} once the follow is registered.
      */
     @Column(name = "forwarded", nullable = false)
     private boolean forwarded = false;

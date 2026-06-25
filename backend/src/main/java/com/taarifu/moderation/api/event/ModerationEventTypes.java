@@ -38,4 +38,21 @@ public final class ModerationEventTypes {
      * no-op — ADR-0014 §3).</p>
      */
     public static final String MODERATION_SANCTION_APPLIED = "MODERATION_SANCTION_APPLIED";
+
+    /**
+     * The analytics catalogue value stamped onto {@code CivicActivityRecorded.analyticsEventType()} when the
+     * auto-assist scorer auto-flags/holds content (PRD §12 US-12.3, UC-H05; Appendix E
+     * {@code auto_moderation_triaged}). It rides the shared {@code AnalyticsEventTypes.CIVIC_ACTIVITY_RECORDED}
+     * outbox {@code eventType} (one key → one analytics handler — ADR-0014 §4); this string travels inside the
+     * payload so the analytics auto-vs-manual split can branch on it.
+     *
+     * <p>WHY it is declared here (in moderation's {@code api.event}) and not added to
+     * {@code analytics.api.event.AnalyticsEventTypes}: this increment is isolated to the moderation module.
+     * The analytics handler is <b>forward-compatible</b> — an unknown catalogue value is dropped as a no-op
+     * (Appendix E.0 additive), so the fact lands safely now and is counted once the analytics catalogue gains
+     * the matching {@code AUTO_MODERATION_TRIAGED} value (a flagged CENTRAL NEED — add to
+     * {@code AnalyticsEventTypes} + the {@code AnalyticsEventType} enum so it is persisted/queried, not
+     * dropped).</p>
+     */
+    public static final String AUTO_MODERATION_TRIAGED = "AUTO_MODERATION_TRIAGED";
 }

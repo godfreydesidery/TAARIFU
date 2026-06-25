@@ -40,6 +40,16 @@ public class TokenLedgerApiImpl implements TokenLedgerApi {
     }
 
     @Override
+    public boolean topUp(WalletOwnerType ownerType, UUID accountPublicId, long amount,
+                         String paymentReference) {
+        // 🔒 FENCE (D18): the ONLY effect is a PURCHASE-kind convenience credit on the wallet. No role/vote/
+        // weight is granted here and no balance is returned — purchased tokens buy convenience/reach only.
+        // Idempotent on paymentReference (the payments credit_event_id) → exactly-once credit on webhook replay.
+        return walletService.purchaseTopUp(ownerType, accountPublicId, amount, paymentReference,
+                paymentReference) != null;
+    }
+
+    @Override
     public boolean reward(WalletOwnerType ownerType, UUID ownerId, RewardBehaviour behaviour,
                           String refEntityType, UUID refEntityId, String idempotencyKey) {
         return walletService.earn(ownerType, ownerId, behaviour, refEntityType, refEntityId, idempotencyKey)

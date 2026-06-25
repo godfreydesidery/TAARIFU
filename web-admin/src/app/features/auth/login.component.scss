@@ -1,0 +1,19 @@
+// Login page chrome. A calm, centred branded card on a subtle gradient backdrop. Theme-aware via the
+// global --tf-* roles so it follows the light/dark toggle.
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--tf-space-4);
+  background:
+    radial-gradient(1200px 600px at 50% -10%, var(--tf-primary-100), transparent 60%),
+    var(--tf-app-bg);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 25rem;
+  box-shadow: var(--tf-shadow-lg);
+}

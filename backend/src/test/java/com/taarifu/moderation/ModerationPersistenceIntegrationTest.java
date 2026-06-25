@@ -7,6 +7,7 @@ import com.taarifu.moderation.domain.model.Flag;
 import com.taarifu.moderation.domain.model.ModerationAction;
 import com.taarifu.moderation.domain.model.ModerationItem;
 import com.taarifu.moderation.domain.model.enums.AppealStatus;
+import com.taarifu.moderation.domain.model.enums.ContentSignal;
 import com.taarifu.moderation.domain.model.enums.FlagReason;
 import com.taarifu.moderation.api.FlagSubjectType;
 import com.taarifu.moderation.domain.model.enums.ModerationActionType;
@@ -120,6 +121,43 @@ class ModerationPersistenceIntegrationTest extends AbstractPostgisIntegrationTes
         assertThatThrownBy(() -> appealRepository.saveAndFlush(
                 Appeal.open(action, author, "again")))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void autoAssistColumnsRoundTrip_soV154MatchesEntity() {
+        // Mark an item auto-assisted and prove the V154 columns persist/load (ddl-auto=validate already
+        // accepted them by booting). Auto-assist NEVER closes the item — assist only (D-Q8, R21).
+        UUID subject = UUID.randomUUID();
+        ModerationItem item = ModerationItem.open(
+                FlagSubjectType.COMMENT, subject, UUID.randomUUID(), ModerationSeverity.LOW, NOW);
+        item.markAutoAssisted(ContentSignal.PII, 0.91, ModerationSeverity.HIGH, NOW);
+        UUID publicId = itemRepository.saveAndFlush(item).getPublicId();
+
+        ModerationItem loaded = itemRepository.findByPublicId(publicId).orElseThrow();
+        assertThat(loaded.isAutoAssisted()).isTrue();
+        assertThat(loaded.getAutoSignal()).isEqualTo(ContentSignal.PII);
+        assertThat(loaded.getAutoConfidence()).isEqualTo(0.91);
+        assertThat(loaded.getSeverity()).isEqualTo(ModerationSeverity.HIGH); // escalated by the signal
+        assertThat(loaded.isTerminal()).isFalse();                           // never auto-actioned (R21)
+    }
+
+    @Test
+    void transparencyAssistModeAggregation_splitsAutoVsManual() {
+        // One auto-assisted item + one manual item in the window → the §25 transparency split returns both.
+        // WHY a wide window: createdAt is stamped by JPA auditing at the real wall-clock persist time (not
+        // the fixed NOW), so the window must straddle "now" to include the rows just saved.
+        Instant from = Instant.parse("2000-01-01T00:00:00Z");
+        Instant to = Instant.parse("2100-01-01T00:00:00Z");
+        ModerationItem auto = ModerationItem.open(
+                FlagSubjectType.COMMENT, UUID.randomUUID(), UUID.randomUUID(), ModerationSeverity.LOW, NOW);
+        auto.markAutoAssisted(ContentSignal.SPAM, 0.85, ModerationSeverity.LOW, NOW);
+        itemRepository.saveAndFlush(auto);
+        itemRepository.saveAndFlush(ModerationItem.open(
+                FlagSubjectType.REPORT, UUID.randomUUID(), UUID.randomUUID(), ModerationSeverity.LOW, NOW));
+
+        assertThat(itemRepository.countByAssistModeInWindow(from, to))
+                .extracting(p -> p.getKey())
+                .contains("AUTO_ASSISTED", "MANUAL");
     }
 
     @Test

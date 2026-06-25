@@ -6,6 +6,10 @@ import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { PageMeta } from '../../core/api/api-response.model';
 import { ToastService } from '../../core/notifications/toast.service';
 import { PaginationComponent } from '../../shared/components/pagination.component';
+import { StatePanelComponent } from '../../shared/components/state-panel.component';
+import { SkeletonTableComponent } from '../../shared/components/skeleton.component';
+import { StatusBadgeComponent } from '../../shared/components/status-badge.component';
+import { statusTone } from '../../shared/util/status-tone.util';
 import { Organisation } from './responders.models';
 import { RespondersService } from './responders.service';
 
@@ -20,7 +24,14 @@ import { RespondersService } from './responders.service';
 @Component({
   selector: 'app-organisations-list',
   standalone: true,
-  imports: [RouterLink, TranslateModule, PaginationComponent],
+  imports: [
+    RouterLink,
+    TranslateModule,
+    PaginationComponent,
+    StatePanelComponent,
+    SkeletonTableComponent,
+    StatusBadgeComponent,
+  ],
   templateUrl: './organisations-list.component.html',
 })
 export class OrganisationsListComponent implements OnInit {
@@ -86,4 +97,7 @@ export class OrganisationsListComponent implements OnInit {
         error: () => undefined,
       });
   }
+
+  /** Maps an organisation status token to a badge tone (shared design-system mapping). */
+  tone = statusTone;
 }

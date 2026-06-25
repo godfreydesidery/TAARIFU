@@ -22,5 +22,12 @@
  * representatives, reporting categories) are referenced by public {@code UUID} only — never FK-joined —
  * and resolved through the owning module's public API (ARCHITECTURE §3.2). The {@code // TODO(wiring)}
  * notes mark the deferred cross-module integration points.</p>
+ *
+ * <p><b>Published command ports (ADR-0013 §1; A3/ADR-0019):</b> this module exposes two synchronous command
+ * ports in {@code com.taarifu.communications.api} for sibling channels (above all {@code ussd}) that need SMS
+ * delivery or an area follow but must not import this module's internals: {@code SmsSendApi} (façade over the
+ * internal {@code SmsGateway} — masked, fail-soft, no tokens) and {@code AreaSubscriptionApi} (idempotent
+ * {@code AREA} follow at the fan-out's <b>profile</b> grain). Both carry no token in/out (the civic-integrity
+ * fence, D18) and no PII beyond the unavoidable raw recipient that crosses only into the masking gateway (S-4).</p>
  */
 package com.taarifu.communications;

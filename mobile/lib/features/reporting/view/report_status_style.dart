@@ -13,6 +13,11 @@ import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
 
+// Re-exported so existing callers keep importing `formatRelativeTime` from here
+// while the implementation now lives in the shared kernel (core/util) — see
+// core/util/relative_time.dart (DRY, CLAUDE.md §3).
+export '../../../core/util/relative_time.dart' show formatRelativeTime;
+
 /// Maps a report lifecycle status to its UI presentation.
 class ReportStatusStyle {
   const ReportStatusStyle._();
@@ -70,15 +75,3 @@ class ReportStatusStyle {
       };
 }
 
-/// Formats a UTC instant as a short, locale-light relative time the citizen can
-/// read at a glance ("dakika 5 zilizopita"). Kept dependency-free (no intl
-/// formatting needed) and Swahili-first via [AppLocalizations].
-String formatRelativeTime(AppLocalizations l10n, DateTime? whenUtc) {
-  if (whenUtc == null) return '';
-  final now = DateTime.now().toUtc();
-  final diff = now.difference(whenUtc);
-  if (diff.inMinutes < 1) return l10n.timeJustNow;
-  if (diff.inMinutes < 60) return l10n.timeMinutesAgo(diff.inMinutes);
-  if (diff.inHours < 24) return l10n.timeHoursAgo(diff.inHours);
-  return l10n.timeDaysAgo(diff.inDays);
-}

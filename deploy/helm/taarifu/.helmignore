@@ -1,0 +1,11 @@
+# Patterns to ignore when packaging the chart.
+.git/
+.gitignore
+*.tmp
+*.bak
+*.orig
+.DS_Store
+# NEVER package real secrets — only the *.example/sealed templates under secrets/.
+*.env
+.env
+.env.*

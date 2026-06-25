@@ -133,6 +133,35 @@ public enum AuditEventType {
     IDENTITY_ERASED,
 
     /**
+     * A citizen recorded a consent decision (grant or withdrawal) for a processing purpose (PRD §18 PDPA,
+     * UC-A16; ADR-0016 §2/§7). actor = subject = the deciding account; {@code reason_code} =
+     * {@code <purpose>:<state>} (e.g. {@code BEHAVIOURAL_ANALYTICS:WITHDRAWN}). References/codes only —
+     * never PII. Append-only; never repurpose.
+     */
+    PRIVACY_CONSENT_CHANGED,
+
+    /**
+     * A data-subject request (ACCESS or ERASURE) was received (PRD §18 PDPA, UC-A17/UC-S09; ADR-0016 §3/§7).
+     * actor = subject = the requesting account; {@code reason_code} = the {@code DsrType}. The auditable proof
+     * the right was exercised. References only — never PII.
+     */
+    PRIVACY_DSR_RECEIVED,
+
+    /**
+     * A data-subject ACCESS export was generated/delivered (PRD §18 PDPA right of access; ADR-0016 §4/§7).
+     * actor = the principal that ran it (the subject self-service, or an ADMIN/ROOT on a tracked DSR),
+     * subject = the account exported. References only — never the exported PII itself.
+     */
+    PRIVACY_DSR_EXPORTED,
+
+    /**
+     * An ERASURE was requested and the {@code ERASURE_REQUESTED} fan-out event was published (PRD §18, §25.1;
+     * ADR-0016 §5/§7). actor = subject = the erasing account. Precedes the per-module severing
+     * ({@link #IDENTITY_ERASED} et al.). References only — never PII.
+     */
+    PRIVACY_ERASURE_REQUESTED,
+
+    /**
      * An admin granted a role to an account additively (M14, US-14.1, D15; actor = the granting admin,
      * subject = the target account, {@code reason_code} = the granted {@code RoleName}). The canonical
      * "who granted what to whom" trail for back-office RBAC changes. References/public-ids only — never PII

@@ -1,0 +1,271 @@
+// =============================================================================
+// Taarifu Admin — Design-system component styles
+// -----------------------------------------------------------------------------
+// App-wide presentational classes that extend Bootstrap with the Taarifu look:
+// elevated cards, KPI stat tiles, skeleton loaders, page headers, soft badges,
+// the app shell chrome, and chart wrappers. These are theme-aware: they read the
+// CSS custom properties declared in styles.scss, so they recolour automatically
+// in dark mode. Components reference these classes instead of re-styling locally
+// (DRY). All colours come from `var(--tf-*)` roles, never raw hex.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// Page header — a consistent title block atop every feature page.
+// -----------------------------------------------------------------------------
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--tf-space-3);
+  margin-bottom: var(--tf-space-5);
+
+  .page-header__titles { min-width: 0; }
+
+  .page-header__title {
+    font-size: var(--tf-fs-2xl);
+    font-weight: 600;
+    line-height: 1.2;
+    margin: 0;
+    color: var(--tf-text-strong);
+  }
+
+  .page-header__subtitle {
+    margin: 0.35rem 0 0;
+    color: var(--tf-text-muted);
+    font-size: var(--tf-fs-sm);
+  }
+
+  .page-header__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--tf-space-2);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Elevated card — the workhorse surface. Softer than Bootstrap's default, with a
+// gentle lift on hover for clickable cards (.card-link).
+// -----------------------------------------------------------------------------
+.card {
+  background-color: var(--tf-surface);
+  border-color: var(--tf-border);
+  border-radius: var(--tf-radius-lg);
+  box-shadow: var(--tf-shadow-xs);
+}
+
+.card.card-elevated { box-shadow: var(--tf-shadow-sm); }
+
+a.card-link,
+.card-link {
+  transition: transform var(--tf-dur) var(--tf-ease), box-shadow var(--tf-dur) var(--tf-ease),
+    border-color var(--tf-dur) var(--tf-ease);
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--tf-shadow);
+    border-color: var(--tf-primary-300);
+  }
+  &:focus-visible {
+    outline: var(--tf-focus-ring-width) solid var(--tf-focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// KPI stat tile — the dashboard's headline metric card.
+// -----------------------------------------------------------------------------
+.stat-tile {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--tf-space-3);
+  padding: var(--tf-space-4);
+  height: 100%;
+
+  .stat-tile__icon {
+    flex: 0 0 auto;
+    width: 2.75rem;
+    height: 2.75rem;
+    display: grid;
+    place-items: center;
+    border-radius: var(--tf-radius);
+    font-size: 1.25rem;
+    background: var(--tf-primary-100);
+    color: var(--tf-primary-700);
+  }
+  // Accent variants for the icon chip — semantic tinting.
+  .stat-tile__icon.is-warning { background: var(--tf-warning-100); color: var(--tf-warning); }
+  .stat-tile__icon.is-danger  { background: var(--tf-danger-100);  color: var(--tf-danger); }
+  .stat-tile__icon.is-success { background: var(--tf-success-100); color: var(--tf-success); }
+  .stat-tile__icon.is-info    { background: var(--tf-info-100);    color: var(--tf-info); }
+
+  .stat-tile__body { min-width: 0; }
+
+  .stat-tile__value {
+    font-size: var(--tf-fs-2xl);
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--tf-text-strong);
+    letter-spacing: -0.01em;
+  }
+  .stat-tile__value.is-danger { color: var(--tf-danger); }
+
+  .stat-tile__label {
+    margin: 0.15rem 0 0;
+    font-size: var(--tf-fs-sm);
+    color: var(--tf-text-muted);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Skeleton loaders — content-shaped placeholders for the loading state. Cheaper
+// (perceptually) than a spinner on a slow link; respects reduced-motion.
+// -----------------------------------------------------------------------------
+.skeleton {
+  display: block;
+  border-radius: var(--tf-radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--tf-skeleton-base) 25%,
+    var(--tf-skeleton-shine) 37%,
+    var(--tf-skeleton-base) 63%
+  );
+  background-size: 400% 100%;
+  animation: tf-skeleton-shimmer 1.4s ease infinite;
+}
+.skeleton--text { height: 0.75rem; margin-bottom: 0.5rem; }
+.skeleton--title { height: 1.25rem; width: 40%; margin-bottom: 0.75rem; }
+.skeleton--line-sm { height: 0.7rem; }
+.skeleton--value { height: 1.75rem; width: 3.5rem; }
+.skeleton--chip { height: 1.25rem; width: 4rem; border-radius: var(--tf-radius-pill); }
+.skeleton--chart { height: 240px; border-radius: var(--tf-radius); }
+.skeleton--avatar { width: 2.75rem; height: 2.75rem; border-radius: var(--tf-radius); }
+
+@keyframes tf-skeleton-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; background: var(--tf-skeleton-base); }
+}
+
+// Skeleton table — N rows of placeholder cells for list loading states.
+.skeleton-row td { padding-block: 0.85rem; }
+
+// -----------------------------------------------------------------------------
+// Empty & error states — friendly, centred, with a clear next action.
+// -----------------------------------------------------------------------------
+.state-panel {
+  text-align: center;
+  padding: var(--tf-space-7) var(--tf-space-4);
+  color: var(--tf-text-muted);
+
+  .state-panel__icon {
+    font-size: 2.5rem;
+    line-height: 1;
+    margin-bottom: var(--tf-space-3);
+    opacity: 0.7;
+  }
+  .state-panel__title {
+    font-size: var(--tf-fs-lg);
+    font-weight: 600;
+    color: var(--tf-text-strong);
+    margin: 0 0 var(--tf-space-2);
+  }
+  .state-panel__text {
+    margin: 0 auto var(--tf-space-4);
+    max-width: 28rem;
+    font-size: var(--tf-fs-sm);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Soft badges — pastel chips that read calmer than Bootstrap's solid text-bg-*.
+// Pair with status semantics. (Solid text-bg-* still available for emphasis.)
+// -----------------------------------------------------------------------------
+.badge-soft {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  font-weight: 500;
+  border-radius: var(--tf-radius-pill);
+  padding: 0.32em 0.7em;
+  font-size: 0.78em;
+  line-height: 1;
+}
+.badge-soft.is-success { background: var(--tf-success-100); color: var(--tf-success); }
+.badge-soft.is-warning { background: var(--tf-warning-100); color: var(--tf-warning); }
+.badge-soft.is-danger  { background: var(--tf-danger-100);  color: var(--tf-danger); }
+.badge-soft.is-info    { background: var(--tf-info-100);    color: var(--tf-info); }
+.badge-soft.is-neutral { background: var(--tf-neutral-100); color: var(--tf-text-muted); }
+.badge-soft.is-primary { background: var(--tf-primary-100); color: var(--tf-primary-700); }
+.badge-soft .dot { width: 0.45em; height: 0.45em; border-radius: 50%; background: currentColor; }
+
+// -----------------------------------------------------------------------------
+// Tables — give list tables the design-system frame (header tint, rounded
+// container) via a wrapping .table-card.
+// -----------------------------------------------------------------------------
+.table-card {
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-lg);
+  box-shadow: var(--tf-shadow-xs);
+  overflow: hidden;
+}
+.table-card > .table-responsive { margin-bottom: 0; }
+.table-card .table { margin-bottom: 0; }
+.table-card .table > thead th {
+  background: var(--tf-surface-muted);
+  color: var(--tf-text-muted);
+  font-size: var(--tf-fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom-color: var(--tf-border);
+  white-space: nowrap;
+}
+.table-card .table > tbody > tr:last-child > * { border-bottom: 0; }
+
+// A monospace code chip for ids/ticket codes.
+code, .code-chip {
+  color: var(--tf-primary-700);
+}
+.code-chip {
+  background: var(--tf-surface-muted);
+  border-radius: var(--tf-radius-sm);
+  padding: 0.1rem 0.4rem;
+  font-family: var(--tf-font-mono);
+  font-size: 0.82em;
+}
+
+// -----------------------------------------------------------------------------
+// Filter bar — the row of search/select controls above a list.
+// -----------------------------------------------------------------------------
+.filter-bar {
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-lg);
+  padding: var(--tf-space-3) var(--tf-space-3);
+  box-shadow: var(--tf-shadow-xs);
+  margin-bottom: var(--tf-space-4);
+}
+
+// -----------------------------------------------------------------------------
+// Chart wrapper — fixed-aspect responsive container so Chart.js sizes cleanly.
+// -----------------------------------------------------------------------------
+.chart-frame {
+  position: relative;
+  width: 100%;
+  height: 260px;
+}
+.chart-frame.chart-frame--sm { height: 200px; }
+.chart-frame.chart-frame--lg { height: 320px; }
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--tf-space-2) var(--tf-space-4);
+  margin-top: var(--tf-space-3);
+  font-size: var(--tf-fs-xs);
+  color: var(--tf-text-muted);
+}
+.chart-legend__item { display: inline-flex; align-items: center; gap: 0.4rem; }
+.chart-legend__swatch { width: 0.8rem; height: 0.8rem; border-radius: 3px; flex: 0 0 auto; }

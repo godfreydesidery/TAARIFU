@@ -1,46 +1,49 @@
 <!-- Report case detail: header + timeline + responder lifecycle actions. -->
 <section>
-  <a routerLink="/reports" class="btn btn-sm btn-link px-0 mb-2">&laquo; {{ 'reports.backToQueue' | translate }}</a>
+  <a routerLink="/reports" class="btn btn-sm btn-link px-0 mb-3">&laquo; {{ 'reports.backToQueue' | translate }}</a>
 
   @if (loading()) {
     <div class="text-center py-5" role="status" aria-live="polite">
-      <span class="spinner-border" aria-hidden="true"></span>
+      <span class="spinner-border text-primary" aria-hidden="true"></span>
       <p class="mt-2 text-muted">{{ 'common.loading' | translate }}</p>
     </div>
   } @else if (errored()) {
-    <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
-      <span>{{ 'common.errorLoading' | translate }}</span>
-      <button type="button" class="btn btn-sm btn-outline-danger" (click)="load()">{{ 'common.retry' | translate }}</button>
-    </div>
+    <app-state-panel kind="error" icon="⚠" [title]="'common.errorLoading' | translate" (retry)="load()" />
   } @else if (report()) {
     @let r = report()!;
-    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-      <h1 class="h4 mb-0">{{ r.title }}</h1>
-      <span class="badge text-bg-secondary">{{ 'reports.statusValue.' + r.status | translate }}</span>
-    </div>
+    <header class="page-header">
+      <div class="page-header__titles">
+        <h1 class="page-header__title">{{ r.title }}</h1>
+        <p class="page-header__subtitle"><span class="code-chip">{{ r.code }}</span></p>
+      </div>
+      <div class="page-header__actions">
+        <app-status-badge [tone]="tone(r.status)" [label]="'reports.statusValue.' + r.status | translate" />
+        <app-status-badge [tone]="tone(r.priority)" [label]="'reports.priorityValue.' + r.priority | translate" />
+      </div>
+    </header>
 
-    <dl class="row small mb-4">
-      <dt class="col-4 col-md-2">{{ 'reports.code' | translate }}</dt>
-      <dd class="col-8 col-md-4"><code>{{ r.code }}</code></dd>
-      <dt class="col-4 col-md-2">{{ 'reports.category' | translate }}</dt>
-      <dd class="col-8 col-md-4">{{ r.categoryName || '—' }}</dd>
-      <dt class="col-4 col-md-2">{{ 'reports.priority' | translate }}</dt>
-      <dd class="col-8 col-md-4">{{ 'reports.priorityValue.' + r.priority | translate }}</dd>
-      <dt class="col-4 col-md-2">{{ 'reports.sla' | translate }}</dt>
-      <dd class="col-8 col-md-4">
-        @if (r.slaBreached) {
-          <span class="badge text-bg-danger">{{ 'reports.breached' | translate }}</span>
-        } @else if (r.dueAt) {
-          {{ r.dueAt | date: 'short' }}
-        } @else {
-          —
-        }
-      </dd>
-      <dt class="col-4 col-md-2">{{ 'reports.assignedResponder' | translate }}</dt>
-      <dd class="col-8 col-md-4"><code class="small">{{ r.assignedResponderId || '—' }}</code></dd>
-      <dt class="col-4 col-md-2">{{ 'reports.filed' | translate }}</dt>
-      <dd class="col-8 col-md-4">{{ r.createdAt | date: 'short' }}</dd>
-    </dl>
+    <div class="card card-elevated mb-4">
+      <div class="card-body">
+        <dl class="row small mb-0">
+          <dt class="col-4 col-md-2">{{ 'reports.category' | translate }}</dt>
+          <dd class="col-8 col-md-4">{{ r.categoryName || '—' }}</dd>
+          <dt class="col-4 col-md-2">{{ 'reports.sla' | translate }}</dt>
+          <dd class="col-8 col-md-4">
+            @if (r.slaBreached) {
+              <app-status-badge tone="danger" [label]="'reports.breached' | translate" />
+            } @else if (r.dueAt) {
+              {{ r.dueAt | date: 'short' }}
+            } @else {
+              —
+            }
+          </dd>
+          <dt class="col-4 col-md-2">{{ 'reports.assignedResponder' | translate }}</dt>
+          <dd class="col-8 col-md-4"><span class="code-chip">{{ r.assignedResponderId || '—' }}</span></dd>
+          <dt class="col-4 col-md-2">{{ 'reports.filed' | translate }}</dt>
+          <dd class="col-8 col-md-4 mb-0">{{ r.createdAt | date: 'short' }}</dd>
+        </dl>
+      </div>
+    </div>
 
     @if (r.description) {
       <div class="mb-4">

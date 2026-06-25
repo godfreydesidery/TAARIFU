@@ -1,0 +1,202 @@
+// =============================================================================
+// Taarifu Admin — App shell chrome
+// -----------------------------------------------------------------------------
+// The persistent layout: a fixed elegant sidebar (brand + sectioned nav), a
+// topbar (breadcrumbs + theme/locale/logout), and the scrolling content area.
+// Mobile-first: the sidebar is an off-canvas drawer below `md` and a static
+// column at `md`+. All colours are theme roles so the chrome recolours in dark
+// mode. (PRD §15 mobile-first; WCAG focus/landmarks handled in the template.)
+// =============================================================================
+
+.app-shell { min-height: 100vh; }
+
+// --- Topbar ------------------------------------------------------------------
+.app-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 1030;
+  height: var(--tf-topbar-height);
+  display: flex;
+  align-items: center;
+  gap: var(--tf-space-3);
+  padding: 0 var(--tf-space-4);
+  background: var(--tf-surface);
+  border-bottom: 1px solid var(--tf-border);
+  box-shadow: var(--tf-shadow-xs);
+}
+.app-topbar__spacer { flex: 1 1 auto; min-width: 0; }
+
+.app-topbar__icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius);
+  background: var(--tf-surface);
+  color: var(--tf-text);
+  cursor: pointer;
+  transition: background var(--tf-dur) var(--tf-ease), border-color var(--tf-dur) var(--tf-ease);
+  &:hover { background: var(--tf-surface-muted); }
+  &:focus-visible { outline: var(--tf-focus-ring-width) solid var(--tf-focus-ring); outline-offset: 1px; }
+}
+
+// --- Breadcrumbs -------------------------------------------------------------
+.app-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  font-size: var(--tf-fs-sm);
+  color: var(--tf-text-muted);
+  overflow: hidden;
+
+  .crumb { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+  .crumb a { color: var(--tf-text-muted); text-decoration: none; }
+  .crumb a:hover { color: var(--tf-primary); text-decoration: underline; }
+  .crumb.is-current { color: var(--tf-text-strong); font-weight: 600; }
+  .crumb-sep { color: var(--tf-neutral-300); }
+}
+
+// --- Layout body -------------------------------------------------------------
+.app-body { display: flex; align-items: stretch; }
+
+// --- Sidebar -----------------------------------------------------------------
+.app-sidebar {
+  flex: 0 0 var(--tf-sidenav-width);
+  width: var(--tf-sidenav-width);
+  background: var(--tf-sidebar-bg);
+  border-right: 1px solid var(--tf-border);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: var(--tf-topbar-height);
+  height: calc(100vh - var(--tf-topbar-height));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+
+  @media (max-width: 767.98px) {
+    position: fixed;
+    top: var(--tf-topbar-height);
+    bottom: 0;
+    left: 0;
+    z-index: 1045;
+    height: auto;
+    transform: translateX(-100%);
+    transition: transform var(--tf-dur) var(--tf-ease);
+    box-shadow: var(--tf-shadow-lg);
+    &.open { transform: translateX(0); }
+  }
+}
+
+.app-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: var(--tf-space-4) var(--tf-space-4) var(--tf-space-3);
+  color: var(--tf-text-strong);
+  text-decoration: none;
+}
+.app-sidebar__logo {
+  flex: 0 0 auto;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: var(--tf-radius);
+  background: linear-gradient(135deg, var(--tf-primary), var(--tf-primary-700));
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 1.05rem;
+  box-shadow: var(--tf-shadow-xs);
+}
+.app-sidebar__brand-text { display: flex; flex-direction: column; line-height: 1.15; }
+.app-sidebar__brand-name { font-weight: 700; font-size: 1.02rem; letter-spacing: -0.01em; }
+.app-sidebar__brand-sub { font-size: var(--tf-fs-xs); color: var(--tf-text-muted); }
+
+.app-sidebar__nav { padding: var(--tf-space-2) var(--tf-space-3) var(--tf-space-5); }
+
+.nav-section {
+  margin-top: var(--tf-space-4);
+  &:first-child { margin-top: var(--tf-space-1); }
+}
+.nav-section__label {
+  padding: 0 0.65rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tf-text-faint);
+}
+
+.nav-item-link {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.55rem 0.65rem;
+  margin-bottom: 0.1rem;
+  border-radius: var(--tf-radius);
+  color: var(--tf-sidebar-fg);
+  text-decoration: none;
+  font-size: var(--tf-fs-sm);
+  font-weight: 500;
+  line-height: 1.2;
+  transition: background var(--tf-dur) var(--tf-ease), color var(--tf-dur) var(--tf-ease);
+
+  .nav-item-link__icon {
+    flex: 0 0 auto;
+    width: 1.15rem;
+    text-align: center;
+    font-size: 1rem;
+    opacity: 0.85;
+  }
+  .nav-item-link__label { flex: 1 1 auto; min-width: 0; }
+
+  &:hover { background: var(--tf-sidebar-hover); color: var(--tf-text-strong); }
+  &:focus-visible { outline: var(--tf-focus-ring-width) solid var(--tf-focus-ring); outline-offset: -2px; }
+
+  &.active {
+    background: var(--tf-primary-100);
+    color: var(--tf-primary-700);
+    font-weight: 600;
+    position: relative;
+    .nav-item-link__icon { opacity: 1; }
+  }
+  &.active::before {
+    content: "";
+    position: absolute;
+    left: -0.65rem;
+    top: 0.4rem;
+    bottom: 0.4rem;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--tf-primary);
+  }
+}
+
+// --- Content -----------------------------------------------------------------
+.app-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--tf-space-5) var(--tf-space-5);
+  @media (max-width: 575.98px) { padding: var(--tf-space-4) var(--tf-space-3); }
+}
+
+.app-content__inner { max-width: 1320px; margin: 0 auto; }
+
+// --- Mobile backdrop ---------------------------------------------------------
+.app-backdrop {
+  position: fixed;
+  inset: var(--tf-topbar-height) 0 0 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1040;
+}
+
+// --- Skip link ---------------------------------------------------------------
+.skip-link {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 1080;
+}

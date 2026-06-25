@@ -1,9 +1,12 @@
-<!-- Login page: centred card, accessible reactive form. All strings via i18n. -->
-<div class="d-flex align-items-center justify-content-center min-vh-100 bg-body-secondary p-3">
-  <div class="card shadow-sm w-100" style="max-width: 24rem;">
-    <div class="card-body p-4">
-      <h1 class="h4 mb-1">{{ 'app.shortTitle' | translate }}</h1>
-      <p class="text-muted mb-4">{{ 'auth.loginTitle' | translate }}</p>
+<!-- Login page: centred branded card with an accessible reactive form. All strings via i18n. -->
+<div class="login-page">
+  <div class="login-card card card-elevated">
+    <div class="card-body p-4 p-sm-5">
+      <div class="text-center mb-4">
+        <span class="app-sidebar__logo mx-auto mb-3" aria-hidden="true" style="width: 3rem; height: 3rem; font-size: 1.5rem;">T</span>
+        <h1 class="h4 mb-1">{{ 'app.shortTitle' | translate }}</h1>
+        <p class="text-muted mb-0">{{ 'auth.loginTitle' | translate }}</p>
+      </div>
 
       <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
         <div class="mb-3">
@@ -47,6 +50,23 @@
           }
         </button>
       </form>
+
+      <div class="d-flex align-items-center justify-content-center gap-2 mt-4">
+        <label class="visually-hidden" for="login-locale">{{ 'nav.language' | translate }}</label>
+        <select
+          id="login-locale"
+          class="form-select form-select-sm w-auto"
+          [value]="locale()"
+          (change)="onLocaleChange($any($event.target).value)"
+        >
+          <option value="en">English</option>
+          <option value="sw">Kiswahili</option>
+        </select>
+        <button type="button" class="app-topbar__icon-btn" (click)="toggleTheme()"
+          [attr.aria-label]="(theme() === 'dark' ? 'nav.themeLight' : 'nav.themeDark') | translate">
+          <span aria-hidden="true">{{ theme() === 'dark' ? '☀' : '☾' }}</span>
+        </button>
+      </div>
     </div>
   </div>
 </div>

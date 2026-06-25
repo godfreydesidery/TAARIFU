@@ -147,7 +147,14 @@ public class SecurityConfig {
             // never-trust-the-callback (provider re-confirmed) and idempotent in ReconciliationService.
             // Without this entry the HMAC-secured endpoint is 401'd at the URL filter and payments cannot
             // settle anonymously. The pattern is `/**` because the rail is a path segment.
-            "/payments/webhook/**"
+            "/payments/webhook/**",
+            // SMS delivery-report (DLR) callback (communications module, wave-4 real SMS adapter). WHY public:
+            // the SMS aggregator POSTs a delivery receipt with NO user JWT — same precedent as /ussd/gateway
+            // and /payments/webhook. The callback is authenticated/validated inside the controller
+            // (fail-closed signature/shared-secret check, no PII trust) before any notification-state change.
+            // Without this entry the DLR is 401'd at the URL filter and SMS delivery receipts never advance
+            // notification state (wave4-review P1).
+            "/communications/sms/dlr"
     };
 
     /**

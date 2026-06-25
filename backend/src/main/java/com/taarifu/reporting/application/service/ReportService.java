@@ -640,15 +640,27 @@ public class ReportService implements ReportLifecycleApi {
      * suspended author's rows — ADR-0017 §3); it is never returned to a reader. No geo-point, no phone/ID, no
      * private body crosses into the index.</p>
      *
+     * <p><b>Single source of the fence (DRY — why this is {@code public}):</b> both the live write path (file /
+     * confirm / resolve / every {@link #transition}) <i>and</i> the one-off discovery <b>backfill</b>
+     * ({@code ReportSearchBackfillSource}, the reporting adapter of {@code search.domain.port.SearchBackfillSource})
+     * call this exact method, so the index-vs-no-index decision and the projection shape can never drift between
+     * the two — a backfill can never index a row the live path would have kept out of discovery (ADR-0017 §1
+     * "reuse the live producer's projection so the fence cannot drift"). It is otherwise an internal helper: the
+     * backfill adapter lives in this module's {@code infrastructure.adapter}, so this stays a same-module call (no
+     * cross-module reach-in — ARCHITECTURE §3.2).</p>
+     *
      * @param report   the report whose discovery projection is being maintained.
      * @param category the report's category (passed in to avoid re-touching a lazy association at call sites).
+     * @return {@code true} if the report was <b>upserted</b> into discovery (public-safe); {@code false} if it was
+     *         instead <b>removed</b> (not public-safe — PRIVATE/sensitive/anonymous). The live callers ignore the
+     *         result; the backfill adapter uses it to count only the rows it actually indexed.
      */
-    private void reindexForDiscovery(Report report, IssueCategory category) {
+    public boolean reindexForDiscovery(Report report, IssueCategory category) {
         boolean publicSafe = report.getVisibility() == ReportVisibility.PUBLIC && !report.isAnonymous();
         if (!publicSafe) {
             // Not (or no longer) public-safe: ensure it is absent from discovery (idempotent remove).
             searchIndexApi.remove(SearchEntityType.PUBLIC_REPORT, report.getPublicId());
-            return;
+            return false;
         }
         searchIndexApi.upsert(new SearchDocumentUpsert(
                 SearchEntityType.PUBLIC_REPORT,
@@ -669,6 +681,7 @@ public class ReportService implements ReportLifecycleApi {
                 // (ADR-0017 §3), never returned. Null here would only ever happen for an anonymous report, which
                 // is already excluded above.
                 report.getReporterProfileId()));
+        return true;
     }
 
     /**

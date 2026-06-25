@@ -94,6 +94,31 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
      */
     List<Report> findAllByReporterProfileId(UUID reporterProfileId);
 
+    /**
+     * Pages PUBLIC reports together with their category, ordered by primary key — the batched scan the
+     * discovery <b>backfill</b> ({@code ReportSearchBackfillSource}) walks to re-push pre-existing public rows
+     * into the search index (ADR-0017 follow-up "a one-off backfill job per owner").
+     *
+     * <p>WHY this query (vs. reusing {@link #findByVisibility}): the backfill builds the same projection the live
+     * producer builds, which reads {@code category.name}/{@code category.publicId} for every row — so the category
+     * is {@code join fetch}ed to avoid an N+1 across a full-corpus walk (PRD §15 lean reads). It filters
+     * {@code visibility = PUBLIC} so the scan never even loads PRIVATE/sensitive rows (defence-in-depth: a row that
+     * must stay out of discovery is never read here), narrowing the work to the only rows that could be indexed.
+     * Ordered by {@code id} (a stable, monotonically-issued key) so successive pages are deterministic and a row
+     * cannot be skipped or visited twice as the backfill advances — re-pushing the same live row is idempotent
+     * regardless, but a stable order keeps the batched walk honest. The anonymity axis is NOT filtered here (a
+     * PUBLIC+anonymous report cannot occur — a sensitive category forces PRIVATE) and is enforced anyway by the
+     * shared fence the backfill routes every row through ({@code ReportService.reindexForDiscovery}), so the fence
+     * stays the single source of truth and this query is purely the row source.</p>
+     *
+     * @param visibility must be {@link ReportVisibility#PUBLIC} (the backfill always passes PUBLIC).
+     * @param pageable   the batch window (page size + index); the backfill pages until exhausted.
+     * @return a page of PUBLIC reports with their category initialised, ordered by primary key.
+     */
+    @Query("select r from Report r join fetch r.category where r.visibility = :visibility order by r.id asc")
+    Page<Report> findByVisibilityWithCategoryOrderById(@Param("visibility") ReportVisibility visibility,
+                                                       Pageable pageable);
+
     // ------------------------------ Admin console read surface (M14) ------------------------------
 
     /**

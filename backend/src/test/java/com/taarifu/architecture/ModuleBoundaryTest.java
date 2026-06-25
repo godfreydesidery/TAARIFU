@@ -62,7 +62,18 @@ class ModuleBoundaryTest {
                         "com.taarifu.moderation..",
                         "com.taarifu.engagement..",
                         "com.taarifu.accountability..",
-                        "com.taarifu.admin..")
+                        "com.taarifu.admin..",
+                        // Phase-2 wave modules + the others that landed since this explicit list was last
+                        // touched — the shared kernel must depend on NONE of them. (The predicate rule
+                        // noModuleDependsOnAnotherModulesDomainOrInfrastructure() already covers all modules
+                        // generically; this explicit list is the belt-and-braces guard against a future
+                        // common → feature regression and must enumerate every feature module to bite.)
+                        "com.taarifu.analytics..",
+                        "com.taarifu.media..",
+                        "com.taarifu.payments..",
+                        "com.taarifu.privacy..",
+                        "com.taarifu.search..",
+                        "com.taarifu.ussd..")
                 .because("the shared kernel must not depend on any feature module (ARCHITECTURE §3.2)");
         rule.check(productionClasses);
     }
@@ -237,6 +248,17 @@ class ModuleBoundaryTest {
         if (pkg.endsWith(".domain.port") || pkg.contains(".domain.port.")) {
             return false;
         }
+        //  (c) a foreign module's domain.model.enums — pure VALUE-TYPE enum constants (no behaviour, no
+        //      tables, no associations, no PII) that a module's PUBLISHED api port legitimately exposes as
+        //      its cross-module vocabulary. The load-bearing precedent: tokens.api.TokenLedgerApi's
+        //      meter/reward/topUp methods take tokens.domain.model.enums.WalletOwnerType /
+        //      RewardBehaviour, so any caller of that published contract (payments → topUp) must name those
+        //      enum constants. Entities/aggregates in domain.model stay encapsulated — this carve-out is
+        //      scoped strictly to the leaf `domain.model.enums` package, never the wider domain.model
+        //      (ADR-0013 §3: api → api is the contract; the enums it exposes ARE part of that contract).
+        if (pkg.endsWith(".domain.model.enums") || pkg.contains(".domain.model.enums.")) {
+            return false;
+        }
         return true;
     }
 
@@ -287,6 +309,16 @@ class ModuleBoundaryTest {
         org.assertj.core.api.Assertions
                 .assertThat(isForeignModuleInternal("reporting", tokenLedgerApi))
                 .as("cross-module ..api.. is the permitted contract, not an internal")
+                .isFalse();
+
+        // A foreign module's domain.model.enums is a published-contract value type (carve-out (c)):
+        // tokens.api.TokenLedgerApi exposes WalletOwnerType in meter/reward/topUp, so payments naming it is
+        // the contract, NOT an internal reach-in. (Entities in domain.model — asserted above — still bite.)
+        JavaClass walletOwnerType =
+                productionClasses.get("com.taarifu.tokens.domain.model.enums.WalletOwnerType");
+        org.assertj.core.api.Assertions
+                .assertThat(isForeignModuleInternal("payments", walletOwnerType))
+                .as("a foreign module's domain.model.enums is a published-api contract value type, not an internal")
                 .isFalse();
 
         // Same-module internal access and the common kernel are both fine.

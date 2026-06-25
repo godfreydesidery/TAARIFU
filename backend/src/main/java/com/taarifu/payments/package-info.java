@@ -19,10 +19,11 @@
  *
  * <p><b>Boundaries (ADR-0013):</b> payments depends only on the shared kernel {@code common}, its own
  * internals, and other modules' published {@code ..api..} packages. It credits the wallet solely through
- * {@code tokens.api} (the {@code TokensApiWalletCreditAdapter} → {@code TokenLedgerApi.topUp} — a CENTRAL
- * NEED) — never tokens' tables. Owners are referenced by public {@code UUID} only (no cross-module FK). No
- * PII (MSISDN/name) is logged or placed on any event/outbox payload (PRD §18). No secrets in source —
- * gateway endpoints and HMAC keys come from the environment (CLAUDE.md §12).</p>
+ * the typed {@code tokens.api} contract (the {@code TokensApiWalletCreditAdapter} → fence-safe
+ * {@code TokenLedgerApi.topUp}, now landed) — never tokens' tables. Owners are referenced by public
+ * {@code UUID} only (no cross-module FK). No PII (MSISDN/name) is logged or placed on any event/outbox
+ * payload (PRD §18). No secrets in source — gateway endpoints and HMAC keys come from the environment
+ * (CLAUDE.md §12).</p>
  *
  * <p>Layering (ARCHITECTURE.md §3.3): {@code api} (controllers, DTOs, the {@code TopUpSucceeded} event) →
  * {@code application} (TopUpService, ReconciliationService) → {@code domain} (the {@code TopUp} entity,
@@ -30,9 +31,11 @@
  * gateway + wallet-credit adapters, config). Flyway: reserved block {@code V130}–{@code V139}; {@code V130}
  * = {@code top_up}. {@code ddl-auto=validate}.</p>
  *
- * <p><b>CENTRAL NEEDs</b> (owned by other teams; tracked in ADR-0015):
- * (1) {@code tokens.api.TokenLedgerApi.topUp(WalletOwnerType, UUID, long tokenAmount, String idempotencyKey)}
- * + a fence-safe {@code PURCHASE}-credit impl; (2) {@code common.security.SecurityConfig} permitting
- * {@code POST /payments/webhook/**} (the {@code /ussd/gateway} precedent).</p>
+ * <p><b>CENTRAL NEEDs (both now landed, Phase-2 must-fix):</b>
+ * (1) {@code tokens.api.TokenLedgerApi.topUp(WalletOwnerType, UUID, long tokenAmount, String paymentReference)}
+ * + its fence-safe {@code PURCHASE}-credit impl — the {@code TokensApiWalletCreditAdapter} now calls it
+ * directly (the reflective bridge is removed) and is the wired default ({@code wallet-credit.adapter=tokens-api});
+ * (2) {@code common.security.SecurityConfig} now permits {@code POST /payments/webhook/**} (the
+ * {@code /ussd/gateway} precedent) so the HMAC-secured callback is reachable anonymously.</p>
  */
 package com.taarifu.payments;

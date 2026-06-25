@@ -123,6 +123,41 @@ public class WalletService {
     }
 
     /**
+     * Credits a settled <b>purchase top-up</b> (mobile-money/card) to the owner's wallet, idempotently
+     * (PRD §23.4/§23.6; ADR-0015). Appends an append-only {@link TokenTransactionType#PURCHASE} ledger entry
+     * and advances the cached balance in the same transaction.
+     *
+     * <p><b>🔒 Civic-integrity fence (binding — D18, PRD §23.5):</b> a purchase top-up adds <b>only</b>
+     * spendable convenience tokens. It NEVER grants a role, a vote, a signature, a rating, a poll outcome,
+     * routing/SLA/priority, or a verification status, and a binding democratic action must never read a
+     * balance: there is deliberately no balance return here and no path from this method to any
+     * democratic-weight effect. The credited tokens buy convenience/reach only — never democratic weight.
+     * This is the same fence as {@link #grant}/{@link #earn}: a credit is a credit; what it can be spent on
+     * is constrained entirely by the metering side, which hard-rejects binding action codes.</p>
+     *
+     * @param ownerType         owner class (USER/ORGANIZATION).
+     * @param ownerId           owner public id (opaque UUID; never a national/voter ID — no PII here).
+     * @param amount            positive number of tokens purchased.
+     * @param paymentReference  the settlement reference of the originating payment (recorded as the ledger
+     *                          {@code reason} for audit; never PII — it is a provider/credit reference id).
+     * @param idempotencyKey    unique key for this credit (the top-up's {@code credit_event_id}); a redelivered
+     *                          or retried settlement under the same key credits the wallet <b>exactly once</b>.
+     * @return the resulting (or pre-existing, on replay) {@link PURCHASE} ledger entry.
+     * @throws ApiException {@link ErrorCode#BAD_REQUEST} if {@code amount <= 0}.
+     */
+    public TokenTransaction purchaseTopUp(WalletOwnerType ownerType, UUID ownerId, long amount,
+                                          String paymentReference, String idempotencyKey) {
+        requirePositive(amount);
+        // refEntityType=PAYMENT ties the ledger entry back to the originating money-movement by reference
+        // only (cross-module, no FK — §3.2); reason carries the settlement reference for audit. Both are
+        // machine references, never PII. A blank reference degrades to the bare PURCHASE_TOP_UP reason.
+        String reason = (paymentReference == null || paymentReference.isBlank())
+                ? "PURCHASE_TOP_UP" : "PURCHASE_TOP_UP:" + paymentReference;
+        return creditIdempotent(ownerType, ownerId, TokenTransactionType.PURCHASE, amount,
+                "PURCHASE", reason, "PAYMENT", null, idempotencyKey, null);
+    }
+
+    /**
      * Credits an earned reward for a validated civic behaviour, honouring the per-behaviour cap.
      *
      * @param ownerType      owner class.

@@ -241,3 +241,26 @@ taarifu:
     content-safety:
       provider: ${TAARIFU_CONTENT_SAFETY_PROVIDER:heuristic}    # 'heuristic' (default) or 'ml'
       hold-threshold: ${TAARIFU_CONTENT_SAFETY_HOLD_THRESHOLD:0.80}  # conservative confidence to HOLD (R21)
+
+  # --- Payments: mobile-money token TOP-UP (ADR-0015; PRD §23.4/§23.5/§23.6, D18). ---
+  payments:
+    # Which WalletCreditPort adapter credits a SETTLED top-up to the buyer's token wallet.
+    # 'tokens-api' (default): TokensApiWalletCreditAdapter → the typed, fence-safe tokens.api
+    #   TokenLedgerApi.topUp(...) PURCHASE credit (the real credit; D18 — convenience tokens only, never
+    #   democratic weight). This is now the wired default since the typed top-up method has landed.
+    # 'logging': LoggingWalletCreditStub — records the credit intent and moves NO real tokens; use only for
+    #   a stripped dev/CI context that must boot without the tokens module wired. Exactly one bean is active.
+    wallet-credit:
+      adapter: ${TAARIFU_PAYMENTS_WALLET_CREDIT_ADAPTER:tokens-api}
+    # Mobile-money rail selector + endpoints. Default 'logging' is the safe no-op (zero external calls, no
+    # secrets) so a no-config context boots and NO credit is ever posted until a real rail is configured.
+    # All secrets (HMAC callback key, rail credentials) come from env/secret-mounts — NEVER committed
+    # (PRD §18, CLAUDE.md §12). See PaymentsGatewayProperties for the full bound set.
+    gateway:
+      provider: ${TAARIFU_PAYMENTS_GATEWAY_PROVIDER:logging}   # 'logging'|'mpesa'|'tigopesa'|'airtelmoney'|'halopesa'
+      base-url: ${TAARIFU_PAYMENTS_GATEWAY_BASE_URL:}          # rail HTTPS base (collection/verify); blank on stub
+      hmac-secret: ${TAARIFU_PAYMENTS_GATEWAY_HMAC_SECRET:}    # SECRET — callback HMAC key; env/secret-mount only
+      signature-header: ${TAARIFU_PAYMENTS_GATEWAY_SIGNATURE_HEADER:X-Signature}  # header the rail signs callbacks on
+      price-minor-per-token: ${TAARIFU_PAYMENTS_GATEWAY_PRICE_MINOR_PER_TOKEN:0}  # server-side unit price (minor units)
+      currency: ${TAARIFU_PAYMENTS_GATEWAY_CURRENCY:TZS}       # ISO-4217 currency
+      request-timeout: ${TAARIFU_PAYMENTS_GATEWAY_REQUEST_TIMEOUT:8s}  # per-request timeout (degrade, don't crash)

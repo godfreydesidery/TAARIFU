@@ -10,9 +10,9 @@ import java.util.UUID;
  *
  * <p>Responsibility: a single, narrow seam — "credit N tokens to this owner's wallet as a purchase top-up,
  * idempotently". It exists so payments never reaches into the tokens module's tables (ADR-0013): the
- * production adapter ({@code TokensApiWalletCreditAdapter}) delegates to the published
- * {@code tokens.api.TokenLedgerApi.topUp(...)}; a logging stub adapter lets dev/test boot and the flow be
- * tested without tokens wiring.</p>
+ * production adapter ({@code TokensApiWalletCreditAdapter}, the wired default) makes a direct typed call to
+ * the published {@code tokens.api.TokenLedgerApi.topUp(...)}; a logging stub adapter lets a stripped
+ * dev/CI context boot and the flow be tested without the tokens module wired.</p>
  *
  * <p><b>🔒 Civic-integrity fence (binding — D18, PRD §23.5):</b> this port can do <b>exactly one</b> thing —
  * add convenience tokens to a wallet. It deliberately exposes <b>no</b> way to grant a role, a vote, a
@@ -20,10 +20,10 @@ import java.util.UUID;
  * or consults a balance. A purchased token buys convenience/reach only, never democratic weight. The fence
  * is the shape of this interface: the top-up door exists; the democratic-weight door does not.</p>
  *
- * <p><b>CENTRAL NEED:</b> the {@code tokens-api} adapter requires {@code tokens.api.TokenLedgerApi} to gain
- * a fence-safe {@code topUp(WalletOwnerType, UUID, long tokenAmount, String idempotencyKey)} credit method
- * (a {@code PURCHASE}-type idempotent credit). Until that lands, the logging stub adapter satisfies this
- * port and the flow remains fully testable against the contract.</p>
+ * <p>The {@code tokens-api} adapter delegates to the fence-safe
+ * {@code tokens.api.TokenLedgerApi.topUp(WalletOwnerType, UUID, long tokenAmount, String paymentReference)}
+ * credit method (a {@code PURCHASE}-type idempotent credit) — that method has landed and the typed adapter
+ * is the wired default; the logging stub remains available for a tokens-less dev/CI boot.</p>
  */
 public interface WalletCreditPort {
 

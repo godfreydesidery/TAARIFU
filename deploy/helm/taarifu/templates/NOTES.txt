@@ -1,0 +1,23 @@
+Taarifu {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}" into namespace "{{ .Release.Namespace }}" (env: {{ .Values.environment }}).
+
+Backend image: {{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}
+{{- if not .Values.backend.image.tag }}
+
+  WARNING: backend.image.tag is EMPTY. Deploy with the immutable git-sha CI scanned:
+    helm upgrade --install {{ .Release.Name }} deploy/helm/taarifu \
+      --namespace {{ .Release.Namespace }} --set backend.image.tag=<git-sha> --atomic --wait
+{{- end }}
+
+Verify the deploy (deploy/README §7):
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "taarifu.fullname" . }}-backend
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "taarifu.fullname" . }}-backend 8081:8081 &
+  curl -fsS http://localhost:8081/api/v1/actuator/health   # expect {"status":"UP"}
+
+Rollback (one command, deploy/README §8 / RUNBOOK #rollback):
+  helm rollback {{ .Release.Name }} <PREV_REVISION> -n {{ .Release.Namespace }}
+
+REMINDERS:
+- Secrets are NOT in this chart. Create them via Sealed/External Secrets first
+  (deploy/helm/secrets/). Required: {{ .Values.backend.secrets.core.existingSecret }}.
+- TAARIFU_MFA_ENFORCED must be "true" in prod/staging (RUNBOOK #mfa).
+- Residency (D-Q9, R12): run in-country where feasible; no real PII in non-prod (R10).

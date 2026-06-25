@@ -22,12 +22,15 @@
  * needs. Swapping to Redis later is a port-impl change behind {@code UssdSessionStore}, no flow change.</p>
  *
  * <p><b>Boundary discipline (ADR-0013, the parallel-build isolation rule):</b> the flows drive the other
- * modules — sign up by MSISDN (identity), file/track a report (reporting), forward an area-alert intent
- * (communications) — and send outbound confirmations (SMS) <b>only through consumer-owned ports</b> in
- * {@code application.port}, referencing everything by public {@code UUID}. This module never imports another
- * module's {@code domain}/{@code infrastructure}/{@code repository}. Where a callee has <b>no published
- * command port yet</b> (identity signup-by-MSISDN, reporting file/track, communications area-alert + SMS),
- * the call is made against a local port with a dev stub and marked {@code // TODO(wiring)} to swap to the
- * callee's {@code com.taarifu.<callee>.api} port once it lands — see CENTRAL INTEGRATION NEEDS.</p>
+ * modules — sign up by MSISDN (identity), file/track a report (reporting), resolve a ward code (geography),
+ * send outbound SMS + forward an area-alert intent (communications) — <b>only through consumer-owned ports</b>
+ * in {@code application.port}, referencing everything by public {@code UUID}/code. This module never imports
+ * another module's {@code domain}/{@code infrastructure}/{@code repository}. Each consumer-owned port is bound
+ * by an {@code infrastructure.adapter} to the callee's published {@code com.taarifu.<callee>.api} port: identity
+ * ({@code AccountProvisioningApi}), reporting ({@code UssdReportApi}), geography ({@code WardCodeQueryApi} — A7,
+ * the friendly ward-code lookup), and communications ({@code SmsSendApi} for the ticket-confirmation SMS, and
+ * {@code AreaSubscriptionApi} for area-alert forwarding — A3/ADR-0019). The area-alert <b>forward call</b>
+ * stays config-gated (default off) pending identity exposing account→profile resolution so the follow is keyed
+ * at the fan-out's profile grain — see {@code UssdAlertService} and CENTRAL INTEGRATION NEEDS.</p>
  */
 package com.taarifu.ussd;

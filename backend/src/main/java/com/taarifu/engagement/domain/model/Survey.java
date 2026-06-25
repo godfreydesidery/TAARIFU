@@ -156,8 +156,18 @@ public class Survey extends BaseEntity {
         return s;
     }
 
-    /** Opens the survey for responses (post-schedule). */
+    /**
+     * Opens the survey/poll for responses (the {@code DRAFT/SCHEDULED -> OPEN} transition, UC-E06). Guarded
+     * to run only from a pre-open state — re-opening a {@code CLOSED}/{@code ARCHIVED} survey would resurrect
+     * a finished consultation (and a binding poll's tally); the lifecycle service maps the guard to a
+     * localised conflict.
+     *
+     * @throws IllegalStateException if the survey is not {@code DRAFT}/{@code SCHEDULED}.
+     */
     public void open() {
+        if (this.status != SurveyStatus.DRAFT && this.status != SurveyStatus.SCHEDULED) {
+            throw new IllegalStateException("Survey can only be opened from DRAFT/SCHEDULED (was " + status + ")");
+        }
         this.status = SurveyStatus.OPEN;
     }
 

@@ -28,6 +28,8 @@ import com.taarifu.institutions.domain.repository.ParliamentRepository;
 import com.taarifu.institutions.domain.repository.ParliamentRoleRepository;
 import com.taarifu.institutions.domain.repository.PoliticalPartyRepository;
 import com.taarifu.institutions.domain.repository.RepresentativeRepository;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -87,6 +89,7 @@ public class InstitutionsAdminService {
     private final RepresentativeRepository representativeRepository;
     private final GeographyQueryService geographyQueryService;
     private final InstitutionsMapper mapper;
+    private final SearchIndexApi searchIndexApi;
 
     /**
      * @param partyRepository           party persistence port.
@@ -96,19 +99,27 @@ public class InstitutionsAdminService {
      * @param geographyQueryService     geography's public service for constituency/ward FK resolution
      *                                  (ADR-0013 — never geography's repositories).
      * @param mapper                    entity→DTO mapper.
+     * @param searchIndexApi            search's published inbound port (ADR-0017 §1): institutions pushes a
+     *                                  representative's <b>public</b> directory projection (name+seat facets,
+     *                                  never PII/bio) on create/update and removes it on delete, so the
+     *                                  cross-entity discovery index reflects the directory. This is an
+     *                                  {@code api → api} cross-module call (owner → search; no reach-in,
+     *                                  no cycle — ADR-0013 §1, ModuleBoundaryTest stays GREEN).
      */
     public InstitutionsAdminService(PoliticalPartyRepository partyRepository,
                                     ParliamentRepository parliamentRepository,
                                     ParliamentRoleRepository parliamentRoleRepository,
                                     RepresentativeRepository representativeRepository,
                                     GeographyQueryService geographyQueryService,
-                                    InstitutionsMapper mapper) {
+                                    InstitutionsMapper mapper,
+                                    SearchIndexApi searchIndexApi) {
         this.partyRepository = partyRepository;
         this.parliamentRepository = parliamentRepository;
         this.parliamentRoleRepository = parliamentRoleRepository;
         this.representativeRepository = representativeRepository;
         this.geographyQueryService = geographyQueryService;
         this.mapper = mapper;
+        this.searchIndexApi = searchIndexApi;
     }
 
     // =============================================================================================
@@ -289,7 +300,9 @@ public class InstitutionsAdminService {
     public RepresentativeDto createRepresentative(RepresentativeWriteDto dto) {
         Representative rep = Representative.create();
         applyRepresentative(rep, dto, NO_EXCLUDE);
-        return mapper.toDto(representativeRepository.save(rep));
+        Representative saved = representativeRepository.save(rep);
+        indexRepresentative(saved);
+        return mapper.toDto(saved);
     }
 
     /**
@@ -307,7 +320,12 @@ public class InstitutionsAdminService {
                 .orElseThrow(() ->
                         new ResourceNotFoundException(KEY_REPRESENTATIVE_NOT_FOUND, publicId));
         applyRepresentative(rep, dto, rep.getId());
-        return mapper.toDto(representativeRepository.save(rep));
+        Representative saved = representativeRepository.save(rep);
+        // Re-push the (possibly changed name/seat/status→visibility) projection — idempotent upsert keyed on
+        // (REPRESENTATIVE, publicId), so a status transition (PENDING→SITTING→FORMER) updates the one row and
+        // flips its visibility (a PENDING rep stays STAFF-only; a SITTING/FORMER rep is public) — ADR-0017 §1.
+        indexRepresentative(saved);
+        return mapper.toDto(saved);
     }
 
     /**
@@ -324,6 +342,9 @@ public class InstitutionsAdminService {
                         new ResourceNotFoundException(KEY_REPRESENTATIVE_NOT_FOUND, publicId));
         rep.markDeleted(currentActor());
         representativeRepository.save(rep);
+        // Remove the soft-deleted representative from discovery (idempotent — ADR-0017 §1). A deleted record
+        // must not surface in search even though its row survives for the historical/accountability record.
+        searchIndexApi.remove(SearchEntityType.REPRESENTATIVE, publicId);
     }
 
     // =============================================================================================
@@ -399,6 +420,32 @@ public class InstitutionsAdminService {
                 dto.parliamentId() != null ? resolveParliament(dto.parliamentId()) : null,
                 dto.parliamentRoleId() != null ? resolveParliamentRole(dto.parliamentRoleId()) : null,
                 status, dto.electedAt(), dto.bio());
+    }
+
+    // =============================================================================================
+    // Search indexing (ADR-0017 §1) — push the representative's PUBLIC directory projection.
+    // =============================================================================================
+
+    /**
+     * Pushes a representative's public, searchable directory projection to the cross-entity discovery index
+     * (ADR-0017 §1) via search's published inbound {@link SearchIndexApi}. Called on create/update; the upsert
+     * is idempotent on {@code (REPRESENTATIVE, publicId)} so a re-push updates the single live row (a status
+     * transition PENDING→SITTING→FORMER flips its visibility automatically).
+     *
+     * <p>The projection itself — what is indexed (public seat label + role/mandate facets, never {@code bio}/
+     * {@code profileId}/PII) and at what visibility (PENDING → {@code STAFF}, SITTING/FORMER → {@code PUBLIC}) —
+     * is built by {@link RepresentativeSearchProjection}, the <b>single shared</b> builder this live path and the
+     * backfill source both use so the fence cannot drift (DRY; see that class for the full ADR-0017 §1/§4
+     * rationale).</p>
+     *
+     * @param rep the persisted representative (its {@code constituency}/{@code ward} associations are read here
+     *            for the title/area facet; both may be {@code null} for special-seats/nominated).
+     */
+    private void indexRepresentative(Representative rep) {
+        // Reuse the single shared projection builder so the live write path and the backfill path index a
+        // representative IDENTICALLY — same title/keywords/area facet and, critically, the same visibility fence
+        // (PENDING → STAFF, SITTING/FORMER → PUBLIC). The fence lives in ONE place and cannot drift (DRY).
+        searchIndexApi.upsert(RepresentativeSearchProjection.of(rep));
     }
 
     /** Clears the {@code current} flag of the existing current term of a legislature (excluding one id). */

@@ -112,9 +112,12 @@ public class AnnouncementPublishedHandler implements DomainEventHandler {
         for (UUID recipient : recipients) {
             // Per-recipient idempotent dispatch; FEED always retained, PUSH→SMS fallback (EI-5). The
             // dispatcher keys on the announcement id (sourceId), so a redelivered event never double-sends.
-            // Title/body are placeholder refs here — the dispatcher's adapter renders the localised template
-            // from the source by payloadRef. TODO(wiring): pass rendered SW/EN title/body once the i18n
-            // notification-template service exists; payloadRef carries the announcement id.
+            // Title/body are passed null here — the dispatcher's adapter renders the localised message from the
+            // source by payloadRef (the announcement id), in each recipient's own language at send time, so a
+            // single PII-free event serves every locale and the body is never carried on the wire (PRD §18).
+            // PHASE-3: needs the i18n notification-template service (per-type SW/EN templates rendered to the
+            // recipient's NotificationPreference language). The dispatch seam is ready to receive the rendered
+            // title/body in the last two args the moment that service ships — no event/contract change required.
             dispatchService.dispatch(recipient, NotificationType.NEW_ANNOUNCEMENT, channels,
                     published.announcementId().toString(), published.announcementId(),
                     null, null);

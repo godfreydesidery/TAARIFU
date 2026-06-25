@@ -1,101 +1,392 @@
-<!-- Dashboard: stat cards + quick actions + feature nav. Counts degrade to a dash on failure. -->
+<!--
+  Dashboard: KPI tiles (from /admin/stats) + analytics charts (from /admin/analytics/*).
+  Every tile is independent and tri-state (skeleton → value | empty); a 404 endpoint degrades gracefully.
+-->
 <section>
-  <h1 class="h3 mb-1">{{ 'dashboard.title' | translate }}</h1>
-  <p class="text-muted mb-4">{{ 'dashboard.subtitle' | translate }}</p>
+  <header class="page-header">
+    <div class="page-header__titles">
+      <h1 class="page-header__title">{{ 'dashboard.title' | translate }}</h1>
+      <p class="page-header__subtitle">{{ 'dashboard.subtitle' | translate }}</p>
+    </div>
+    <div class="page-header__actions">
+      <a routerLink="/reports" class="btn btn-primary btn-sm">{{ 'dashboard.qaReportQueue' | translate }}</a>
+      <a routerLink="/moderation" class="btn btn-outline-secondary btn-sm">{{ 'dashboard.qaModeration' | translate }}</a>
+    </div>
+  </header>
 
-  <!-- Stat cards: report-domain figures from the single /admin/stats aggregate; the rest from list totals. -->
+  <!-- ===== Analytics date-range picker (drives every window-scoped chart below) ===== -->
+  <div class="filter-bar">
+    <div class="d-flex flex-wrap align-items-end gap-3">
+      <div>
+        <div class="form-label small mb-1" id="range-label">{{ 'analytics.dateRange' | translate }}</div>
+        <div class="btn-group btn-group-sm" role="group" aria-labelledby="range-label">
+          @for (r of quickRanges; track r) {
+            <button
+              type="button"
+              class="btn"
+              [class.btn-primary]="range() === r"
+              [class.btn-outline-secondary]="range() !== r"
+              [attr.aria-pressed]="range() === r"
+              (click)="selectRange(r)"
+            >
+              {{ 'analytics.range.' + r | translate }}
+            </button>
+          }
+        </div>
+      </div>
+      @if (range() === 'CUSTOM') {
+        <div>
+          <label class="form-label small mb-1" for="range-from">{{ 'analytics.from' | translate }}</label>
+          <input
+            id="range-from"
+            type="date"
+            class="form-control form-control-sm"
+            [ngModel]="customFrom()"
+            (ngModelChange)="customFrom.set($event); applyCustomRange()"
+          />
+        </div>
+        <div>
+          <label class="form-label small mb-1" for="range-to">{{ 'analytics.to' | translate }}</label>
+          <input
+            id="range-to"
+            type="date"
+            class="form-control form-control-sm"
+            [ngModel]="customTo()"
+            (ngModelChange)="customTo.set($event); applyCustomRange()"
+          />
+        </div>
+      }
+    </div>
+  </div>
+
+  <!-- ===== KPI stat tiles ===== -->
   <div class="row g-3 mb-4">
-    <div class="col-6 col-lg-3">
-      <a routerLink="/reports" class="card h-100 text-decoration-none text-reset shadow-sm">
-        <div class="card-body text-center">
-          <p class="h2 mb-0">
-            @if (openCases() === undefined) {
-              <span class="placeholder col-4"></span>
-            } @else {
-              {{ openCases() === null ? '—' : (openCases() | number) }}
-            }
-          </p>
-          <small class="text-muted">{{ 'dashboard.statOpenCases' | translate }}</small>
+    <div class="col-6 col-xl-3">
+      <a routerLink="/reports" class="card card-link h-100 text-reset text-decoration-none">
+        <div class="stat-tile">
+          <span class="stat-tile__icon" aria-hidden="true">&#9993;</span>
+          <div class="stat-tile__body">
+            <div class="stat-tile__value">
+              @if (openCases() === undefined) {
+                <span class="skeleton skeleton--value"></span>
+              } @else {
+                {{ openCases() === null ? '—' : (openCases() | number) }}
+              }
+            </div>
+            <p class="stat-tile__label">{{ 'dashboard.statOpenCases' | translate }}</p>
+          </div>
         </div>
       </a>
     </div>
-    <div class="col-6 col-lg-3">
-      <a routerLink="/reports" class="card h-100 text-decoration-none text-reset shadow-sm">
-        <div class="card-body text-center">
-          <p class="h2 mb-0" [class.text-danger]="!!slaBreachedCases()">
-            @if (slaBreachedCases() === undefined) {
-              <span class="placeholder col-4"></span>
-            } @else {
-              {{ slaBreachedCases() === null ? '—' : (slaBreachedCases() | number) }}
-            }
-          </p>
-          <small class="text-muted">{{ 'dashboard.statSlaBreached' | translate }}</small>
+    <div class="col-6 col-xl-3">
+      <a routerLink="/reports" class="card card-link h-100 text-reset text-decoration-none">
+        <div class="stat-tile">
+          <span class="stat-tile__icon is-danger" aria-hidden="true">&#9888;</span>
+          <div class="stat-tile__body">
+            <div class="stat-tile__value" [class.is-danger]="!!slaBreachedCases()">
+              @if (slaBreachedCases() === undefined) {
+                <span class="skeleton skeleton--value"></span>
+              } @else {
+                {{ slaBreachedCases() === null ? '—' : (slaBreachedCases() | number) }}
+              }
+            </div>
+            <p class="stat-tile__label">{{ 'dashboard.statSlaBreached' | translate }}</p>
+          </div>
         </div>
       </a>
     </div>
-    <div class="col-6 col-lg-3">
-      <a routerLink="/moderation" class="card h-100 text-decoration-none text-reset shadow-sm">
-        <div class="card-body text-center">
-          <p class="h2 mb-0">
-            @if (flagsPending() === undefined) {
-              <span class="placeholder col-4"></span>
-            } @else {
-              {{ flagsPending() === null ? '—' : (flagsPending() | number) }}
-            }
-          </p>
-          <small class="text-muted">{{ 'dashboard.statModeration' | translate }}</small>
+    <div class="col-6 col-xl-3">
+      <a routerLink="/moderation" class="card card-link h-100 text-reset text-decoration-none">
+        <div class="stat-tile">
+          <span class="stat-tile__icon is-warning" aria-hidden="true">&#9873;</span>
+          <div class="stat-tile__body">
+            <div class="stat-tile__value">
+              @if (flagsPending() === undefined) {
+                <span class="skeleton skeleton--value"></span>
+              } @else {
+                {{ flagsPending() === null ? '—' : (flagsPending() | number) }}
+              }
+            </div>
+            <p class="stat-tile__label">{{ 'dashboard.statModeration' | translate }}</p>
+          </div>
         </div>
       </a>
     </div>
-    <div class="col-6 col-lg-3">
-      <a routerLink="/responders" class="card h-100 text-decoration-none text-reset shadow-sm">
-        <div class="card-body text-center">
-          <p class="h2 mb-0">
-            @if (organisationsCount() === undefined) {
-              <span class="placeholder col-4"></span>
-            } @else {
-              {{ organisationsCount() === null ? '—' : (organisationsCount() | number) }}
-            }
-          </p>
-          <small class="text-muted">{{ 'dashboard.statOrganisations' | translate }}</small>
+    <div class="col-6 col-xl-3">
+      <a routerLink="/users" class="card card-link h-100 text-reset text-decoration-none">
+        <div class="stat-tile">
+          <span class="stat-tile__icon is-info" aria-hidden="true">&#9787;</span>
+          <div class="stat-tile__body">
+            <div class="stat-tile__value">
+              @if (verificationQueueDepth() === undefined) {
+                <span class="skeleton skeleton--value"></span>
+              } @else {
+                {{ verificationQueueDepth() === null ? '—' : (verificationQueueDepth() | number) }}
+              }
+            </div>
+            <p class="stat-tile__label">{{ 'dashboard.statVerificationQueue' | translate }}</p>
+          </div>
         </div>
       </a>
     </div>
   </div>
 
-  <!-- Quick actions -->
-  <h2 class="h5 mb-2">{{ 'dashboard.quickActions' | translate }}</h2>
-  <div class="d-flex flex-wrap gap-2 mb-4">
-    <a routerLink="/reports" class="btn btn-outline-primary btn-sm">{{ 'dashboard.qaReportQueue' | translate }}</a>
-    <a routerLink="/moderation" class="btn btn-outline-primary btn-sm">{{ 'dashboard.qaModeration' | translate }}</a>
-    <a routerLink="/responders/new" class="btn btn-outline-primary btn-sm">{{ 'dashboard.qaNewOrganisation' | translate }}</a>
-    <a routerLink="/institutions/representatives/new" class="btn btn-outline-primary btn-sm">{{ 'dashboard.qaLinkRepresentative' | translate }}</a>
-    <a routerLink="/issue-categories/new" class="btn btn-outline-primary btn-sm">{{ 'dashboard.qaNewCategory' | translate }}</a>
+  <!-- ===== Reports-volume drill-down: total for the window + by-category / by-area detail ===== -->
+  <div class="card card-elevated mb-4">
+    <div class="card-body">
+      <div class="d-flex align-items-baseline justify-content-between flex-wrap gap-2 mb-1">
+        <h2 class="h6 mb-0">{{ 'analytics.volume' | translate }}</h2>
+        @if (volume()) {
+          <span class="badge-soft is-primary">
+            {{ 'analytics.volumeTotal' | translate }}: <strong class="ms-1">{{ volume()!.total | number }}</strong>
+          </span>
+        }
+      </div>
+      <p class="text-muted small mb-3">{{ 'analytics.volumeHint' | translate }}</p>
+
+      @if (volume() === undefined) {
+        <div class="skeleton skeleton--chart" style="height: 180px"></div>
+      } @else if (volume() && volumeRows().length > 0) {
+        <!-- Drill-down dimension toggle. -->
+        <div class="btn-group btn-group-sm mb-3" role="group" [attr.aria-label]="'analytics.drillBy' | translate">
+          <button
+            type="button"
+            class="btn"
+            [class.btn-primary]="volumeDim() === 'category'"
+            [class.btn-outline-secondary]="volumeDim() !== 'category'"
+            [attr.aria-pressed]="volumeDim() === 'category'"
+            (click)="volumeDim.set('category')"
+          >
+            {{ 'analytics.byCategory' | translate }}
+          </button>
+          <button
+            type="button"
+            class="btn"
+            [class.btn-primary]="volumeDim() === 'area'"
+            [class.btn-outline-secondary]="volumeDim() !== 'area'"
+            [attr.aria-pressed]="volumeDim() === 'area'"
+            (click)="volumeDim.set('area')"
+          >
+            {{ 'analytics.byArea' | translate }}
+          </button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <caption class="visually-hidden">{{ 'analytics.volume' | translate }}</caption>
+            <thead>
+              <tr>
+                <th scope="col">{{ volumeDim() === 'category' ? ('analytics.category' | translate) : ('analytics.area' | translate) }}</th>
+                <th scope="col" class="text-end" style="width: 6rem">{{ 'analytics.count' | translate }}</th>
+                <th scope="col" style="width: 40%">{{ 'analytics.share' | translate }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of volumeRows(); track row.key; let i = $index) {
+                <tr>
+                  <td>{{ row.key ?? ('analytics.unattributed' | translate) }}</td>
+                  <td class="text-end fw-semibold">{{ row.count | number }}</td>
+                  <td>
+                    <div class="volume-bar" role="img"
+                      [attr.aria-label]="(row.count / (volume()!.total || 1) * 100 | number: '1.0-0') + '%'">
+                      <span class="volume-bar__fill" [style.width.%]="row.count / (volume()!.total || 1) * 100"></span>
+                    </div>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      } @else {
+        <p class="state-panel__text text-center my-4">{{ 'analytics.noData' | translate }}</p>
+      }
+    </div>
   </div>
 
-  <!-- Feature nav -->
-  <h2 class="h5 mb-2">{{ 'dashboard.manage' | translate }}</h2>
-  <div class="row g-3">
-    <div class="col-12 col-md-6 col-lg-4">
-      <a routerLink="/geography/regions" class="card h-100 text-decoration-none text-reset shadow-sm">
+  <!-- ===== Charts row 1: reports by status + channel mix ===== -->
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-lg-8">
+      <div class="card card-elevated h-100">
         <div class="card-body">
-          <h3 class="h6 card-title">{{ 'nav.geography' | translate }}</h3>
+          <h2 class="h6 mb-1">{{ 'analytics.reportsByStatus' | translate }}</h2>
+          <p class="text-muted small mb-3">{{ 'analytics.reportsByStatusHint' | translate }}</p>
+          @if (stats() === undefined) {
+            <div class="skeleton skeleton--chart"></div>
+          } @else if (statusChart()) {
+            <div class="chart-frame">
+              <app-chart type="bar" [data]="statusChart()!" [ariaLabel]="'analytics.reportsByStatus' | translate" />
+            </div>
+          } @else {
+            <p class="state-panel__text text-center my-4">{{ 'analytics.noData' | translate }}</p>
+          }
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-4">
+      <div class="card card-elevated h-100">
+        <div class="card-body">
+          <h2 class="h6 mb-1">{{ 'analytics.channelMix' | translate }}</h2>
+          <p class="text-muted small mb-3">{{ 'analytics.channelMixHint' | translate }}</p>
+          @if (channelMix() === undefined) {
+            <div class="skeleton skeleton--chart"></div>
+          } @else if (channelChart()) {
+            <div class="chart-frame chart-frame--sm">
+              <app-chart type="doughnut" [data]="channelChart()!" [ariaLabel]="'analytics.channelMix' | translate" />
+            </div>
+            <ul class="chart-legend list-unstyled mb-0">
+              @for (item of channelLegend(); track item.label) {
+                <li class="chart-legend__item">
+                  <span class="chart-legend__swatch" [style.background]="item.color"></span>
+                  {{ item.label }} <strong class="ms-1">{{ item.value | number }}</strong>
+                </li>
+              }
+            </ul>
+          } @else {
+            <p class="state-panel__text text-center my-4">{{ 'analytics.noData' | translate }}</p>
+          }
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Charts row 2: verification funnel + SLA breaches ===== -->
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-lg-8">
+      <div class="card card-elevated h-100">
+        <div class="card-body">
+          <div class="d-flex align-items-baseline justify-content-between flex-wrap gap-2 mb-1">
+            <h2 class="h6 mb-0">{{ 'analytics.funnel' | translate }}</h2>
+            @if (funnelConversion() !== null) {
+              <span class="badge-soft is-primary">
+                {{ 'analytics.funnelConversion' | translate }}: {{ funnelConversion()! * 100 | number: '1.0-0' }}%
+              </span>
+            }
+          </div>
+          <p class="text-muted small mb-3">{{ 'analytics.funnelHint' | translate }}</p>
+          @if (funnel() === undefined) {
+            <div class="skeleton skeleton--chart"></div>
+          } @else if (funnelChart()) {
+            <div class="chart-frame">
+              <app-chart type="bar" [data]="funnelChart()!" [ariaLabel]="'analytics.funnel' | translate" />
+            </div>
+          } @else {
+            <p class="state-panel__text text-center my-4">{{ 'analytics.noData' | translate }}</p>
+          }
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-4">
+      <div class="card card-elevated h-100">
+        <div class="card-body">
+          <h2 class="h6 mb-1">{{ 'analytics.slaBreaches' | translate }}</h2>
+          <p class="text-muted small mb-3">{{ 'analytics.slaBreachesHint' | translate }}</p>
+          @if (slaBreaks() === undefined) {
+            <div class="skeleton skeleton--chart"></div>
+          } @else if (slaChart()) {
+            <div class="chart-frame chart-frame--sm">
+              <app-chart type="doughnut" [data]="slaChart()!" [ariaLabel]="'analytics.slaBreaches' | translate" />
+            </div>
+            <ul class="chart-legend list-unstyled mb-0">
+              @for (item of slaLegend(); track item.label) {
+                <li class="chart-legend__item">
+                  <span class="chart-legend__swatch" [style.background]="item.color"></span>
+                  {{ item.label }} <strong class="ms-1">{{ item.value | number }}</strong>
+                </li>
+              }
+            </ul>
+          } @else {
+            <p class="state-panel__text text-center my-4">{{ 'analytics.noData' | translate }}</p>
+          }
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Charts row 3: moderation actions + responsiveness (TTFR/TTR) ===== -->
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-lg-8">
+      <div class="card card-elevated h-100">
+        <div class="card-body">
+          <h2 class="h6 mb-1">{{ 'analytics.moderationActions' | translate }}</h2>
+          <p class="text-muted small mb-3">{{ 'analytics.moderationActionsHint' | translate }}</p>
+          @if (moderation() === undefined) {
+            <div class="skeleton skeleton--chart"></div>
+          } @else if (moderationChart()) {
+            <div class="chart-frame">
+              <app-chart type="bar" [data]="moderationChart()!" [ariaLabel]="'analytics.moderationActions' | translate" />
+            </div>
+          } @else {
+            <p class="state-panel__text text-center my-4">{{ 'analytics.noData' | translate }}</p>
+          }
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-4">
+      <div class="card card-elevated h-100">
+        <div class="card-body">
+          <h2 class="h6 mb-3">{{ 'analytics.responsiveness' | translate }}</h2>
+          <div class="row g-3">
+            <div class="col-6">
+              <div class="text-muted small">{{ 'analytics.ttfrMedian' | translate }}</div>
+              <div class="stat-tile__value">
+                @if (ttfr() === undefined) {
+                  <span class="skeleton skeleton--value"></span>
+                } @else {
+                  {{ ttfrP50() }}
+                }
+              </div>
+              <div class="text-muted small mt-1">{{ 'analytics.p90' | translate }}: {{ ttfrP90() }}</div>
+            </div>
+            <div class="col-6">
+              <div class="text-muted small">{{ 'analytics.ttrMedian' | translate }}</div>
+              <div class="stat-tile__value">
+                @if (ttr() === undefined) {
+                  <span class="skeleton skeleton--value"></span>
+                } @else {
+                  {{ ttrP50() }}
+                }
+              </div>
+              <div class="text-muted small mt-1">{{ 'analytics.p90' | translate }}: {{ ttrP90() }}</div>
+            </div>
+          </div>
+          <hr class="my-3" />
+          <p class="text-muted small mb-0">{{ 'analytics.responsivenessHint' | translate }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Manage shortcuts ===== -->
+  <h2 class="h6 text-uppercase text-muted mb-2" style="letter-spacing: 0.05em;">{{ 'dashboard.manage' | translate }}</h2>
+  <div class="row g-3">
+    <div class="col-12 col-md-6 col-lg-3">
+      <a routerLink="/responders" class="card card-link h-100 text-reset text-decoration-none">
+        <div class="card-body">
+          <h3 class="h6 card-title mb-1">{{ 'nav.responders' | translate }}</h3>
+          <p class="card-text text-muted mb-0 small">{{ 'dashboard.respondersCard' | translate }}</p>
+        </div>
+      </a>
+    </div>
+    <div class="col-12 col-md-6 col-lg-3">
+      <a routerLink="/geography/regions" class="card card-link h-100 text-reset text-decoration-none">
+        <div class="card-body">
+          <h3 class="h6 card-title mb-1">{{ 'nav.geography' | translate }}</h3>
           <p class="card-text text-muted mb-0 small">{{ 'dashboard.geographyCard' | translate }}</p>
         </div>
       </a>
     </div>
-    <div class="col-12 col-md-6 col-lg-4">
-      <a routerLink="/institutions/parliaments" class="card h-100 text-decoration-none text-reset shadow-sm">
+    <div class="col-12 col-md-6 col-lg-3">
+      <a routerLink="/institutions/parliaments" class="card card-link h-100 text-reset text-decoration-none">
         <div class="card-body">
-          <h3 class="h6 card-title">{{ 'nav.institutions' | translate }}</h3>
+          <h3 class="h6 card-title mb-1">{{ 'nav.institutions' | translate }}</h3>
           <p class="card-text text-muted mb-0 small">{{ 'dashboard.institutionsCard' | translate }}</p>
         </div>
       </a>
     </div>
-    <div class="col-12 col-md-6 col-lg-4">
-      <a routerLink="/tokens" class="card h-100 text-decoration-none text-reset shadow-sm">
+    <div class="col-12 col-md-6 col-lg-3">
+      <a routerLink="/tokens" class="card card-link h-100 text-reset text-decoration-none">
         <div class="card-body">
-          <h3 class="h6 card-title">{{ 'nav.tokens' | translate }}</h3>
+          <h3 class="h6 card-title mb-1">{{ 'nav.tokens' | translate }}</h3>
           <p class="card-text text-muted mb-0 small">{{ 'dashboard.tokensCard' | translate }}</p>
         </div>
       </a>

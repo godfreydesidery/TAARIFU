@@ -16,9 +16,16 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>It registers {@link CommunicationsChannelProperties} so the real adapters' non-secret connection
  * settings ({@code taarifu.communications.*}) bind without touching the shared application bootstrap —
- * keeping all communications channel configuration localised to this module (KISS, module-isolation).</p>
+ * keeping all communications channel configuration localised to this module (KISS, module-isolation). It
+ * also registers {@link DigestProperties} (the {@code @Scheduled} area-activity digest's enable-toggle,
+ * cron, zone, and window) for the same reason — all this module's externalised config binds here.</p>
+ *
+ * <p>WHY this module does not declare {@code @EnableScheduling}: scheduling is already enabled once,
+ * centrally, by {@code com.taarifu.common.outbox.infrastructure.config.OutboxConfig}. The digest's
+ * {@code @Scheduled} method is picked up by that single enablement — declaring it again here would be a
+ * redundant (and discouraged) second {@code @EnableScheduling} (CLAUDE.md §8, DRY).</p>
  */
 @Configuration
-@EnableConfigurationProperties(CommunicationsChannelProperties.class)
+@EnableConfigurationProperties({CommunicationsChannelProperties.class, DigestProperties.class})
 public class CommunicationsConfig {
 }

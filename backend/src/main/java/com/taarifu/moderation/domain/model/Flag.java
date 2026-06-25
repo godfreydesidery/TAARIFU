@@ -54,7 +54,13 @@ public class Flag extends BaseEntity {
 
     /**
      * Public id of the flagged content in its owning module — a cross-module reference, never a FK
-     * (ARCHITECTURE.md §3.2). Resolving it to a concrete record is a {@code // TODO(wiring)}.
+     * (ARCHITECTURE.md §3.2). Resolving it to a concrete record is done <b>boundary-safely via the published
+     * owner-port registries</b>, not by importing the owner: {@code SubjectAuthorResolver} →
+     * {@code SubjectAuthorQueryApi} backfills the subject's author (for the D16 self-action guard) and
+     * {@code SubjectContentResolver} → {@code SubjectContentQueryApi} resolves the scorable text (for the
+     * auto-assist screen), each dispatching by {@link #subjectType}. PHASE-3: an owner module that has not yet
+     * published its {@code SubjectAuthorQueryApi}/{@code SubjectContentQueryApi} resolves to empty — the flag
+     * still raises a human-reviewed queue item (EI-18 floor), so a missing owner port never blocks flagging.
      */
     @Column(name = "subject_id", nullable = false, updatable = false)
     private UUID subjectId;

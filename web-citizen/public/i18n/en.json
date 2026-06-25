@@ -1,0 +1,166 @@
+{
+  "app": {
+    "title": "Taarifu — Citizen Voice"
+  },
+  "common": {
+    "loading": "Loading…",
+    "retry": "Try again",
+    "back": "Back",
+    "cancel": "Cancel",
+    "save": "Save",
+    "noData": "Nothing to show.",
+    "errorLoading": "Could not load. Check your connection and try again.",
+    "unknownError": "Something went wrong. Please try again."
+  },
+  "a11y": {
+    "skipToContent": "Skip to main content",
+    "switchLanguage": "Switch language",
+    "primary": "Primary navigation"
+  },
+  "nav": {
+    "primary": "Primary navigation",
+    "home": "Home",
+    "reps": "Reps",
+    "report": "Report",
+    "track": "My reports",
+    "search": "Search"
+  },
+  "offline": {
+    "youAreOffline": "You are offline — you can read saved content.",
+    "draftsPending": "{{count}} report(s) waiting to send when you are back online.",
+    "draftsPendingShort": "Pending drafts"
+  },
+  "pwa": {
+    "updateAvailable": "A new version of Taarifu is available. Updating…"
+  },
+  "auth": {
+    "signIn": "Sign in",
+    "tagline": "Report issues. Track action. Connect with your representatives.",
+    "enterPhoneTitle": "Enter your phone number",
+    "enterPhoneHelp": "We'll text you a verification code by SMS.",
+    "phoneLabel": "Phone number",
+    "phoneFormatHint": "Use the international format, e.g. +255712345678.",
+    "phoneInvalid": "Please enter a valid phone number (e.g. +255712345678).",
+    "sendCode": "Send code",
+    "otpSent": "Code sent by SMS.",
+    "enterCodeTitle": "Enter the code",
+    "enterCodeHelp": "Enter the numeric code you received by SMS.",
+    "codeLabel": "Verification code",
+    "codeInvalid": "Invalid code. Enter 4 to 8 digits.",
+    "verify": "Verify",
+    "changePhone": "Change phone number",
+    "welcome": "Welcome to Taarifu!",
+    "tierHint": "You are at tier {{tier}}. You can report now; verify your ID to unlock more.",
+    "staffUseConsole": "This is a staff account. Please use the staff console.",
+    "continueAsGuest": "Continue as guest",
+    "privacyNote": "We protect your data under the Personal Data Protection Act (PDPA)."
+  },
+  "feed": {
+    "title": "Welcome to Taarifu",
+    "subtitle": "News and issues from your area.",
+    "nearYou": "Near you",
+    "petitions": "Citizen petitions",
+    "noReports": "No public reports yet.",
+    "noPetitions": "No petitions yet.",
+    "signatures": "{{count}} of {{goal}} signatures",
+    "fileCta": "File a new report"
+  },
+  "search": {
+    "title": "Search",
+    "label": "Search Taarifu",
+    "placeholder": "Search representatives, announcements, reports…",
+    "prompt": "Type to search representatives, organisations, announcements and public reports.",
+    "noResults": "No matches. Try different words.",
+    "resultCount": "{{count}} result(s)",
+    "type": {
+      "REPRESENTATIVE": "Representative",
+      "ORGANISATION": "Organisation",
+      "ANNOUNCEMENT": "Announcement",
+      "ISSUE_CATEGORY": "Issue category",
+      "PUBLIC_REPORT": "Public report"
+    }
+  },
+  "reps": {
+    "title": "My representative",
+    "subtitle": "Choose your ward to see your MP and Councillor.",
+    "forWard": "For ward {{ward}}",
+    "mp": "Member of Parliament (Constituency)",
+    "councillor": "Councillor (Ward)",
+    "roleMp": "MP (Mbunge)",
+    "roleCouncillor": "Councillor (Diwani)",
+    "noMp": "No MP found for this area.",
+    "noCouncillor": "No Councillor found for this ward.",
+    "unknownArea": "Area unknown",
+    "pickPrompt": "Choose your Region, District and Ward above."
+  },
+  "geo": {
+    "region": "Region (Mkoa)",
+    "district": "District (Wilaya)",
+    "ward": "Ward (Kata)",
+    "choose": "— Choose —"
+  },
+  "report": {
+    "title": "File a report",
+    "subtitle": "Tell us the problem. It takes under two minutes.",
+    "category": "Issue type",
+    "chooseCategory": "— Choose a type —",
+    "categoryRequired": "Please choose an issue type.",
+    "sensitiveNote": "This is a sensitive type. Reports will be private; you may report anonymously.",
+    "titleLabel": "Title",
+    "titlePlaceholder": "e.g. Street lights not working",
+    "titleRequired": "Please enter a title.",
+    "descriptionLabel": "Description",
+    "descriptionPlaceholder": "Briefly describe the problem…",
+    "descriptionRequired": "Please enter a description.",
+    "area": "Area (Ward)",
+    "wardRequired": "Please choose your ward.",
+    "location": "Location (optional)",
+    "useMyLocation": "Use my location",
+    "locationOptional": "Optional. We only use it if you tap.",
+    "clearLocation": "Remove location",
+    "geoCaptured": "Location captured.",
+    "geoDenied": "We could not get your location. You can continue without it.",
+    "geoUnavailable": "Your device does not allow location.",
+    "anonymous": "Report anonymously",
+    "anonymousHelp": "Your name will not be stored with this report (sensitive types only).",
+    "send": "Send report",
+    "offlineHint": "If you are offline, the report is saved and sent when you reconnect.",
+    "savedOffline": "Report saved. It will send when you are back online.",
+    "draftSynced": "A saved report has now been sent.",
+    "filed": "Report filed. Reference: {{code}}",
+    "status": {
+      "SUBMITTED": "Submitted",
+      "TRIAGED": "Triaged",
+      "ASSIGNED": "Assigned",
+      "IN_PROGRESS": "In progress",
+      "RESOLVED": "Resolved",
+      "CLOSED": "Closed",
+      "REJECTED": "Rejected",
+      "DUPLICATE": "Duplicate"
+    },
+    "event": {
+      "STATUS_CHANGED": "Status changed",
+      "COMMENT_ADDED": "Comment added",
+      "ASSIGNED": "Assigned",
+      "RESOLVED": "Resolved",
+      "CREATED": "Report opened"
+    }
+  },
+  "track": {
+    "title": "My reports",
+    "pending": "Waiting to send",
+    "submitted": "Submitted",
+    "draftPending": "Will send when online",
+    "draftSyncing": "Sending…",
+    "draftFailed": "Failed — will retry",
+    "emptyTitle": "You haven't filed any reports yet.",
+    "emptyHelp": "Tap the report button to begin.",
+    "details": "Details",
+    "filed": "Filed",
+    "due": "Response due",
+    "resolution": "Resolution",
+    "timeline": "Tracking steps",
+    "noEvents": "No steps to show yet.",
+    "noReports": "No reports."
+  }
+}

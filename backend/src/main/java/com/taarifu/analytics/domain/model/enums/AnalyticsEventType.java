@@ -18,8 +18,11 @@ package com.taarifu.analytics.domain.model.enums;
  *
  * <p>WHY only a subset (not every Appendix E row): M15 builds the aggregation surface for the headline
  * KPIs; the long tail (e.g. {@code feed_item_viewed}, {@code search_performed}) can be added additively
- * later without a schema change, since the column is a {@code VARCHAR}. New live emission from sibling
- * modules is marked {@code // TODO(wiring)} until the outbox increment (ADR-0013 §2).</p>
+ * later without a schema change, since the column is a {@code VARCHAR}. Live emission from sibling modules is
+ * now wired through the transactional outbox: producers append a {@code CivicActivityRecorded} fact and
+ * {@code AnalyticsEventHandler} records it here (ADR-0013 §2). PHASE-3: the long-tail catalogue values land
+ * additively as their owner modules begin emitting them — the handler's unknown-tolerant parse already drops
+ * any value an older build does not yet know (Appendix E.0).</p>
  */
 public enum AnalyticsEventType {
 
@@ -101,5 +104,30 @@ public enum AnalyticsEventType {
 
     /** Moderation appeal decided — UPHELD/OVERTURNED (Appendix E: {@code moderation_appeal_resolved}). Closes
      * the trust-and-safety funnel and powers the appeal-overturn-rate (moderation-quality) signal. */
-    MODERATION_APPEAL_RESOLVED
+    MODERATION_APPEAL_RESOLVED,
+
+    /**
+     * Auto-assist screened a piece of flagged/created content and either held it for human review or let it
+     * through (Appendix E: {@code auto_moderation_triaged}; ADR-0018; US-12.3; UC-H05).
+     *
+     * <p>Emitted by {@code moderation.AutoAssistService} on the outbox as a {@code CivicActivityRecorded} fact
+     * whose {@code analyticsEventType} string is exactly {@code "AUTO_MODERATION_TRIAGED"} (the value of
+     * {@code moderation.api.event.ModerationEventTypes#AUTO_MODERATION_TRIAGED}). It powers the
+     * <b>auto-vs-manual moderation split</b> KPI — the share of items the automated screen prioritised versus
+     * those a human/flagger surfaced (US-12.3; R20/R22, "moderation at scale").</p>
+     *
+     * <p>Dimension mapping for this fact (no schema change — ADR-0018 §3): the top safety
+     * {@code ContentSignal} (PROFANITY/PII/SPAM/IMAGE) rides as the controlled-vocabulary {@link
+     * com.taarifu.analytics.domain.model.AnalyticsEvent#getOutcome() outcome} code, and whether the item was
+     * held rides as the {@code breachType} field ({@code HELD}/{@code NOT_HELD}); since those two strings are
+     * not members of {@link BreachType}, the event handler's unknown-tolerant parse maps them to {@code null}
+     * (safely ignored) while the signal is preserved verbatim in {@code outcome}. Ids/codes only — no content
+     * body, author, or confidence-revealing text (PRD §18, PDPA, Appendix E.4).</p>
+     *
+     * <p><b>WHY this value was added late (V171):</b> before it existed the analytics handler dropped the fact
+     * as a forward-compatible no-op (Appendix E.0 additive — see {@code AnalyticsEventHandler}); adding the
+     * value here is what makes the auto-triage fact actually persist and become queryable. The catalogue stays
+     * append-only — never rename or repurpose a value (historical rows carry it).</p>
+     */
+    AUTO_MODERATION_TRIAGED
 }

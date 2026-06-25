@@ -1,10 +1,14 @@
 package com.taarifu.analytics;
 
+import com.taarifu.analytics.api.dto.DashboardOverviewDto;
 import com.taarifu.analytics.api.dto.FunnelDto;
+import com.taarifu.analytics.api.dto.TimeBucket;
+import com.taarifu.analytics.api.dto.TimeSeriesDto;
 import com.taarifu.analytics.api.dto.VolumeReportDto;
 import com.taarifu.analytics.application.service.AnalyticsQueryService;
 import com.taarifu.analytics.domain.model.enums.AnalyticsEventType;
 import com.taarifu.analytics.domain.repository.AnalyticsEventRepository;
+import com.taarifu.analytics.domain.repository.projection.CountByBucketProjection;
 import com.taarifu.analytics.domain.repository.projection.CountByKeyProjection;
 import com.taarifu.common.domain.port.ClockPort;
 import org.junit.jupiter.api.Test;
@@ -41,6 +45,14 @@ class AnalyticsQueryServiceTest {
     private static CountByKeyProjection point(String key, long count) {
         return new CountByKeyProjection() {
             @Override public String getKey() { return key; }
+            @Override public long getCount() { return count; }
+        };
+    }
+
+    /** A tiny inline projection so the mock can return (bucketStart, count) trend rows. */
+    private static CountByBucketProjection bucket(Instant start, long count) {
+        return new CountByBucketProjection() {
+            @Override public Instant getBucketStart() { return start; }
             @Override public long getCount() { return count; }
         };
     }
@@ -109,5 +121,67 @@ class AnalyticsQueryServiceTest {
 
         assertThat(dto.from()).isEqualTo(earlier);
         assertThat(dto.to()).isEqualTo(later);
+    }
+
+    @Test
+    void reportsTrend_nullBucket_defaultsToDay_andMapsPointsInOrder() {
+        Instant d1 = Instant.parse("2026-06-01T00:00:00Z");
+        Instant d2 = Instant.parse("2026-06-02T00:00:00Z");
+        // Repository returns chronologically-ordered buckets; the service must preserve the order and the
+        // DEFAULT bucket must be DAY when the caller passes null (the documented default — ADR-0020 §1).
+        when(events.countByTypeBucketed(eq(AnalyticsEventType.REPORT_FILED.name()), eq("day"),
+                any(), any(), any(), any()))
+                .thenReturn(List.of(bucket(d1, 3), bucket(d2, 5)));
+
+        TimeSeriesDto series = service.reportsTrend(null, null, null, null, null);
+
+        assertThat(series.bucket()).isEqualTo(TimeBucket.DAY);
+        assertThat(series.metric()).isEqualTo("REPORT_FILED");
+        assertThat(series.points()).hasSize(2);
+        assertThat(series.points().get(0).bucketStart()).isEqualTo(d1);
+        assertThat(series.points().get(0).count()).isEqualTo(3);
+        assertThat(series.points().get(1).count()).isEqualTo(5);
+    }
+
+    @Test
+    void slaBreachTrend_usesChosenBucketTruncField() {
+        // A MONTH request must pass the 'month' date_trunc literal to the repository (proves the enum→literal
+        // mapping that keeps the native query injection-safe — ADR-0020 §1).
+        when(events.countSlaBreachesBucketed(eq("month"), any(), any(), any(), any()))
+                .thenReturn(List.of(bucket(Instant.parse("2026-06-01T00:00:00Z"), 2)));
+
+        TimeSeriesDto series = service.slaBreachTrend(TimeBucket.MONTH, null, null, null, null);
+
+        assertThat(series.bucket()).isEqualTo(TimeBucket.MONTH);
+        assertThat(series.metric()).isEqualTo("SLA_BREACH");
+        assertThat(series.points()).singleElement()
+                .satisfies(p -> assertThat(p.count()).isEqualTo(2));
+    }
+
+    @Test
+    void overview_composesEveryTileOverOneResolvedWindow() {
+        // Stub each underlying aggregation; the overview must thread ONE resolved window into every tile and
+        // surface each result (ADR-0020 §2). Null window → 30-day default via the injected clock.
+        when(events.countByType(eq(AnalyticsEventType.REPORT_FILED), any(), any(), any(), any()))
+                .thenReturn(42L);
+        when(events.latencyStats(any(), any(), any(), any(), any())).thenReturn(null);
+        when(events.countGroupedByType(any(), any(), any(), any(), any())).thenReturn(List.of(
+                point(AnalyticsEventType.ACCOUNT_SIGNED_UP.name(), 10)));
+        when(events.countSlaBreachesByType(any(), any(), any(), any())).thenReturn(List.of());
+        when(events.countByTypeGroupedByChannel(any(), any(), any())).thenReturn(List.of());
+        when(events.countByTypeGroupedByOutcome(any(), any(), any())).thenReturn(List.of());
+
+        DashboardOverviewDto overview = service.overview(null, null, null);
+
+        // One window threaded through every tile.
+        assertThat(overview.to()).isEqualTo(fixedNow);
+        assertThat(overview.from()).isEqualTo(fixedNow.minus(Duration.ofDays(30)));
+        assertThat(overview.from()).isEqualTo(overview.verificationFunnel().from());
+        assertThat(overview.to()).isEqualTo(overview.slaBreaches().to());
+        // Headline + labelled tiles present.
+        assertThat(overview.reportsVolumeTotal()).isEqualTo(42L);
+        assertThat(overview.ttfr().metric()).isEqualTo("TTFR");
+        assertThat(overview.ttr().metric()).isEqualTo("TTR");
+        assertThat(overview.verificationFunnel().name()).isEqualTo("VERIFICATION_T0_T3");
     }
 }

@@ -1,0 +1,67 @@
+# =============================================================================
+# NetworkPolicy — deny-by-default for the backend, then allow only:
+#   - ingress controller -> backend:8081 (the API)
+#   - monitoring namespace -> backend:8081 (Prometheus scrape of /actuator/prometheus)
+#   - backend -> DB:5432, Redis:6379, and DNS + 443 egress (adapters: SMS/FCM/email).
+# Defence in depth (PRD §18): even if a pod is compromised it cannot reach arbitrary
+# internal services, and the metrics surface is reachable ONLY from the scrape net
+# (deploy/README §10). Requires a CNI that enforces NetworkPolicy (Calico/Cilium).
+# =============================================================================
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "taarifu.fullname" . }}-backend
+  labels:
+    {{- include "taarifu.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "taarifu.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # API traffic from the ingress controller + web-admin pods (same namespace).
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.backend.containerPort }}
+    # Prometheus scrape from the monitoring namespace ONLY.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.backend.containerPort }}
+  egress:
+    # DNS.
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # In-cluster DB + Redis (same namespace).
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+    # External managed DB/Redis + HTTPS adapters (SMS/FCM/email aggregators, KMS).
+    # Broad 443/5432/6379 egress; tighten to provider CIDRs once known (D-Q9).
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+{{- end }}

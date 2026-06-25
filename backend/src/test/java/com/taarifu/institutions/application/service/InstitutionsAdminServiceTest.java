@@ -15,15 +15,23 @@ import com.taarifu.institutions.domain.repository.ParliamentRoleRepository;
 import com.taarifu.institutions.domain.repository.PoliticalPartyRepository;
 import com.taarifu.institutions.domain.repository.RepresentativeRepository;
 import com.taarifu.institutions.test.EntityTestSupport;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -40,6 +48,7 @@ class InstitutionsAdminServiceTest {
     private RepresentativeRepository representativeRepository;
     private GeographyQueryService geographyQueryService;
     private InstitutionsMapper mapper;
+    private SearchIndexApi searchIndexApi;
     private InstitutionsAdminService service;
 
     private Constituency rombo;
@@ -54,9 +63,11 @@ class InstitutionsAdminServiceTest {
         // Geography FK resolution now goes through geography's PUBLIC service (ADR-0013), not its repos.
         geographyQueryService = mock(GeographyQueryService.class);
         mapper = mock(InstitutionsMapper.class);
+        searchIndexApi = mock(SearchIndexApi.class);
 
         service = new InstitutionsAdminService(partyRepository, parliamentRepository,
-                parliamentRoleRepository, representativeRepository, geographyQueryService, mapper);
+                parliamentRoleRepository, representativeRepository, geographyQueryService, mapper,
+                searchIndexApi);
 
         rombo = EntityTestSupport.newWithIds(Constituency.class, 100L, UUID.randomUUID());
         EntityTestSupport.set(rombo, "name", "Rombo");
@@ -155,6 +166,64 @@ class InstitutionsAdminServiceTest {
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getErrorCode())
                 .isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    // --- search indexing (ADR-0017 §1): the directory-into-discovery wiring ---
+
+    @Test
+    void createSittingMp_pushesPublicRepresentativeDocument_withSeatTitleAreaAndTypeFacet() {
+        when(geographyQueryService.resolveConstituency(rombo.getPublicId())).thenReturn(rombo);
+        when(representativeRepository.existsSittingByConstituency(eq(100L), any())).thenReturn(false);
+
+        RepresentativeWriteDto dto =
+                withStatus(base("MP", "CONSTITUENCY", rombo.getPublicId(), null), "SITTING");
+        service.createRepresentative(dto);
+
+        // The persisted, PUBLIC representative is pushed to search on create — title carries the seat
+        // (Swahili-first "Mbunge — Rombo"), the area facet is the constituency, the type is a keyword facet,
+        // and NO PII (no bio, no linked account) is indexed. This fails the moment the create→index call is
+        // removed — proving the wiring, not just the happy path (CLAUDE.md §10).
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndexApi).upsert(captor.capture());
+        SearchDocumentUpsert pushed = captor.getValue();
+        assertThat(pushed.entityType()).isEqualTo(SearchEntityType.REPRESENTATIVE);
+        assertThat(pushed.title()).isEqualTo("Mbunge — Rombo");
+        assertThat(pushed.areaId()).isEqualTo(rombo.getPublicId());
+        assertThat(pushed.keywords()).contains("mbunge").contains("CONSTITUENCY");
+        assertThat(pushed.visibility()).isEqualTo(SearchVisibility.PUBLIC);
+        // 🔒 a directory entity has no author and we never index the rep's linked account (PII discipline).
+        assertThat(pushed.authoredByAccountId()).isNull();
+        assertThat(pushed.categoryId()).isNull();
+    }
+
+    @Test
+    void createPendingRepresentative_isIndexedStaffOnly_notPublic() {
+        when(geographyQueryService.resolveConstituency(rombo.getPublicId())).thenReturn(rombo);
+        when(representativeRepository.existsSittingByConstituency(any(), any())).thenReturn(false);
+
+        // A PENDING_VERIFICATION claim is not yet on the official list — it must be STAFF-only in discovery
+        // (anti-claim-spoofing, UC-A22) so a guest/citizen never sees an unverified rep. This fails if the
+        // visibility gate maps PENDING to PUBLIC.
+        RepresentativeWriteDto dto =
+                withStatus(base("MP", "CONSTITUENCY", rombo.getPublicId(), null), "PENDING_VERIFICATION");
+        service.createRepresentative(dto);
+
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndexApi).upsert(captor.capture());
+        assertThat(captor.getValue().visibility()).isEqualTo(SearchVisibility.STAFF);
+    }
+
+    @Test
+    void deleteRepresentative_removesItFromDiscovery() {
+        Representative rep = EntityTestSupport.newWithIds(Representative.class, 7L, UUID.randomUUID());
+        when(representativeRepository.findByPublicId(rep.getPublicId())).thenReturn(java.util.Optional.of(rep));
+
+        service.deleteRepresentative(rep.getPublicId());
+
+        // A soft-deleted representative must drop out of discovery even though its row survives for the
+        // historical/accountability record (PRD §22.6). Fails if the delete→remove call is dropped.
+        verify(searchIndexApi).remove(SearchEntityType.REPRESENTATIVE, rep.getPublicId());
+        verify(searchIndexApi, never()).upsert(any());
     }
 
     // --- helpers ---

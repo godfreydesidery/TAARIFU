@@ -10,6 +10,7 @@ import com.taarifu.engagement.api.dto.CreateSurveyRequest;
 import com.taarifu.engagement.api.dto.SurveyDto;
 import com.taarifu.engagement.api.dto.SurveyResponseRequest;
 import com.taarifu.engagement.application.service.SurveyService;
+import com.taarifu.engagement.domain.model.enums.SurveyType;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -49,7 +50,7 @@ import java.util.UUID;
  *       §23.5) by construction. WHY T3 (not T2) at the annotation: binding-ness is per-survey data, but
  *       the tier aspect needs a static minimum on the method; choosing the stricter T3 keeps binding polls
  *       safe, and the per-survey relaxation to T2 for non-binding surveys is a documented
- *       {@code // TODO(wiring)} refinement (it requires reading the survey before the tier aspect runs).
+ *       <b>PHASE-3</b> refinement: relaxing to T2 for a non-binding survey needs a survey-pre-reading tier aspect that does not yet exist (RequiresTierAspect resolves a static minimum before the method body, so it cannot read the per-row binding flag first); until it ships, the safe T3 floor stands.
  *       One-per-person is enforced in the service; token balance is never read.</li>
  * </ul>
  */
@@ -89,13 +90,14 @@ public class SurveyController {
      */
     @GetMapping
     @PreAuthorize("permitAll()")
-    @Operation(summary = "List public surveys/polls")
+    @Operation(summary = "List public surveys/polls", description = "Optionally filter by type.")
     public ApiResponse<List<SurveyDto>> list(
+            @RequestParam(required = false) SurveyType type,
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             @RequestParam(required = false) String sort) {
         Pageable pageable = pageRequests.of(page, size, sort);
-        Page<SurveyDto> result = surveyService.listPublic(pageable);
+        Page<SurveyDto> result = surveyService.listPublic(type, pageable);
         return responses.paged(result.getContent(), pageMapper.toMeta(result));
     }
 
@@ -127,6 +129,26 @@ public class SurveyController {
                 request.title(), request.description(), request.type(), request.binding(),
                 request.audienceScope(), request.questions(), request.startsAt(), request.endsAt(),
                 request.anonymous(), CurrentUser.requirePublicId());
+        return responses.ok(dto);
+    }
+
+    /**
+     * Opens a survey/poll for responses (UC-E06) — the {@code DRAFT/SCHEDULED → OPEN} transition.
+     *
+     * <p><b>Authorization (author-or-staff):</b> {@code isAuthenticated()} proves the caller is signed in; the
+     * data-dependent author-or-staff decision (the caller is the survey's creator, or holds MODERATOR/ADMIN/
+     * ROOT) is enforced in {@link SurveyService#open} — a caller who is neither is {@code 403}. The caller is
+     * taken from the security context, never the body.</p>
+     *
+     * @param surveyId the survey to open.
+     * @return an envelope carrying the now-OPEN {@link SurveyDto}.
+     */
+    @PostMapping("/{surveyId}/opening")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Open a survey/poll (DRAFT/SCHEDULED → OPEN)",
+            description = "Author-or-staff. Begins accepting responses.")
+    public ApiResponse<SurveyDto> open(@PathVariable UUID surveyId) {
+        SurveyDto dto = surveyService.open(surveyId, CurrentUser.requirePublicId());
         return responses.ok(dto);
     }
 

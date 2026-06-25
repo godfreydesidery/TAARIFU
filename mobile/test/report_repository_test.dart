@@ -54,6 +54,13 @@ class _FakeApiClient implements ApiClient {
     String? idempotencyKey,
     required T Function(Object? data) parser,
   }) async => throw UnimplementedError();
+
+  @override
+  Future<ApiResult<T>> delete<T>(
+    String path, {
+    Map<String, dynamic>? query,
+    required T Function(Object? data) parser,
+  }) async => throw UnimplementedError();
 }
 
 const _draft = ReportDraft(

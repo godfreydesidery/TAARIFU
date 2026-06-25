@@ -235,6 +235,80 @@ public class Profile extends BaseEntity {
         this.idVerified = false;
     }
 
+    /**
+     * <b>Crypto-shreds and tombstones</b> this profile on a verified erasure request (PRD §25.1,
+     * UC-A17/UC-S09; ADR-0016 §5). This is the highest-sensitivity severing on the platform.
+     *
+     * <p>What it does (and WHY each step):</p>
+     * <ul>
+     *   <li><b>Crypto-shred the national/voter ID:</b> nulls the encrypted {@link #idNo} ciphertext
+     *       <b>and</b> the deterministic {@link #idHash} blind index, plus the {@link #idType}. The column
+     *       held only ciphertext; nulling it together with the dedup hash removes both the value and the
+     *       identity linkage — the strongest per-row severing available (a future KMS adapter may also retire
+     *       the data key — a CENTRAL NEED). WHY also the hash: the blind index is a (deterministic) derivative
+     *       of the ID and is itself a re-identification vector, so it must go too.</li>
+     *   <li><b>Replace names with a tombstone label</b> ({@code anonymized_user_<short>}) and null
+     *       date-of-birth/gender/nationality — the person is removed but the row persists so the de-identified
+     *       civic record (reports, signature counts, ratings) stays referentially intact (§25.1).</li>
+     *   <li><b>Reset verification flags</b> — an anonymised profile is no longer a verified identity.</li>
+     * </ul>
+     *
+     * <p>It does <b>not</b> delete the row (one-account permanence, D15/§6.4) and does <b>not</b> touch the
+     * audit log (the caller appends an {@code IDENTITY_ERASED} tombstone — the hash-chain is never broken).
+     * The plaintext ID is never logged at any point (S-4).</p>
+     *
+     * @param tombstoneLabel the {@code anonymized_user_<short>} display label to replace the names with.
+     */
+    public void anonymise(String tombstoneLabel) {
+        // Crypto-shred the national/voter ID: ciphertext + blind index + type.
+        this.idNo = null;
+        this.idHash = null;
+        this.idType = null;
+        // Sever the remaining person PII; keep the row (de-identified civic record persists).
+        this.firstName = tombstoneLabel;
+        this.lastName = null;
+        this.dateOfBirth = null;
+        this.gender = null;
+        this.nationality = null;
+        // An anonymised profile is no longer a verified identity.
+        this.idVerified = false;
+        this.emailVerified = false;
+        // phoneVerified left as-is is meaningless post-erasure; reset for cleanliness.
+        this.phoneVerified = false;
+    }
+
+    /**
+     * @return {@code true} if this profile has been crypto-shredded/tombstoned by erasure (the idempotency
+     *         guard for the at-least-once erasure handler — ADR-0016 §5): both the encrypted ID and its blind
+     *         index are null. A redelivered {@code ERASURE_REQUESTED} sees this and no-ops.
+     */
+    public boolean isAnonymised() {
+        return this.idNo == null && this.idHash == null && this.idType == null;
+    }
+
+    /**
+     * Composes the profile's <b>public display name</b> — the non-sensitive, human-recognisable label other
+     * surfaces show for this identity: a person's {@code firstName + " " + lastName} (trimmed), or an
+     * organisation's name (carried in {@code firstName}). Single source of truth for "what name do we show?",
+     * reused by the admin user view and the cross-module {@code ProfileLookupApi}/{@code SubjectContentQueryApi}
+     * read ports so the composition rule never drifts (DRY).
+     *
+     * <p><b>🔒 PII discipline (PRD §18, PDPA):</b> the display name is civic display data deliberately collected
+     * to be shown — it is <b>not</b> sensitive ID PII. This method exposes only names; it <b>never</b> touches the
+     * national/voter {@link #idNo} (encrypted), the {@link #idHash} blind index, phone, or any other PII. After
+     * an erasure {@link #anonymise(String)} the first name holds the {@code anonymized_user_<short>} tombstone
+     * label and the last name is null, so this correctly returns the tombstone — never resurrected PII.</p>
+     *
+     * @return the trimmed display name, or {@code null} if no name has been set yet (a profile that has not
+     *         completed its details) — callers treat {@code null} as "name unknown", never as an error.
+     */
+    public String displayName() {
+        String first = firstName == null ? "" : firstName;
+        String last = lastName == null ? "" : lastName;
+        String name = (first + " " + last).trim();
+        return name.isEmpty() ? null : name;
+    }
+
     /** @return the owning account. */
     public User getUser() {
         return user;

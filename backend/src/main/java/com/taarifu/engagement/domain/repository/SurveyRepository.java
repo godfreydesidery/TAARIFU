@@ -2,6 +2,7 @@ package com.taarifu.engagement.domain.repository;
 
 import com.taarifu.engagement.domain.model.Survey;
 import com.taarifu.engagement.domain.model.enums.SurveyStatus;
+import com.taarifu.engagement.domain.model.enums.SurveyType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -33,4 +34,17 @@ public interface SurveyRepository extends JpaRepository<Survey, Long> {
      * @return a page of surveys.
      */
     Page<Survey> findByStatusIn(Collection<SurveyStatus> statuses, Pageable pageable);
+
+    /**
+     * Lists publicly-visible surveys/polls filtered to a type (SURVEY / POLL) — the citizen read-depth filter
+     * so a constituent can browse, e.g., only binding/non-binding polls. Hits {@code ix_survey_type} +
+     * {@code ix_survey_status}. Soft-deleted/DRAFT rows are excluded by the {@code @SQLRestriction} and the
+     * {@code statuses} set respectively.
+     *
+     * @param type     the SURVEY/POLL discriminator to filter by.
+     * @param statuses the allowed (public) statuses.
+     * @param pageable bounded paging/sorting.
+     * @return a page of surveys of that type.
+     */
+    Page<Survey> findByTypeAndStatusIn(SurveyType type, Collection<SurveyStatus> statuses, Pageable pageable);
 }

@@ -13,9 +13,11 @@ import java.util.UUID;
  * Request DTO to create a responder capability under an organisation (admin CRUD, PRD §24.1).
  *
  * <p>Responsibility: validated input for {@code POST /organisations/{organisationId}/responders}. The
- * handled-category and coverage-area ids are public ids of reporting/geography entities referenced by
- * id (this module does not import those modules; validation that the ids exist is a later wiring step).
- * // TODO(wiring): validate category/area ids against reporting/geography APIs.</p>
+ * handled-category and coverage-area ids are public ids of reporting/geography entities referenced by id
+ * (this module does not import those modules). The handled-category ids are existence-validated against
+ * reporting's published {@code IssueCategoryQueryApi} in {@code ResponderAdminService.createResponder}
+ * (sync {@code responders → reporting}, ADR-0013 §4a). Coverage-area ids are not yet existence-checked —
+ * geography has no area-by-id query port yet (PHASE-3; see {@code Responder.coverageAreaIds} Javadoc).</p>
  *
  * @param name               capability display name (required).
  * @param responderType      routing kind/sector (required).

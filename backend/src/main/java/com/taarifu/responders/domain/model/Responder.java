@@ -31,11 +31,14 @@ import java.util.UUID;
  * SLA policy that may differ from the platform default and may be contractual (§24.1).</p>
  *
  * <p>WHY {@code handledCategoryIds} and {@code coverageAreaIds} are id sets, not FKs: the
- * {@code reporting} module (which owns {@code IssueCategory}) is built in <b>parallel</b> and must not
- * be imported, and even {@code geography} areas are referenced here as opaque ids to keep this module's
+ * {@code reporting} module (which owns {@code IssueCategory}) is a peer feature module and must not be
+ * imported, and even {@code geography} areas are referenced here as opaque ids to keep this module's
  * coupling minimal — routing resolution happens against those ids without a join into another module's
  * tables (ARCHITECTURE.md §3.2). They are stored in side tables via {@code @ElementCollection}.
- * // TODO(wiring): validate/resolve category ids against the reporting module's public API.</p>
+ * Handled-category ids are validated against reporting's published
+ * {@link com.taarifu.reporting.api.IssueCategoryQueryApi} on the create/update path
+ * ({@code ResponderAdminService.validateCategories}, sync {@code responders → reporting} — ADR-0013 §4a).
+ * Coverage-area ids are not yet existence-checked — see {@link #coverageAreaIds}.</p>
  *
  * <p>WHY coverage is a {@link CoverageType} flag plus a set (not just an empty set for nationwide): an
  * empty set is ambiguous; an explicit {@link CoverageType#NATIONWIDE} is an auditable statement that
@@ -76,8 +79,9 @@ public class Responder extends BaseEntity {
 
     /**
      * The reporting-module {@code IssueCategory} public ids this responder handles (PRD §24.1).
-     * Referenced by id only (no FK into the parallel reporting module). Stored in
-     * {@code responder_category}. // TODO(wiring): validate against reporting's category API.
+     * Referenced by id only (no FK into the peer reporting module). Stored in {@code responder_category}.
+     * Each id is validated against reporting's published {@code IssueCategoryQueryApi.requireCategory} on
+     * the create/update path (ADR-0013 §4a), so a responder can never handle a non-existent category.
      */
     @ElementCollection(fetch = FetchType.LAZY)
     @CollectionTable(name = "responder_category",
@@ -90,6 +94,15 @@ public class Responder extends BaseEntity {
      * The geography area public ids this responder covers when {@link #coverageType} is
      * {@link CoverageType#AREAS} (ignored when nationwide). Referenced by id only. Stored in
      * {@code responder_coverage_area}.
+     *
+     * <p>PHASE-3: existence-validate these ids against geography. Geography today publishes only
+     * {@code geography.api.WardCodeQueryApi} (resolve a ward by friendly <i>code</i>); it does not yet
+     * publish an "area exists / is at/above ward granularity by <i>id</i>" query port. When geography adds
+     * that port (e.g. {@code geography.api.AreaQueryApi.requireArea(UUID)}), validate each coverage-area id
+     * in {@code ResponderAdminService.createResponder/updateResponder} the same way handled categories are
+     * validated against {@code IssueCategoryQueryApi} today (sync {@code responders → geography},
+     * ADR-0013 §4a). Until then the ids are stored unverified; routing tolerates an unknown area id (it
+     * simply never matches a report's ward — no leak, no crash).</p>
      */
     @ElementCollection(fetch = FetchType.LAZY)
     @CollectionTable(name = "responder_coverage_area",

@@ -224,6 +224,38 @@ public class User extends BaseEntity {
         this.mfaEnabled = true;
     }
 
+    /**
+     * <b>Tombstones</b> this account on a verified erasure request (PRD §25.1, UC-A17/UC-S09; ADR-0016 §5).
+     *
+     * <p>Severs every account-level PII/credential while keeping the row so the de-identified civic record
+     * stays referentially intact and one-account-per-person holds (D15/§6.4):</p>
+     * <ul>
+     *   <li><b>Phone</b> → a non-reusable tombstone token. WHY not null: {@link #phone} is {@code not null,
+     *       unique}; a real number must never be <i>freed</i> for a second signup (that would defeat
+     *       one-account-per-person), and it must not remain as the citizen's real PII. A unique tombstone
+     *       token satisfies the index without being a real, re-registrable number.</li>
+     *   <li><b>Email / handle / password hash / both MFA secrets</b> → null (no credential or contact PII
+     *       survives; the account can never authenticate again).</li>
+     *   <li><b>Status</b> → {@link UserStatus#DISABLED} (permanent — an erased account is not reinstatable).</li>
+     * </ul>
+     *
+     * <p>Does not delete the row and does not touch the audit log (the caller appends {@code IDENTITY_ERASED};
+     * the hash-chain is never broken). No secret/PII is ever logged (S-4).</p>
+     *
+     * @param tombstonePhone a unique, non-reusable phone tombstone token (e.g. {@code erased:<uuid>}),
+     *                       satisfying the not-null unique index without being a real number.
+     */
+    public void tombstone(String tombstonePhone) {
+        this.phone = tombstonePhone;
+        this.email = null;
+        this.handle = null;
+        this.passwordHash = null;
+        this.mfaTotpSecret = null;
+        this.mfaPendingSecret = null;
+        this.mfaEnabled = false;
+        this.status = UserStatus.DISABLED;
+    }
+
     /** @return the unique E.164 phone (account key). */
     public String getPhone() {
         return phone;

@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/network/failure_messages.dart';
+import '../../../core/theme/app_palette.dart';
 import '../../../l10n/app_localizations.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
@@ -48,46 +49,47 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     return Scaffold(
-      appBar: AppBar(title: Text(l10n.appTitle)),
-      body: SafeArea(
-        child: BlocConsumer<AuthBloc, AuthState>(
-          listenWhen: (prev, curr) => curr.errorKey != prev.errorKey,
-          listener: (context, state) {
-            if (state.errorKey != null) {
-              ScaffoldMessenger.of(context)
-                ..hideCurrentSnackBar()
-                ..showSnackBar(
-                  SnackBar(
-                    content: Text(FailureMessages.of(l10n, state.errorKey!)),
+      body: BlocConsumer<AuthBloc, AuthState>(
+        listenWhen: (prev, curr) => curr.errorKey != prev.errorKey,
+        listener: (context, state) {
+          if (state.errorKey != null) {
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                SnackBar(
+                  content: Text(FailureMessages.of(l10n, state.errorKey!)),
+                ),
+              );
+          }
+        },
+        builder: (context, state) {
+          final isOtpStep = state.status == AuthStatus.otpSent;
+          return Column(
+            children: [
+              _BrandHero(l10n: l10n),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppPalette.spaceXl,
+                    AppPalette.spaceXl,
+                    AppPalette.spaceXl,
+                    AppPalette.spaceXl,
                   ),
-                );
-            }
-          },
-          builder: (context, state) {
-            final isOtpStep = state.status == AuthStatus.otpSent;
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const SizedBox(height: 16),
-                    Text(
-                      l10n.onboardingWelcomeTitle,
-                      style: Theme.of(context).textTheme.headlineSmall,
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (!isOtpStep) ..._phoneStep(context, l10n, state),
+                        if (isOtpStep) ..._otpStep(context, l10n, state),
+                      ],
                     ),
-                    const SizedBox(height: 8),
-                    Text(l10n.onboardingWelcomeBody),
-                    const SizedBox(height: 24),
-                    if (!isOtpStep) ..._phoneStep(context, l10n, state),
-                    if (isOtpStep) ..._otpStep(context, l10n, state),
-                  ],
+                  ),
                 ),
               ),
-            );
-          },
-        ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -180,4 +182,70 @@ class _ButtonSpinner extends StatelessWidget {
     width: 20,
     child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
   );
+}
+
+/// The branded onboarding hero: a soft civic-green gradient banner carrying the
+/// app mark, the welcome title, and the plain-Swahili explainer. It anchors the
+/// onboarding with a warm, trustworthy first impression while keeping the copy
+/// (PRD §14 Swahili-first) front and centre.
+class _BrandHero extends StatelessWidget {
+  const _BrandHero({required this.l10n});
+
+  final AppLocalizations l10n;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(
+        AppPalette.spaceXl,
+        56,
+        AppPalette.spaceXl,
+        AppPalette.spaceXl,
+      ),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [scheme.primary, scheme.primaryContainer],
+        ),
+        borderRadius: const BorderRadius.vertical(
+          bottom: Radius.circular(AppPalette.radiusSheet),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: scheme.onPrimary.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(AppPalette.radiusInput),
+            ),
+            child: Icon(
+              Icons.campaign_rounded,
+              size: 36,
+              color: scheme.onPrimary,
+            ),
+          ),
+          const SizedBox(height: AppPalette.spaceLg),
+          Text(
+            l10n.onboardingWelcomeTitle,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: scheme.onPrimary,
+            ),
+          ),
+          const SizedBox(height: AppPalette.spaceSm),
+          Text(
+            l10n.onboardingWelcomeBody,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: scheme.onPrimary.withValues(alpha: 0.92),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

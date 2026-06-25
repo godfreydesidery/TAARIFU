@@ -1,0 +1,214 @@
+<!--
+  Payment (top-up) detail drawer: full admin view + status timeline + refund/void operator actions.
+  Right-anchored slide-over; dismissible by backdrop/Esc/close. No MSISDN/PII (privacy by construction,
+  PRD §18); refund/void touch only the convenience wallet — never democratic weight (§23 / D18).
+-->
+@if (paymentId) {
+  <!-- Backdrop: click to dismiss. Keyboard users dismiss via Esc / the close button. -->
+  <div class="tf-drawer-backdrop" (click)="close()"></div>
+
+  <aside
+    class="tf-drawer"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="pay-drawer-title"
+    (keydown.escape)="close()"
+  >
+    <header class="tf-drawer__header">
+      <div>
+        <h2 class="tf-drawer__title" id="pay-drawer-title">{{ 'payments.detailTitle' | translate }}</h2>
+        @if (payment(); as p) {
+          <span class="code-chip d-inline-block mt-1">{{ p.id }}</span>
+        }
+      </div>
+      <button
+        #closeBtn
+        type="button"
+        class="btn-close"
+        [attr.aria-label]="'common.close' | translate"
+        (click)="close()"
+      ></button>
+    </header>
+
+    <div class="tf-drawer__body">
+      <!-- §23 fence: refund/void move only convenience tokens, never democratic weight. -->
+      <div class="alert alert-secondary d-flex align-items-start gap-2 py-2" role="note">
+        <span aria-hidden="true">●</span>
+        <small>{{ 'payments.fenceNote' | translate }}</small>
+      </div>
+
+      @if (loading()) {
+        <div class="text-center py-5" role="status" aria-live="polite">
+          <span class="spinner-border" aria-hidden="true"></span>
+          <p class="mt-2 text-muted mb-0">{{ 'common.loading' | translate }}</p>
+        </div>
+      } @else if (errored()) {
+        <div class="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+          <span>{{ 'common.errorLoading' | translate }}</span>
+          <button type="button" class="btn btn-sm btn-outline-danger" (click)="load()">
+            {{ 'common.retry' | translate }}
+          </button>
+        </div>
+      }
+      @if (!loading() && !errored() && payment(); as p) {
+        <!-- Core detail. -->
+        <dl class="tf-detail-grid mb-4">
+          <dt>{{ 'payments.status' | translate }}</dt>
+          <dd>
+            <app-status-badge [tone]="tone(p.status)" [label]="'payments.statusValue.' + p.status | translate" />
+          </dd>
+
+          <dt>{{ 'payments.provider' | translate }}</dt>
+          <dd>{{ 'payments.providerValue.' + p.provider | translate }}</dd>
+
+          <dt>{{ 'payments.amount' | translate }}</dt>
+          <dd class="fw-semibold">{{ minorToMajor(p.amountMinor) | number: '1.0-2' }} {{ p.currency }}</dd>
+
+          <dt>{{ 'payments.tokens' | translate }}</dt>
+          <dd>{{ p.tokenAmount | number }}</dd>
+
+          <dt>{{ 'payments.buyer' | translate }}</dt>
+          <dd>
+            @if (p.buyerId) {
+              <span class="code-chip">{{ p.buyerId }}</span>
+            } @else {
+              <span class="text-muted">—</span>
+            }
+          </dd>
+
+          <dt>{{ 'payments.reference' | translate }}</dt>
+          <dd>
+            @if (p.providerRef) {
+              <small class="font-monospace">{{ p.providerRef }}</small>
+            } @else {
+              <span class="text-muted">—</span>
+            }
+          </dd>
+
+          @if (p.failureReason) {
+            <dt>{{ 'payments.failureReason' | translate }}</dt>
+            <dd><span class="code-chip">{{ p.failureReason }}</span></dd>
+          }
+          @if (p.reversalReason) {
+            <dt>{{ 'payments.reversalReason' | translate }}</dt>
+            <dd><span class="code-chip">{{ p.reversalReason }}</span></dd>
+          }
+
+          <dt>{{ 'payments.created' | translate }}</dt>
+          <dd><small class="text-muted">{{ p.createdAt | date: 'medium' }}</small></dd>
+
+          <dt>{{ 'payments.updated' | translate }}</dt>
+          <dd>
+            @if (p.updatedAt) {
+              <small class="text-muted">{{ p.updatedAt | date: 'medium' }}</small>
+            } @else {
+              <span class="text-muted">—</span>
+            }
+          </dd>
+        </dl>
+
+        <!-- Derived status timeline. -->
+        <h3 class="h6 text-uppercase text-muted mb-3" style="letter-spacing: 0.04em; font-size: var(--tf-fs-xs)">
+          {{ 'payments.timeline' | translate }}
+        </h3>
+        <ol class="tf-timeline mb-2">
+          @for (step of timeline(); track step.status) {
+            <li class="tf-timeline__item" [class.is-current]="step.current">
+              <span class="tf-timeline__dot" aria-hidden="true"></span>
+              <app-status-badge [tone]="tone(step.status)" [label]="'payments.statusValue.' + step.status | translate" />
+              @if (step.reason) {
+                <span class="code-chip ms-2">{{ step.reason }}</span>
+              }
+              <p class="tf-timeline__when">
+                {{ step.at ? (step.at | date: 'medium') : ('common.unknown' | translate) }}
+              </p>
+            </li>
+          }
+        </ol>
+      }
+    </div>
+
+    <!-- Footer: operator actions (refund/void), enabled only for the states the backend allows. -->
+    @if (payment(); as p) {
+      <footer class="tf-drawer__footer">
+        @if (pendingAction() === null) {
+          @if (refundable() || voidable()) {
+            <div class="d-flex flex-wrap gap-2">
+              @if (refundable()) {
+                <button type="button" class="btn btn-sm btn-outline-danger" (click)="startAction('refund')">
+                  {{ 'payments.refund' | translate }}
+                </button>
+              }
+              @if (voidable()) {
+                <button type="button" class="btn btn-sm btn-outline-secondary" (click)="startAction('void')">
+                  {{ 'payments.void' | translate }}
+                </button>
+              }
+            </div>
+          } @else {
+            <p class="text-muted small mb-0">{{ 'payments.noActions' | translate }}</p>
+          }
+        } @else {
+          <!-- Action composer: reason required, then an explicit confirm step. -->
+          <div role="group" [attr.aria-label]="(pendingAction() === 'refund' ? 'payments.refund' : 'payments.void') | translate">
+            @if (!confirming()) {
+              <label class="form-label small mb-1" for="pay-action-reason">
+                {{ 'payments.reasonLabel' | translate }}
+              </label>
+              <input
+                id="pay-action-reason"
+                type="text"
+                class="form-control form-control-sm mb-2"
+                maxlength="256"
+                [placeholder]="'payments.reasonPlaceholder' | translate"
+                [ngModel]="reason()"
+                (ngModelChange)="reason.set($event)"
+              />
+              <div class="d-flex gap-2">
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  [class.btn-danger]="pendingAction() === 'refund'"
+                  [class.btn-secondary]="pendingAction() === 'void'"
+                  [disabled]="!reason().trim()"
+                  (click)="requestConfirm()"
+                >
+                  {{ 'common.continue' | translate }}
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" (click)="cancelAction()">
+                  {{ 'common.cancel' | translate }}
+                </button>
+              </div>
+            } @else {
+              <!-- Confirmation step. -->
+              <p class="small mb-2" role="alert">
+                {{ (pendingAction() === 'refund' ? 'payments.confirmRefund' : 'payments.confirmVoid') | translate }}
+              </p>
+              <div class="d-flex gap-2">
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  [class.btn-danger]="pendingAction() === 'refund'"
+                  [class.btn-secondary]="pendingAction() === 'void'"
+                  [disabled]="acting()"
+                  (click)="submit()"
+                >
+                  @if (acting()) {
+                    <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                  }
+                  {{ 'common.confirm' | translate }}
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" [disabled]="acting()" (click)="backToEdit()">
+                  {{ 'common.back' | translate }}
+                </button>
+              </div>
+            }
+          </div>
+        }
+        <span class="visually-hidden" role="status" aria-live="polite">
+          {{ acting() ? ('common.saving' | translate) : '' }}
+        </span>
+      </footer>
+    }
+  </aside>
+}

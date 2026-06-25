@@ -42,7 +42,13 @@ import java.util.UUID;
  * separate axis from the publish lifecycle so a held draft is unambiguous ({@code status=DRAFT} +
  * {@code moderationHeld=true}) and clearing the hold never silently changes the lifecycle state. The
  * actual moderation review lives in the {@code moderation} module; this flag is the gate this module
- * checks before allowing {@code PUBLISHED} (TODO(wiring): subscribe to the moderation decision event).</p>
+ * checks before allowing {@code PUBLISHED}. The auto-publish-on-approval path is ready on the consumer
+ * side ({@code AnnouncementService.approveAndPublish} clears the hold and publishes) but cannot be wired
+ * yet: moderation publishes only the account-scoped {@code ModerationSanctionApplied} event and does NOT
+ * yet emit a per-subject content-decision event for an {@code APPROVE} of a held {@code ANNOUNCEMENT}.
+ * CROSS-MODULE: needs a published moderation content-decision event (e.g.
+ * {@code moderation.api.event.ModerationSubjectDecided} carrying {@code (subjectType=ANNOUNCEMENT,
+ * subjectId, APPROVE)}) for an outbox handler here to consume — see {@code AnnouncementService}.</p>
  */
 @Entity
 @Table(name = "announcement", indexes = {
@@ -75,8 +81,11 @@ public class Announcement extends BaseEntity {
 
     /**
      * Public id of the issue category this announcement is tagged with (for category-follow targeting),
-     * or {@code null}. Bare {@code UUID} reference to the {@code reporting} module's IssueCategory
-     * (TODO(wiring): validate against the category directory once that module is merged).
+     * or {@code null}. Bare {@code UUID} reference to the {@code reporting} module's IssueCategory — validated
+     * at publish time against the reporting category directory via the published
+     * {@code reporting.api.IssueCategoryQueryApi#requireCategory} port (in
+     * {@code AnnouncementService.validateCategory}), so a tagged announcement can never reference a
+     * non-existent/retired category; never FK-joined here (ARCHITECTURE §3.2, ADR-0013 §4a).
      */
     @Column(name = "category_id")
     private UUID categoryId;

@@ -27,7 +27,8 @@ public interface DeviceTokenRepository extends JpaRepository<DeviceToken, Long> 
     Optional<DeviceToken> findByToken(String token);
 
     /**
-     * Lists a recipient profile's live device tokens — the push fan-out's recipient resolution.
+     * Lists a recipient profile's live device tokens — the push fan-out's recipient resolution and the
+     * DSR-erasure handler's "tokens to revoke for this subject" lookup.
      *
      * @param profileId the recipient profile's public id.
      * @return the profile's live tokens (possibly empty → the dispatcher falls back to SMS, EI-5).

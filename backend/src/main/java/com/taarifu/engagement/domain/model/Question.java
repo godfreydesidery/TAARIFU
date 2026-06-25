@@ -48,8 +48,9 @@ public class Question extends BaseEntity {
     private UUID askerProfileId;
 
     /**
-     * Public id of the targeted representative in the <b>institutions</b> module (by id only — no import).
-     * Resolving/validating the target is a later integration step (// TODO(wiring) in the service).
+     * Public id of the targeted representative in the <b>institutions</b> module (by id only — no import). On
+     * the answer path the answerer (the authenticated account from {@code CurrentUser}) must equal this id, so
+     * a rep answers only their own inbox (D13/D16) — both sides are the account grain, no further mapping.
      */
     @Column(name = "target_rep_id", nullable = false)
     private UUID targetRepId;
@@ -93,14 +94,40 @@ public class Question extends BaseEntity {
         return q;
     }
 
-    /** Marks the question {@code ANSWERED} (called when an {@link Answer} is published, UC-E10). */
+    /**
+     * Marks the question {@code ANSWERED} (called when an {@link Answer} is published, UC-E10). Guarded to run
+     * only while {@code OPEN}: a {@code DECLINED}/{@code MODERATED} question is no longer answerable and an
+     * already-{@code ANSWERED} one must not be re-answered (one answer per question — the {@link Answer} unique
+     * constraint is the hard guarantee). The answer service maps the guard to a localised conflict.
+     *
+     * @throws IllegalStateException if the question is not {@code OPEN}.
+     */
     public void markAnswered() {
+        if (this.status != QuestionStatus.OPEN) {
+            throw new IllegalStateException("Question can only be answered while OPEN (was " + status + ")");
+        }
         this.status = QuestionStatus.ANSWERED;
     }
 
     /** @return whether the question is publicly listed (OPEN or ANSWERED). */
     public boolean isPubliclyVisible() {
         return this.status == QuestionStatus.OPEN || this.status == QuestionStatus.ANSWERED;
+    }
+
+    /**
+     * De-identifies this question on a data-subject ERASURE (PRD §25.1; ADR-0016 §5.6) — the question
+     * <b>survives as an anonymised civic record</b> (its body and the rep's published answer are preserved as
+     * public accountability content) while its tie to the now-erased asker is severed.
+     *
+     * <p>WHY a tombstone token rather than {@code null}: {@link #askerProfileId} is {@code NOT NULL}. The
+     * caller supplies a <b>deterministic</b> per-subject token so the asker is no longer recoverable, the row
+     * stays valid, and a redelivery is a no-op (the second pass matches nothing on the original asker id —
+     * at-least-once safe, ADR-0014 §3). The question body is preserved as the anonymised public Q&amp;A record.</p>
+     *
+     * @param askerTombstone the deterministic, non-account per-subject token replacing the real asker id.
+     */
+    public void anonymiseAsker(UUID askerTombstone) {
+        this.askerProfileId = askerTombstone;
     }
 
     /** @return the asker's profile public id. */

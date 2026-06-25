@@ -112,6 +112,30 @@ class ModerationEndpointSecurityIntegrationTest extends AbstractPostgisIntegrati
     }
 
     @Test
+    void transparencyReport_isForbidden_withoutStaffRole() {
+        // The transparency report is staff-only (ADMIN/ROOT/MODERATOR) — a plain citizen must 403.
+        ResponseEntity<Map> res = restTemplate.exchange(
+                "/moderation/transparency", HttpMethod.GET,
+                new HttpEntity<>(bearer(UUID.randomUUID(), "CITIZEN")), Map.class);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(res.getBody()).containsEntry("statusCode", 403);
+    }
+
+    @Test
+    void transparencyReport_isAllowed_forModerator_andReturnsAggregate() {
+        ResponseEntity<Map> res = restTemplate.exchange(
+                "/moderation/transparency", HttpMethod.GET,
+                new HttpEntity<>(bearer(UUID.randomUUID(), ROLE_MODERATOR)), Map.class);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(res.getBody()).containsEntry("success", true);
+        // The aggregate is present and PII-free by construction (counts/codes only).
+        assertThat(dataOf(res)).containsKeys("totalFlags", "totalActions", "totalAppeals",
+                "actionsByType", "appealsByOutcome", "flagsByReason", "itemsByAssistMode");
+    }
+
+    @Test
     void takeAction_onOwnContent_isBlockedByConflictOfInterest() {
         UUID moderator = UUID.randomUUID();
         UUID itemPublicId = insertItem(moderator); // subject author IS this moderator (D16 set-up)
@@ -154,10 +178,14 @@ class ModerationEndpointSecurityIntegrationTest extends AbstractPostgisIntegrati
      */
     private UUID insertItem(UUID authorPublicId) {
         UUID itemPublicId = UUID.randomUUID();
+        // Set auto_assisted explicitly (a manually-flagged item, NOT auto-raised): the column is NOT NULL
+        // (V154). Being explicit keeps the fixture deterministic even when a reused Testcontainers DB
+        // (testcontainers.reuse.enable=true) holds a schema where the column DEFAULT has not been applied.
         txTemplate.executeWithoutResult(status -> em.createNativeQuery("""
                 INSERT INTO moderation_item (public_id, version, created_at, deleted, subject_type,
-                        subject_id, subject_author_profile_id, severity, status, flag_count, sla_due_at)
-                VALUES (:pid, 0, :now, false, 'COMMENT', :sid, :author, 'MEDIUM', 'PENDING', 1, :sla)
+                        subject_id, subject_author_profile_id, severity, status, flag_count, sla_due_at,
+                        auto_assisted)
+                VALUES (:pid, 0, :now, false, 'COMMENT', :sid, :author, 'MEDIUM', 'PENDING', 1, :sla, false)
                 """)
                 .setParameter("pid", itemPublicId)
                 .setParameter("now", Instant.now())

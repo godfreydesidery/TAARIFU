@@ -1,0 +1,50 @@
+<section aria-labelledby="search-title">
+  <h1 id="search-title" class="search-h">{{ 'search.title' | translate }}</h1>
+
+  <label class="sr-only" for="q">{{ 'search.label' | translate }}</label>
+  <input
+    id="q"
+    type="search"
+    inputmode="search"
+    class="form-control form-control-lg search-input"
+    [formControl]="query"
+    [placeholder]="'search.placeholder' | translate"
+    [attr.aria-describedby]="'search-status'"
+  />
+
+  <p id="search-status" class="sr-only" aria-live="polite">
+    @if (loading()) {
+      {{ 'common.loading' | translate }}
+    } @else if (searched()) {
+      {{ 'search.resultCount' | translate: { count: results().length } }}
+    }
+  </p>
+
+  @if (!searched()) {
+    <div class="tz-card search-prompt">
+      <p class="mb-0 text-muted">{{ 'search.prompt' | translate }}</p>
+    </div>
+  } @else if (loading()) {
+    <div class="tz-skeleton mt-3" style="height: 3rem"></div>
+    <div class="tz-skeleton mt-2" style="height: 3rem"></div>
+  } @else if (results().length === 0) {
+    <div class="tz-card search-prompt">
+      <p class="mb-0 text-muted">{{ 'search.noResults' | translate }}</p>
+    </div>
+  } @else {
+    <ul class="search-list">
+      @for (r of results(); track r.entityPublicId) {
+        <li class="tz-card search-item">
+          <span class="search-item__icon" aria-hidden="true">{{ icon(r.entityType) }}</span>
+          <span class="search-item__body">
+            <span class="search-item__type">{{ 'search.type.' + r.entityType | translate }}</span>
+            <span class="search-item__title">{{ r.title }}</span>
+            @if (r.snippet) {
+              <span class="search-item__snippet">{{ r.snippet }}</span>
+            }
+          </span>
+        </li>
+      }
+    </ul>
+  }
+</section>

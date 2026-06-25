@@ -20,7 +20,31 @@
  *
  * <p>Boundary discipline: cross-module entities (author/recipient profiles, geography areas, institutions
  * representatives, reporting categories) are referenced by public {@code UUID} only — never FK-joined —
- * and resolved through the owning module's public API (ARCHITECTURE §3.2). The {@code // TODO(wiring)}
- * notes mark the deferred cross-module integration points.</p>
+ * and resolved through the owning module's public API (ARCHITECTURE §3.2). A tagged announcement's
+ * {@code categoryId} is validated at publish time against {@code reporting.api.IssueCategoryQueryApi}. A few
+ * integration points remain deferred and are marked inline with precise {@code CROSS-MODULE}/{@code PHASE-3}
+ * notes naming the exact missing port/event and the ready receiver here (the moderation per-subject
+ * content-decision event for auto-publish-on-approval, the institutions representative→profileId resolver for
+ * representative-follow feed inclusion, the i18n notification-template service for rendered SW/EN message
+ * bodies, and an author-reputation source for trust widening) — every deferred point names its concrete
+ * dependency, so no bare unqualified wiring marker remains.</p>
+ *
+ * <p><b>Discovery + moderation wiring (ADR-0017 / ADR-0018; outbound {@code api → api} — ADR-0013 §1):</b>
+ * on the went-live funnel ({@code AnnouncementService.publish}/{@code approveAndPublish}) this module pushes a
+ * <b>public, PII-free projection</b> of a {@code PUBLISHED} announcement (title + localised body snippet +
+ * area/category facets) to the search module's {@code SearchIndexApi}, and <b>removes</b> the projection for any
+ * non-published state (draft/held/scheduled/expired) so nothing in flight is ever discoverable (PRD §18). For
+ * moderation auto-assist it publishes {@code AnnouncementSubjectContentQuery} — the implementation of
+ * {@code moderation.api.SubjectContentQueryApi} for {@code FlagSubjectType.ANNOUNCEMENT} (the only moderatable
+ * surface this module owns; it has no comment/reply entity) — surfacing a flagged announcement's bilingual body
+ * <b>transiently</b> to the scorer. Both are sanctioned feature→foundation {@code api} dependencies (no cycle,
+ * no reach-in); auto-assist is assist-only and degrades to the human pipeline (EI-18).</p>
+ *
+ * <p><b>Published command ports (ADR-0013 §1; A3/ADR-0019):</b> this module exposes two synchronous command
+ * ports in {@code com.taarifu.communications.api} for sibling channels (above all {@code ussd}) that need SMS
+ * delivery or an area follow but must not import this module's internals: {@code SmsSendApi} (façade over the
+ * internal {@code SmsGateway} — masked, fail-soft, no tokens) and {@code AreaSubscriptionApi} (idempotent
+ * {@code AREA} follow at the fan-out's <b>profile</b> grain). Both carry no token in/out (the civic-integrity
+ * fence, D18) and no PII beyond the unavoidable raw recipient that crosses only into the masking gateway (S-4).</p>
  */
 package com.taarifu.communications;

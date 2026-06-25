@@ -7,6 +7,7 @@ import { routes } from './app.routes';
 import { apiResponseInterceptor } from './core/interceptors/api-response.interceptor';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { LocaleService } from './core/i18n/locale.service';
+import { ThemeService } from './core/theme/theme.service';
 import { createTranslateLoader } from './core/i18n/translate-loader';
 
 /**
@@ -45,13 +46,18 @@ export const appConfig: ApplicationConfig = {
         deps: [HttpBackend],
       },
     }).providers ?? []),
-    // Initialise the locale (Swahili default) before first render so the UI is never momentarily English.
+    // Initialise the locale (English default for the console) before first render so the UI never flashes
+    // the wrong language, AND apply the saved/OS theme so there is no light→dark flash on load.
     {
       provide: APP_INITIALIZER,
       multi: true,
       useFactory: () => {
         const locale = inject(LocaleService);
-        return () => locale.init();
+        const theme = inject(ThemeService);
+        return () => {
+          theme.init();
+          locale.init();
+        };
       },
     },
   ],

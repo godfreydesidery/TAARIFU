@@ -1,0 +1,73 @@
+<section aria-labelledby="feed-title">
+  <h1 id="feed-title" class="feed-h">{{ 'feed.title' | translate }}</h1>
+  <p class="text-muted feed-sub">{{ 'feed.subtitle' | translate }}</p>
+
+  @if (loading()) {
+    <!-- Skeleton loaders (cheap, reduced-motion aware). -->
+    @for (s of skeletons; track s) {
+      <div class="tz-card feed-card" aria-hidden="true">
+        <div class="tz-skeleton" style="height: 1rem; width: 40%"></div>
+        <div class="tz-skeleton mt-2" style="height: 1.25rem; width: 85%"></div>
+        <div class="tz-skeleton mt-2" style="height: 0.85rem; width: 30%"></div>
+      </div>
+    }
+    <span class="sr-only">{{ 'common.loading' | translate }}</span>
+  } @else if (errored()) {
+    <div class="tz-card feed-empty" role="alert">
+      <p class="mb-2">{{ 'common.errorLoading' | translate }}</p>
+      <button type="button" class="btn btn-outline-success" (click)="load()">
+        {{ 'common.retry' | translate }}
+      </button>
+    </div>
+  } @else {
+    <!-- ===== Public reports ===== -->
+    <h2 class="feed-section-h">{{ 'feed.nearYou' | translate }}</h2>
+    @if (bundle()?.reports?.length) {
+      @for (r of bundle()!.reports; track r.id) {
+        <article class="tz-card feed-card">
+          <div class="feed-card__top">
+            <span class="feed-card__cat">{{ r.categoryName }}</span>
+            <app-status-pill [status]="r.status" />
+          </div>
+          <h3 class="feed-card__title">{{ r.title }}</h3>
+          <div class="feed-card__meta">
+            <span>{{ r.code }}</span>
+            <span aria-hidden="true">·</span>
+            <span>{{ r.createdAt | date: 'mediumDate' }}</span>
+            <span aria-hidden="true">·</span>
+            <span>▲ {{ r.upvotes }}</span>
+          </div>
+        </article>
+      }
+    } @else {
+      <div class="tz-card feed-empty">
+        <p class="mb-0 text-muted">{{ 'feed.noReports' | translate }}</p>
+      </div>
+    }
+
+    <!-- ===== Petitions ===== -->
+    <h2 class="feed-section-h mt-4">{{ 'feed.petitions' | translate }}</h2>
+    @if (bundle()?.petitions?.length) {
+      @for (p of bundle()!.petitions; track p.id) {
+        <article class="tz-card feed-card">
+          <h3 class="feed-card__title">{{ p.title }}</h3>
+          <p class="feed-card__body">{{ p.body }}</p>
+          <div class="feed-card__progress" role="progressbar"
+               [attr.aria-valuenow]="progress(p.signatureCount, p.signatureGoal)"
+               aria-valuemin="0" aria-valuemax="100">
+            <div class="feed-card__progress-bar" [style.width.%]="progress(p.signatureCount, p.signatureGoal)"></div>
+          </div>
+          <div class="feed-card__meta">
+            {{ 'feed.signatures' | translate: { count: p.signatureCount, goal: p.signatureGoal } }}
+          </div>
+        </article>
+      }
+    } @else {
+      <div class="tz-card feed-empty">
+        <p class="mb-0 text-muted">{{ 'feed.noPetitions' | translate }}</p>
+      </div>
+    }
+
+    <a routerLink="/report" class="btn btn-success btn-lg w-100 mt-4">{{ 'feed.fileCta' | translate }}</a>
+  }
+</section>

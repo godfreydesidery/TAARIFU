@@ -8,14 +8,14 @@ package com.taarifu.ussd.application.port;
  * replies. The body is built here from GSM-7-safe Swahili-first templates and carries <b>no PII beyond the
  * recipient</b> (S-4).</p>
  *
- * <p>WHY a consumer-owned port rather than importing communications' {@code SmsGateway}: the task calls for
- * sending via the existing communications SMS port, but that port lives in
- * {@code communications.domain.port} — an <b>internal</b> layer the isolation rule forbids this module from
- * importing (cross-module reach must go through the callee's {@code com.taarifu.<callee>.api} package,
- * ADR-0013 §1). So this module defines its own outbound seam, bound to a dev stub now, and its production
- * adapter delegates to communications' SMS capability once it is republished in {@code communications.api}
- * ({@code // TODO(wiring)}; see CENTRAL INTEGRATION NEEDS). This keeps the boundary clean and the system
- * bootable/testable with zero external calls (ARCHITECTURE §7).</p>
+ * <p>WHY a consumer-owned port rather than importing communications' {@code SmsGateway}: the existing
+ * communications SMS port lives in {@code communications.domain.port} — an <b>internal</b> layer the isolation
+ * rule forbids this module from importing (cross-module reach must go through the callee's
+ * {@code com.taarifu.<callee>.api} package, ADR-0013 §1). So this module defines its own outbound seam; its
+ * default production adapter ({@code CommunicationsUssdSmsSender}) delegates to communications' published
+ * {@code SmsSendApi} command port (A3/ADR-0019 — now wired), with a logging stub selectable via
+ * {@code taarifu.ussd.sms.sender=logging}. This keeps the boundary clean and the system bootable/testable with
+ * zero external calls (ARCHITECTURE §7).</p>
  */
 public interface UssdSmsSender {
 

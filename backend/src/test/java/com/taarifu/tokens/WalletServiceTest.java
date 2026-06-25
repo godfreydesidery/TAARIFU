@@ -109,6 +109,132 @@ class WalletServiceTest {
                 .isEqualTo(ErrorCode.BAD_REQUEST);
     }
 
+    /**
+     * A settled purchase top-up appends a {@code PURCHASE} ledger entry of exactly the purchased amount and
+     * advances the cached balance — the credit side of the mobile-money flow (ADR-0015; PRD §23.4).
+     */
+    @Test
+    void purchaseTopUp_creditsPurchaseEntry() {
+        Wallet wallet = walletWithId(7L);
+        when(ledger.findByIdempotencyKey("credit-evt-1")).thenReturn(Optional.empty());
+        when(wallets.findForUpdate(WalletOwnerType.USER, ownerId)).thenReturn(Optional.of(wallet));
+        when(ledger.latestBalanceForWallet(7L)).thenReturn(Optional.of(0L));
+        when(ledger.save(any(TokenTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TokenTransaction tx = service.purchaseTopUp(WalletOwnerType.USER, ownerId, 100,
+                "MPESA-REF-9", "credit-evt-1");
+
+        assertThat(tx.getType()).isEqualTo(TokenTransactionType.PURCHASE);
+        assertThat(tx.getAmount()).isEqualTo(100);
+        assertThat(tx.getBalanceAfter()).isEqualTo(100);
+        // The settlement reference is recorded as the (non-PII) audit reason; ref entity type is PAYMENT.
+        assertThat(tx.getReason()).contains("MPESA-REF-9");
+        assertThat(tx.getRefEntityType()).isEqualTo("PAYMENT");
+        assertThat(wallet.getCachedBalance()).isEqualTo(100);
+    }
+
+    /**
+     * A redelivered settlement under the SAME credit key returns the existing entry and writes nothing new —
+     * exactly-once credit on a duplicate/out-of-order mobile-money webhook (PRD §23.5, anti-fraud).
+     */
+    @Test
+    void purchaseTopUp_isIdempotentOnReplay() {
+        Wallet wallet = walletWithId(8L);
+        TokenTransaction existing = TokenTransaction.Builder
+                .of(wallet, TokenTransactionType.PURCHASE, 100)
+                .balanceAfter(100)
+                .idempotencyKey("credit-evt-dup")
+                .build();
+        when(ledger.findByIdempotencyKey("credit-evt-dup")).thenReturn(Optional.of(existing));
+
+        TokenTransaction tx = service.purchaseTopUp(WalletOwnerType.USER, ownerId, 100,
+                "MPESA-REF-DUP", "credit-evt-dup");
+
+        assertThat(tx).isSameAs(existing);
+        verify(ledger, never()).save(any());   // no second credit
+        verify(wallets, never()).save(any());
+    }
+
+    /** A non-positive purchase amount is a bad request (you cannot buy zero/negative tokens). */
+    @Test
+    void purchaseTopUp_rejectsNonPositiveAmount() {
+        assertThatThrownBy(() -> service.purchaseTopUp(WalletOwnerType.USER, ownerId, 0, "REF", "k"))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    /**
+     * A refund of a settled top-up DEBITS exactly the purchased amount, appends a {@code REFUND} ledger entry,
+     * and rolls the cached balance back — the reversal side of the mobile-money flow (ADR-0015 addendum).
+     */
+    @Test
+    void refund_debitsAndAppendsReversalEntry() {
+        Wallet wallet = walletWithId(9L);
+        when(ledger.findByIdempotencyKey("rev-evt-1")).thenReturn(Optional.empty());
+        when(wallets.findForUpdate(WalletOwnerType.USER, ownerId)).thenReturn(Optional.of(wallet));
+        when(ledger.latestBalanceForWallet(9L)).thenReturn(Optional.of(100L)); // the prior top-up balance
+        when(ledger.save(any(TokenTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TokenTransaction tx = service.refund(WalletOwnerType.USER, ownerId, 100, "rev-evt-1",
+                "DUPLICATE_CHARGE");
+
+        assertThat(tx.getType()).isEqualTo(TokenTransactionType.REFUND);
+        assertThat(tx.getAmount()).isEqualTo(100);
+        assertThat(tx.getBalanceAfter()).isZero();               // 100 credited, 100 reversed → 0
+        assertThat(tx.getReason()).contains("DUPLICATE_CHARGE");  // non-PII audit reason recorded
+        assertThat(tx.getRefEntityType()).isEqualTo("PAYMENT");
+        assertThat(wallet.getCachedBalance()).isZero();
+    }
+
+    /**
+     * A redelivered/retried refund under the SAME reversal key returns the existing entry and debits nothing
+     * again — exactly-once reversal on a duplicate refund callback (PRD §23.5 in reverse; no double-debit).
+     */
+    @Test
+    void refund_isIdempotentOnReplay() {
+        Wallet wallet = walletWithId(10L);
+        TokenTransaction existing = TokenTransaction.Builder
+                .of(wallet, TokenTransactionType.REFUND, 100)
+                .balanceAfter(0)
+                .idempotencyKey("rev-evt-dup")
+                .build();
+        when(ledger.findByIdempotencyKey("rev-evt-dup")).thenReturn(Optional.of(existing));
+
+        TokenTransaction tx = service.refund(WalletOwnerType.USER, ownerId, 100, "rev-evt-dup", "ADMIN");
+
+        assertThat(tx).isSameAs(existing);
+        verify(ledger, never()).save(any());   // no second debit
+        verify(wallets, never()).save(any());
+    }
+
+    /**
+     * A refund never drives the balance negative: if the topped-up tokens were already spent (balance 0),
+     * there is nothing reversible → CONFLICT, and no ledger entry is written (ck_token_tx_balance_nonneg).
+     */
+    @Test
+    void refund_conflictsWhenNothingReversible() {
+        Wallet wallet = walletWithId(11L);
+        when(ledger.findByIdempotencyKey("rev-evt-spent")).thenReturn(Optional.empty());
+        when(wallets.findForUpdate(WalletOwnerType.USER, ownerId)).thenReturn(Optional.of(wallet));
+        when(ledger.latestBalanceForWallet(11L)).thenReturn(Optional.of(0L)); // tokens already spent
+
+        assertThatThrownBy(() -> service.refund(WalletOwnerType.USER, ownerId, 100, "rev-evt-spent", "ADMIN"))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.CONFLICT);
+        verify(ledger, never()).save(any());
+    }
+
+    /** A non-positive refund amount is a bad request (you cannot reverse zero/negative tokens). */
+    @Test
+    void refund_rejectsNonPositiveAmount() {
+        assertThatThrownBy(() -> service.refund(WalletOwnerType.USER, ownerId, 0, "k", "ADMIN"))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
     /** Earning credits the configured reward when under the cap. */
     @Test
     void earn_creditsRewardUnderCap() {

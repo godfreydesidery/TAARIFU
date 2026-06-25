@@ -101,6 +101,19 @@ public class CaseEvent extends BaseEntity {
         this.message = message;
     }
 
+    /**
+     * Severs the acting-citizen linkage on a data-subject ERASURE (PRD §25.1; ADR-0016 §5.6) — the timeline
+     * entry survives as anonymised civic/operational history while its tie to the erased actor is cut.
+     *
+     * <p>WHY null (not delete): the append-only case timeline is part of the immutable civic record (§25.1);
+     * an entry is never mutated away, only its actor reference is de-identified — exactly as a system-generated
+     * or anonymous-reporter event ({@code actorProfileId == null}) always reads. <b>Idempotent</b>: an entry
+     * whose actor is already {@code null} (system/anonymous, or a prior erasure) is a harmless no-op.</p>
+     */
+    public void anonymiseActor() {
+        this.actorProfileId = null;
+    }
+
     /** @return the owning report. */
     public Report getReport() {
         return report;

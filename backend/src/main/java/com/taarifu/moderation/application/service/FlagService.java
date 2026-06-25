@@ -26,7 +26,25 @@ import java.util.UUID;
  * <p>Responsibility: owns the "flag content" transaction. It (a) blocks a citizen from flagging the same
  * subject twice (anti-brigading — the count that drives severity must reflect <i>distinct</i> flaggers),
  * (b) opens a {@link ModerationItem} for the subject if none is live yet (or attaches to / escalates the
- * existing one), seeding severity from the {@link SeverityPolicy}, and (c) records the {@link Flag}.</p>
+ * existing one), seeding severity from the {@link SeverityPolicy}, (c) records the {@link Flag}, and
+ * (d) runs the <b>auto-assist screen</b> on the flagged content (US-12.3, UC-H05; ADR-0018) so the queue
+ * item is also prioritised by what the content actually contains, not only the flag reason.</p>
+ *
+ * <p><b>🔒 Auto-assist is assist only — it never silences content (D-Q8, R21; ADR-0018).</b> After the item
+ * is raised, this service asks the owning module for the subject's <b>scorable text</b> (via the published
+ * {@link SubjectContentResolver} → {@code SubjectContentQueryApi}, the same boundary-safe registry pattern as
+ * the author lookup) and hands it to {@link AutoAssistService#triage}. The scorer can only <b>hold-and-
+ * prioritise</b> a risky item for a <i>human</i> review — it has no path to a takedown; only the D16-guarded
+ * human action endpoint can action. If no owner publishes a content port for the subject type (the launch
+ * reality), or the scorer is the degraded no-provider stub, the screen is a no-op and the flagged item still
+ * goes to a human (EI-18 — the human pipeline is always the floor). The flag itself is never blocked by
+ * auto-assist.</p>
+ *
+ * <p>WHY the screen runs <b>inside</b> the flag transaction (not on a separate path): the item this flag
+ * raised is the very item the screen marks/escalates — running both in one transaction keeps the queue item
+ * consistent (one save reflects both the flag and any auto-hold) and the triage analytics fact rides the same
+ * outbox commit. {@link AutoAssistService#triage} is {@code @Transactional} (propagation REQUIRED) so it
+ * joins this transaction rather than opening a second one.</p>
  *
  * <p>WHY no token balance is read anywhere here (integrity fence, D18, §23.5): flagging is a civic-core
  * safety action open to any authenticated citizen (T1+); pricing or quota-gating it would silence
@@ -48,31 +66,42 @@ public class FlagService {
     private final ModerationItemRepository itemRepository;
     private final SeverityPolicy severityPolicy;
     private final SubjectAuthorResolver subjectAuthorResolver;
+    private final SubjectContentResolver subjectContentResolver;
+    private final AutoAssistService autoAssistService;
     private final ClockPort clock;
     private final OutboxWriter outboxWriter;
 
     /**
-     * @param flagRepository        flag store (dedup + persistence).
-     * @param itemRepository        queue store (one-live-item-per-subject collapse).
-     * @param severityPolicy        reason→severity classification (§25.8).
-     * @param subjectAuthorResolver resolves the subject's author via the owning module's published port
-     *                              (ADR-0013 §4c) so the D16 self-action guard has the author to compare.
-     * @param clock                 time source for SLA stamping (testable).
-     * @param outboxWriter          the transactional-outbox port; {@link #flag} appends a
-     *                              {@code content_flagged} analytics fact in the flag transaction so the
-     *                              analytics sink records it asynchronously, off the citizen's path — the
-     *                              numerator of the abuse-report-rate KPI (Appendix E, M15; ADR-0013 §2).
+     * @param flagRepository         flag store (dedup + persistence).
+     * @param itemRepository         queue store (one-live-item-per-subject collapse).
+     * @param severityPolicy         reason→severity classification (§25.8).
+     * @param subjectAuthorResolver  resolves the subject's author via the owning module's published port
+     *                               (ADR-0013 §4c) so the D16 self-action guard has the author to compare.
+     * @param subjectContentResolver resolves the subject's scorable text via the owning module's published
+     *                               {@code SubjectContentQueryApi} (ADR-0018) so the auto-assist screen can run
+     *                               without moderation importing the content owner; empty → screen skipped.
+     * @param autoAssistService      the assist-only screen ({@link AutoAssistService#triage}) — holds-and-
+     *                               prioritises risky content for a human, never actions/removes (D-Q8, R21).
+     * @param clock                  time source for SLA stamping (testable).
+     * @param outboxWriter           the transactional-outbox port; {@link #flag} appends a
+     *                               {@code content_flagged} analytics fact in the flag transaction so the
+     *                               analytics sink records it asynchronously, off the citizen's path — the
+     *                               numerator of the abuse-report-rate KPI (Appendix E, M15; ADR-0013 §2).
      */
     public FlagService(FlagRepository flagRepository,
                        ModerationItemRepository itemRepository,
                        SeverityPolicy severityPolicy,
                        SubjectAuthorResolver subjectAuthorResolver,
+                       SubjectContentResolver subjectContentResolver,
+                       AutoAssistService autoAssistService,
                        ClockPort clock,
                        OutboxWriter outboxWriter) {
         this.flagRepository = flagRepository;
         this.itemRepository = itemRepository;
         this.severityPolicy = severityPolicy;
         this.subjectAuthorResolver = subjectAuthorResolver;
+        this.subjectContentResolver = subjectContentResolver;
+        this.autoAssistService = autoAssistService;
         this.clock = clock;
         this.outboxWriter = outboxWriter;
     }
@@ -147,6 +176,26 @@ public class FlagService {
                             null,                       // breachType: n/a
                             request.reason().name()),   // outcome = the flag reason (controlled vocab)
                     clock.now()));
+
+            // AUTO-ASSIST SCREEN (US-12.3, UC-H05, D-Q8; ADR-0018): now that this flag has raised the queue
+            // item, run the content-safety screen on the flagged content so the item is also prioritised by
+            // what the content actually contains. The scorable text is fetched from the owning module's
+            // published content port (the boundary-safe registry pattern — moderation never imports the
+            // owner). triage() is assist ONLY: it can hold-and-prioritise the SAME item for a HUMAN review
+            // and emit the auto_moderation_triaged analytics fact — it has NO path to a takedown (only the
+            // D16-guarded human action endpoint can action). It joins THIS transaction (propagation REQUIRED).
+            //
+            // 🔒 Graceful degradation (EI-18): if no owner publishes a content port for this subject type
+            // (the launch reality) the text resolves empty and we SKIP the screen — the flagged item still
+            // goes to a human moderator (the human pipeline is the floor). The flag is NEVER blocked or
+            // failed by auto-assist. The transient text is handed straight to the scorer and never persisted
+            // or logged here (PRD §18, PDPA). The author (account public id) is passed so the held item keeps
+            // the D16 self-action grain for when a human later actions it; null for an author-less subject.
+            subjectContentResolver.contentTextOf(request.subjectType(), request.subjectId())
+                    .ifPresent(text -> autoAssistService.triage(
+                            request.subjectType(), request.subjectId(),
+                            savedItem.getSubjectAuthorProfileId(), text, null));
+
             return FlagDto.from(saved);
         } catch (DataIntegrityViolationException dup) {
             // Lost the race against a concurrent identical flag — surface the same clean CONFLICT.

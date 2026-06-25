@@ -1,0 +1,65 @@
+<!--
+  Topbar global search: a combobox input + grouped results dropdown of deep links.
+  Debounced typeahead; degrades to an empty panel when the search endpoint is unavailable. (EI-10 / SY5.)
+-->
+<div class="topbar-search" [class.is-open]="open()">
+  <span class="topbar-search__icon" aria-hidden="true">🔍</span>
+  <label class="visually-hidden" for="global-search-input">{{ 'search.label' | translate }}</label>
+  <input
+    id="global-search-input"
+    class="topbar-search__input"
+    type="search"
+    role="combobox"
+    autocomplete="off"
+    [attr.aria-expanded]="open()"
+    aria-controls="global-search-panel"
+    aria-autocomplete="list"
+    [attr.aria-label]="'search.label' | translate"
+    [placeholder]="'search.placeholder' | translate"
+    [value]="term()"
+    (input)="onInput($any($event.target).value)"
+    (focus)="onFocus()"
+    (keydown.enter)="submit()"
+  />
+  @if (loading()) {
+    <span class="topbar-search__spinner" role="status" aria-hidden="true"></span>
+  }
+
+  @if (open() && (groups().length > 0 || showEmpty())) {
+    <div
+      id="global-search-panel"
+      class="topbar-search__panel"
+      role="listbox"
+      [attr.aria-label]="'search.resultsTitle' | translate"
+    >
+      @if (showEmpty()) {
+        <p class="topbar-search__empty">{{ 'search.noResults' | translate }}</p>
+      } @else {
+        @for (group of groups(); track group.type) {
+          <div class="topbar-search__group">
+            <div class="topbar-search__group-label">{{ group.labelKey | translate }}</div>
+            @for (hit of group.hits; track hit.id) {
+              <a
+                class="topbar-search__hit"
+                role="option"
+                [routerLink]="link(hit)"
+                (click)="onResultClick()"
+              >
+                <span class="topbar-search__hit-icon" aria-hidden="true">{{ icon(hit.type) }}</span>
+                <span class="topbar-search__hit-body">
+                  <span class="topbar-search__hit-title">{{ hit.title }}</span>
+                  @if (hit.subtitle) {
+                    <span class="topbar-search__hit-sub">{{ hit.subtitle }}</span>
+                  }
+                </span>
+              </a>
+            }
+          </div>
+        }
+        <button type="button" class="topbar-search__all" (click)="submit()">
+          {{ 'search.seeAll' | translate }}
+        </button>
+      }
+    </div>
+  }
+</div>

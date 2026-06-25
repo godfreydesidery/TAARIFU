@@ -41,6 +41,77 @@ public interface TokenLedgerApi {
                        String refEntityType, UUID refEntityId, String idempotencyKey);
 
     /**
+     * Credits a settled <b>purchase top-up</b> (mobile-money/card) of spendable convenience tokens to an
+     * owner's wallet, <b>idempotently</b> on {@code paymentReference} (PRD §23.4/§23.6; ADR-0015 §4). This is
+     * the typed cross-module seam the {@code payments} module calls on a SUCCEEDED settlement (replacing the
+     * temporary reflective bridge); it appends a {@code PURCHASE}-kind append-only ledger entry and advances
+     * the wallet's cached balance in the same transaction.
+     *
+     * <p><b>🔒 Civic-integrity fence (binding — D18, PRD §23.5):</b> a top-up adds <b>only</b> spendable
+     * convenience tokens — it MUST NOT grant a role, a vote, a signature, a rating, a poll outcome,
+     * routing/SLA/priority, or a verification status. There is deliberately <b>no balance returned</b> and no
+     * path from this method to any democratic-weight effect, and — like the rest of this API — no binding
+     * democratic action may consult a balance through it. A purchased token buys convenience/reach only,
+     * never democratic weight. This method is the convenience-credit door; the democratic-weight door does
+     * not exist on this contract by design.</p>
+     *
+     * <p><b>Idempotency:</b> {@code paymentReference} is the credit's unique key (the payments
+     * {@code credit_event_id}). A redelivered/out-of-order mobile-money webhook or a retried credit under the
+     * same reference credits the wallet <b>exactly once</b> — a replay credits nothing (no double-credit,
+     * PRD §23.5 anti-fraud).</p>
+     *
+     * @param ownerType        owner class (USER/ORGANIZATION).
+     * @param accountPublicId  the wallet owner's public id (opaque UUID; never a national/voter ID — no PII).
+     * @param amount           positive number of tokens purchased.
+     * @param paymentReference the originating payment's settlement/credit reference; doubles as the
+     *                         idempotency key (a machine reference, never PII).
+     * @return {@code true} (a credit is posted, or idempotently confirmed already-posted under this
+     *         reference). The wallet is correctly credited exactly once in both cases.
+     * @throws com.taarifu.common.error.ApiException if {@code amount <= 0} (a top-up of zero/negative tokens
+     *         is rejected).
+     */
+    boolean topUp(WalletOwnerType ownerType, UUID accountPublicId, long amount, String paymentReference);
+
+    /**
+     * Reverses a previously-credited <b>purchase top-up</b> from an owner's wallet when the underlying payment
+     * is refunded/charged-back, <b>idempotently</b> on {@code reversalEventId} (ADR-0015 addendum: REFUND/VOID;
+     * PRD §23.5/§23.6). This is the typed cross-module seam the {@code payments} module calls on a refund — the
+     * mirror of {@link #topUp}: it appends an append-only {@code REFUND}-kind ledger entry that <b>debits</b>
+     * the spendable convenience tokens the prior {@code PURCHASE} added, and rolls back the wallet's cached
+     * balance in the same transaction.
+     *
+     * <p><b>🔒 Civic-integrity fence (binding — D18, PRD §23.5):</b> a refund touches <b>only</b> spendable
+     * convenience tokens — it MUST NOT revoke (or grant) a role, a vote, a signature, a rating, a poll outcome,
+     * routing/SLA/priority, or a verification status, and — like the rest of this API — <b>no binding
+     * democratic action may consult or be gated on a balance through it</b>. There is deliberately no balance
+     * returned and no path from this method to any democratic-weight effect. Just as a purchased token buys
+     * convenience/reach only and never democratic weight, a refund undoes convenience/reach only and never
+     * touches democratic weight. This is the convenience-reversal door; the democratic-weight door does not
+     * exist on this contract by design.</p>
+     *
+     * <p><b>Idempotency:</b> {@code reversalEventId} is the reversal's unique key (the payments
+     * {@code reversal_event_id}). A retried refund or a redelivered provider refund callback under the same id
+     * reverses the wallet <b>exactly once</b> — a replay reverses nothing (no double-debit; the same
+     * anti-double-credit discipline the ledger enforces for credits, applied in reverse, PRD §23.5).</p>
+     *
+     * @param ownerType        owner class (USER/ORGANIZATION).
+     * @param accountPublicId  the wallet owner's public id (opaque UUID; never a national/voter ID — no PII).
+     * @param amount           positive number of tokens to reverse (the amount the top-up originally credited).
+     * @param reversalEventId  the reversal's idempotency key (the payments {@code reversal_event_id}; a machine
+     *                         reference, never PII).
+     * @param reason           a redacted machine reason for the reversal (e.g. {@code DUPLICATE_CHARGE});
+     *                         recorded for audit, never PII.
+     * @return {@code true} if a reversal was posted by this call; {@code false} if it was an idempotent replay
+     *         (already reversed under this key) — both outcomes leave the wallet correctly reversed once.
+     * @throws com.taarifu.common.error.ApiException if {@code amount <= 0} (a reversal of zero/negative tokens
+     *         is rejected), or {@link com.taarifu.common.error.ErrorCode#CONFLICT} if there is no spendable
+     *         balance left to reverse (the topped-up tokens were already spent — never drive a balance
+     *         negative).
+     */
+    boolean refund(WalletOwnerType ownerType, UUID accountPublicId, long amount, String reversalEventId,
+                   String reason);
+
+    /**
      * Credits an earned reward for an <b>already-validated</b> civic behaviour, honouring the per-behaviour
      * anti-farming cap and ledger idempotency (PRD §23.3, §23.5).
      *

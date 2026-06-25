@@ -123,6 +123,124 @@ public class WalletService {
     }
 
     /**
+     * Credits a settled <b>purchase top-up</b> (mobile-money/card) to the owner's wallet, idempotently
+     * (PRD §23.4/§23.6; ADR-0015). Appends an append-only {@link TokenTransactionType#PURCHASE} ledger entry
+     * and advances the cached balance in the same transaction.
+     *
+     * <p><b>🔒 Civic-integrity fence (binding — D18, PRD §23.5):</b> a purchase top-up adds <b>only</b>
+     * spendable convenience tokens. It NEVER grants a role, a vote, a signature, a rating, a poll outcome,
+     * routing/SLA/priority, or a verification status, and a binding democratic action must never read a
+     * balance: there is deliberately no balance return here and no path from this method to any
+     * democratic-weight effect. The credited tokens buy convenience/reach only — never democratic weight.
+     * This is the same fence as {@link #grant}/{@link #earn}: a credit is a credit; what it can be spent on
+     * is constrained entirely by the metering side, which hard-rejects binding action codes.</p>
+     *
+     * @param ownerType         owner class (USER/ORGANIZATION).
+     * @param ownerId           owner public id (opaque UUID; never a national/voter ID — no PII here).
+     * @param amount            positive number of tokens purchased.
+     * @param paymentReference  the settlement reference of the originating payment (recorded as the ledger
+     *                          {@code reason} for audit; never PII — it is a provider/credit reference id).
+     * @param idempotencyKey    unique key for this credit (the top-up's {@code credit_event_id}); a redelivered
+     *                          or retried settlement under the same key credits the wallet <b>exactly once</b>.
+     * @return the resulting (or pre-existing, on replay) {@link PURCHASE} ledger entry.
+     * @throws ApiException {@link ErrorCode#BAD_REQUEST} if {@code amount <= 0}.
+     */
+    public TokenTransaction purchaseTopUp(WalletOwnerType ownerType, UUID ownerId, long amount,
+                                          String paymentReference, String idempotencyKey) {
+        requirePositive(amount);
+        // refEntityType=PAYMENT ties the ledger entry back to the originating money-movement by reference
+        // only (cross-module, no FK — §3.2); reason carries the settlement reference for audit. Both are
+        // machine references, never PII. A blank reference degrades to the bare PURCHASE_TOP_UP reason.
+        String reason = (paymentReference == null || paymentReference.isBlank())
+                ? "PURCHASE_TOP_UP" : "PURCHASE_TOP_UP:" + paymentReference;
+        return creditIdempotent(ownerType, ownerId, TokenTransactionType.PURCHASE, amount,
+                "PURCHASE", reason, "PAYMENT", null, idempotencyKey, null);
+    }
+
+    /**
+     * Reverses a settled <b>purchase top-up</b> by <b>debiting</b> the spendable convenience tokens it added,
+     * idempotently (ADR-0015 addendum: REFUND/VOID; PRD §23.5/§23.6). Appends an append-only
+     * {@link TokenTransactionType#REFUND} ledger entry and rolls back the cached balance in the same
+     * transaction — the mirror of {@link #purchaseTopUp}.
+     *
+     * <p><b>🔒 Civic-integrity fence (binding — D18, PRD §23.5):</b> a refund debits <b>only</b> spendable
+     * convenience tokens. It NEVER revokes/grants a role, a vote, a signature, a rating, a poll outcome,
+     * routing/SLA/priority, or a verification status, and no binding democratic action may read or be gated on
+     * a balance through it: nothing here returns a balance. The balance is consulted <i>only</i> to keep the
+     * ledger non-negative (a refund of already-spent tokens cannot drive the wallet below zero), never as an
+     * authorization gate. A refund undoes convenience/reach only — never democratic weight.</p>
+     *
+     * <p><b>Idempotency:</b> a redelivered/retried refund under the same {@code idempotencyName} (the payments
+     * {@code reversal_event_id}) reverses the wallet <b>exactly once</b>; a replay returns the existing entry
+     * and debits nothing again (no double-debit, PRD §23.5 in reverse).</p>
+     *
+     * <p><b>WHY {@code REFUND} debits here, though the type is documented as a "credit":</b> the
+     * {@link TokenTransactionType} sign convention classes {@code REFUND} as a credit for the general case
+     * (refunding a prior <i>spend</i> returns tokens). For a top-up reversal it correctly <b>debits</b> — it
+     * undoes a {@code PURCHASE} credit. The authoritative balance derivation the services use
+     * ({@code latestBalanceForWallet}, by {@code balance_after}) stays exact because we write the post-debit
+     * balance directly; the cross-check {@code sumTypedBalance} (which treats REFUND as +) is only a sanity
+     * aid and is intentionally not the source of truth (see its Javadoc).</p>
+     *
+     * @param ownerType       owner class (USER/ORGANIZATION).
+     * @param ownerId         the wallet owner's public id (opaque UUID; never a national/voter ID — no PII).
+     * @param amount          positive number of tokens to reverse (the amount the top-up originally credited).
+     * @param reversalEventId the reversal idempotency key (the payments {@code reversal_event_id}); never PII.
+     * @param reason          a redacted machine reason (e.g. {@code DUPLICATE_CHARGE}); recorded for audit,
+     *                        never PII.
+     * @return the resulting (or pre-existing, on replay) {@code REFUND} ledger entry.
+     * @throws ApiException {@link ErrorCode#BAD_REQUEST} if {@code amount <= 0}, or {@link ErrorCode#CONFLICT}
+     *                      if there is no spendable balance left to reverse (already-spent tokens — never drive
+     *                      a balance negative).
+     */
+    public TokenTransaction refund(WalletOwnerType ownerType, UUID ownerId, long amount,
+                                   String reversalEventId, String reason) {
+        requirePositive(amount);
+
+        // Idempotency first: a replay of the same reversal must never debit twice (PRD §23.5 in reverse).
+        var existing = ledger.findByIdempotencyKey(reversalEventId);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
+        Wallet wallet = getOrCreateWalletForUpdate(ownerType, ownerId);
+        long balance = currentBalance(wallet);
+
+        // Never drive the balance negative (ck_token_tx_balance_nonneg, defence in depth). If the buyer already
+        // spent some/all of the topped-up tokens, reverse only what remains; if nothing remains, there is no
+        // reversible balance → CONFLICT (the admin handles a fully-spent top-up out of band, e.g. ADJUST).
+        long reversible = Math.min(amount, balance);
+        if (reversible <= 0) {
+            throw new ApiException(ErrorCode.CONFLICT);
+        }
+
+        long newBalance = balance - reversible;
+        // refEntityType=PAYMENT ties the reversal back to the originating money-movement by reference only
+        // (cross-module, no FK — §3.2); reason carries the (non-PII) machine refund reason for audit.
+        String auditReason = (reason == null || reason.isBlank())
+                ? "PURCHASE_REFUND" : "PURCHASE_REFUND:" + reason;
+        TokenTransaction tx = TokenTransaction.Builder
+                .of(wallet, TokenTransactionType.REFUND, reversible)
+                .balanceAfter(newBalance)
+                .actionCode("REFUND")
+                .reason(auditReason)
+                .ref("PAYMENT", null)
+                .idempotencyKey(reversalEventId)
+                .actor(ownerId)
+                .build();
+        TokenTransaction saved;
+        try {
+            saved = ledger.save(tx);
+        } catch (DataIntegrityViolationException raced) {
+            // A concurrent identical reversal won the unique idempotency key; return that one (no double-debit).
+            return ledger.findByIdempotencyKey(reversalEventId).orElseThrow(() -> raced);
+        }
+        wallet.applyBalance(newBalance);
+        wallets.save(wallet);
+        return saved;
+    }
+
+    /**
      * Credits an earned reward for a validated civic behaviour, honouring the per-behaviour cap.
      *
      * @param ownerType      owner class.

@@ -1,0 +1,429 @@
+# =============================================================================
+# Taarifu — Continuous DELIVERY pipeline (build -> test -> scan -> push -> deploy
+# staging, gated, with rollback). Complements ci.yml (which build/test/scans on
+# every push+PR but only pushes opportunistically). THIS workflow is the
+# PROMOTION path: it produces the immutable, scanned image and deploys it to the
+# `staging` GitHub Environment behind a manual approval gate, then to `prod` on a
+# release tag — same artefact, no rebuild (deploy/README §5).
+#
+# Grounding: CLAUDE.md §5 (gate sequence build->test->SAST->scan->sign->deploy),
+# deploy/README §5/§7/§8 (promote same image; smoke gate; one-command rollback),
+# PRD §15 (SLOs / error-budget gate), §16 (Helm topology), §18 (no secrets in
+# source — all creds from Environment secrets), D-Q9 (hosting), R12 (residency).
+#
+# GUARDRAILS (Peter's rules; CLAUDE.md §12):
+#   - Deploy creds come from the bound Environment's secrets, injected at run time.
+#   - The deploy step FAILS CLOSED until the hosting target (D-Q9) + creds are
+#     signed off: with no creds it dry-runs; if marked live but the step is wired,
+#     a failed health smoke triggers an automatic `helm rollback`.
+#   - prod deploy requires the `production` Environment's required reviewers AND a
+#     release tag — never an arbitrary branch.
+# =============================================================================
+name: CD
+
+on:
+  push:
+    # develop -> staging promotion; a release tag v*.*.* -> prod (via the
+    # production Environment gate). One `push` key — listing both keeps YAML valid
+    # (a second `push:` would silently override the first).
+    branches: [develop]
+    tags: ["v*.*.*"]
+  # Manual promotion (choose the target environment) / on-demand rollback.
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        type: choice
+        options: [staging, prod]
+        default: staging
+      rollback:
+        description: "Roll back the target to its previous Helm revision (no deploy)"
+        type: boolean
+        default: false
+
+concurrency:
+  # One delivery per ref at a time; do NOT cancel an in-flight deploy mid-rollout.
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: taarifu-backend
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) BUILD + TEST — the gate. Reuses the same `mvnw verify` (Testcontainers ITs)
+  #    contract as ci.yml so the promoted artefact is proven before it ships.
+  # ---------------------------------------------------------------------------
+  build-test:
+    name: Build + test (gate)
+    if: github.event.inputs.rollback != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag (immutable git-sha)
+        id: meta
+        shell: bash
+        run: echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Guard backend present
+        id: guard
+        shell: bash
+        run: |
+          if [ ! -f backend/pom.xml ] || [ ! -f backend/mvnw ]; then
+            echo "backend not present — CD cannot promote."; exit 1
+          fi
+
+      - name: Set up JDK 21 (Temurin) + Maven cache
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build, test, verify (unit + Testcontainers ITs)
+        working-directory: backend
+        run: |
+          chmod +x ./mvnw
+          ./mvnw -B -ntp verify
+
+      - name: Publish test report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: cd-backend-tests
+          path: 'backend/target/surefire-reports/*.xml,backend/target/failsafe-reports/*.xml'
+          reporter: java-junit
+          fail-on-error: false
+
+  # ---------------------------------------------------------------------------
+  # 2) BUILD IMAGE -> SCAN (gate) -> PUSH. Trivy gates CRITICAL/HIGH with a fix
+  #    (CLAUDE.md §5). Pushes the immutable :<git-sha> ONLY after the scan passes,
+  #    and ONLY when a registry secret exists (no push on forks/PRs).
+  # ---------------------------------------------------------------------------
+  image:
+    name: Build image -> Trivy scan -> push
+    needs: build-test
+    if: github.event.inputs.rollback != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      pushed: ${{ steps.policy.outputs.push }}
+      ref: ${{ steps.policy.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine push policy
+        id: policy
+        shell: bash
+        env:
+          REGISTRY: ${{ secrets.REGISTRY }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+        run: |
+          if [ -n "$REGISTRY" ] && [ -n "$REGISTRY_USERNAME" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+            echo "ref=${REGISTRY}/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            echo "ref=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+            echo "::warning::No REGISTRY/REGISTRY_USERNAME secret — image is scanned but NOT pushed (CENTRAL NEED: registry choice + creds, deploy/README §11)."
+          fi
+
+      - name: Log in to registry
+        if: steps.policy.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Build image (load to local daemon for scanning)
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          load: true
+          push: false
+          tags: ${{ steps.policy.outputs.ref }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy image scan (gate — fail on fixable CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.policy.outputs.ref }}:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: CRITICAL,HIGH
+
+      - name: Trivy SARIF (Security tab)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.policy.outputs.ref }}:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+        continue-on-error: true
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-cd-backend
+        continue-on-error: true
+
+      # Push the SCANNED image (immutable git-sha + a moving env/branch/tag pointer).
+      - name: Push image (after scan passes; only if registry configured)
+        if: steps.policy.outputs.push == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.policy.outputs.ref }}:${{ github.sha }}
+            ${{ steps.policy.outputs.ref }}:${{ github.ref_name }}
+          cache-from: type=gha
+
+  # ---------------------------------------------------------------------------
+  # 3) DEPLOY -> STAGING (gated). Promotes the SAME scanned image via Helm to the
+  #    `staging` Environment. Bound to the Environment so its required reviewers /
+  #    wait timer apply (manual approval). Fails closed until creds are signed off.
+  # ---------------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy -> staging
+    needs: [build-test, image]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/develop'
+      && github.event.inputs.rollback != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: staging
+      # url: https://admin.staging.taarifu.example/api/v1/actuator/health
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine deploy readiness
+        id: ready
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.STAGING_KUBE_CONFIG }}
+        run: |
+          if [ -n "$KUBE_CONFIG" ]; then
+            echo "live=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "live=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No STAGING_KUBE_CONFIG — DRY-RUN (expected until D-Q9 hosting + creds signed off, deploy/README §11)."
+          fi
+
+      - name: Set up Helm + kubectl
+        if: steps.ready.outputs.live == 'true'
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: Write kubeconfig (from Environment secret)
+        if: steps.ready.outputs.live == 'true'
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.STAGING_KUBE_CONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "$KUBE_CONFIG" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Lint chart
+        if: steps.ready.outputs.live == 'true'
+        run: helm lint deploy/helm/taarifu -f deploy/helm/taarifu/values-staging.yaml --set backend.image.tag=${{ github.sha }} --set webAdmin.enabled=false
+
+      # Promote the immutable image. --atomic auto-rolls-back the release if the
+      # rollout fails to become healthy within --timeout (deploy/README §8) and
+      # --wait blocks until pods are Ready. This is the gated, reversible deploy.
+      - name: Helm upgrade --install (atomic, waits, auto-rollback on failure)
+        if: steps.ready.outputs.live == 'true'
+        env:
+          REGISTRY: ${{ secrets.REGISTRY }}
+        run: |
+          helm upgrade --install taarifu deploy/helm/taarifu \
+            --namespace taarifu-staging --create-namespace \
+            -f deploy/helm/taarifu/values-staging.yaml \
+            --set backend.image.repository="${REGISTRY}/${IMAGE_NAME}" \
+            --set backend.image.tag="${GITHUB_SHA}" \
+            --set webAdmin.enabled=false \
+            --atomic --wait --timeout 10m
+
+      # Post-deploy smoke gate (deploy/README §7). Block (and the operator can
+      # rollback) if health is not UP. --atomic already rolled back a failed
+      # rollout; this catches a pod that is Ready but unhealthy at the app layer.
+      - name: Post-deploy smoke (health probe)
+        if: steps.ready.outputs.live == 'true'
+        shell: bash
+        env:
+          HEALTH_URL: ${{ vars.STAGING_HEALTH_URL }}
+        run: |
+          [ -n "$HEALTH_URL" ] || { echo "No STAGING_HEALTH_URL var configured"; exit 1; }
+          for i in $(seq 1 12); do
+            if curl -fsS "$HEALTH_URL" | grep -q '"status":"UP"'; then
+              echo "Staging health UP"; exit 0
+            fi
+            echo "waiting for staging health... ($i/12)"; sleep 10
+          done
+          echo "::error::Staging did not report UP — rolling back (deploy/README §8 / RUNBOOK #rollback)."
+          helm rollback taarifu -n taarifu-staging || true
+          exit 1
+
+      - name: Dry-run plan (no creds)
+        if: steps.ready.outputs.live != 'true'
+        shell: bash
+        run: |
+          echo "DRY-RUN: would deploy ${IMAGE_NAME}:${GITHUB_SHA} to taarifu-staging via Helm."
+          echo "Wire STAGING_KUBE_CONFIG (+ REGISTRY*) Environment secrets once D-Q9 hosting is signed off."
+
+  # ---------------------------------------------------------------------------
+  # 4) DEPLOY -> PROD (release tag only, behind the `production` Environment gate).
+  #    Same artefact, same Helm chart, prod overlay. Required reviewers + an
+  #    election-period change-freeze check (deploy/README §9) gate this.
+  # ---------------------------------------------------------------------------
+  deploy-prod:
+    name: Deploy -> prod (release tag)
+    needs: [build-test, image]
+    if: >-
+      startsWith(github.ref, 'refs/tags/v')
+      && github.event.inputs.rollback != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: production       # required reviewers + wait timer configured in repo Settings
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Election-period neutrality (deploy/README §9): a change freeze is enforced by
+      # the CHANGE_FREEZE repo variable. When "true", only a manual override label/var
+      # lets a critical fix through — otherwise prod deploys are blocked.
+      - name: Change-freeze gate (election neutrality)
+        shell: bash
+        env:
+          FREEZE: ${{ vars.CHANGE_FREEZE }}
+          OVERRIDE: ${{ vars.CHANGE_FREEZE_OVERRIDE }}
+        run: |
+          if [ "$FREEZE" = "true" ] && [ "$OVERRIDE" != "true" ]; then
+            echo "::error::CHANGE_FREEZE is active (election-period neutrality, deploy/README §9). Prod deploy blocked. Set CHANGE_FREEZE_OVERRIDE=true for a critical incident fix only, with audit-trail justification."
+            exit 1
+          fi
+
+      - name: Determine deploy readiness
+        id: ready
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.PROD_KUBE_CONFIG }}
+        run: |
+          if [ -n "$KUBE_CONFIG" ]; then echo "live=true" >> "$GITHUB_OUTPUT";
+          else echo "live=false" >> "$GITHUB_OUTPUT";
+            echo "::warning::No PROD_KUBE_CONFIG — DRY-RUN (D-Q9 hosting + Legal residency sign-off gate prod, deploy/README §11)."; fi
+
+      - name: Set up Helm
+        if: steps.ready.outputs.live == 'true'
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: Write kubeconfig
+        if: steps.ready.outputs.live == 'true'
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.PROD_KUBE_CONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"; echo "$KUBE_CONFIG" | base64 -d > "$HOME/.kube/config"; chmod 600 "$HOME/.kube/config"
+
+      - name: Helm upgrade --install (prod, atomic, auto-rollback)
+        if: steps.ready.outputs.live == 'true'
+        env:
+          REGISTRY: ${{ secrets.REGISTRY }}
+        run: |
+          helm upgrade --install taarifu deploy/helm/taarifu \
+            --namespace taarifu-prod --create-namespace \
+            -f deploy/helm/taarifu/values-prod.yaml \
+            --set backend.image.repository="${REGISTRY}/${IMAGE_NAME}" \
+            --set backend.image.tag="${GITHUB_SHA}" \
+            --atomic --wait --timeout 12m
+
+      - name: Post-deploy smoke (prod health)
+        if: steps.ready.outputs.live == 'true'
+        shell: bash
+        env:
+          HEALTH_URL: ${{ vars.PROD_HEALTH_URL }}
+        run: |
+          [ -n "$HEALTH_URL" ] || { echo "No PROD_HEALTH_URL var"; exit 1; }
+          for i in $(seq 1 18); do
+            if curl -fsS "$HEALTH_URL" | grep -q '"status":"UP"'; then echo "Prod health UP"; exit 0; fi
+            echo "waiting for prod health... ($i/18)"; sleep 10
+          done
+          echo "::error::Prod not UP — rolling back."; helm rollback taarifu -n taarifu-prod || true; exit 1
+
+  # ---------------------------------------------------------------------------
+  # 5) ROLLBACK — one-command, on-demand (workflow_dispatch rollback=true).
+  #    Reverts the chosen environment to its previous good Helm revision
+  #    (deploy/README §8 / RUNBOOK #rollback). The backend is stateless, so this
+  #    is the safe path for an app-level regression; a MIGRATION issue needs the
+  #    DR path (restore-from-backup) — see RUNBOOK #migration-failed / #backup-restore.
+  # ---------------------------------------------------------------------------
+  rollback:
+    name: Rollback (one command)
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.rollback == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: ${{ github.event.inputs.environment }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: Write kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG_STAGING: ${{ secrets.STAGING_KUBE_CONFIG }}
+          KUBE_CONFIG_PROD: ${{ secrets.PROD_KUBE_CONFIG }}
+          TARGET: ${{ github.event.inputs.environment }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          if [ "$TARGET" = "prod" ]; then CFG="$KUBE_CONFIG_PROD"; else CFG="$KUBE_CONFIG_STAGING"; fi
+          [ -n "$CFG" ] || { echo "::error::No kubeconfig for $TARGET (CENTRAL NEED: hosting creds)."; exit 1; }
+          echo "$CFG" | base64 -d > "$HOME/.kube/config"; chmod 600 "$HOME/.kube/config"
+
+      - name: Helm rollback to previous revision
+        shell: bash
+        env:
+          TARGET: ${{ github.event.inputs.environment }}
+        run: |
+          NS="taarifu-${TARGET}"
+          echo "Release history (${NS}):"; helm history taarifu -n "$NS"
+          # Roll back to the immediately-previous revision (0 = previous in helm rollback).
+          helm rollback taarifu 0 -n "$NS" --wait --timeout 10m
+          echo "Rolled back taarifu in ${NS} to the previous revision."

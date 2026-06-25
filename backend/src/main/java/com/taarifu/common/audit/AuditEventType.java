@@ -133,6 +133,50 @@ public enum AuditEventType {
     IDENTITY_ERASED,
 
     /**
+     * A feature module severed/de-identified its share of a data subject's footprint on an ERASURE fan-out
+     * (PRD §18, §25.1; ADR-0016 §5/§7 — the cross-module DSR fan-out). actor = SYSTEM (or the erasing
+     * account), subject = the erased account; {@code reason_code} names the module + the severing and counts,
+     * e.g. {@code reporting:reports=3,events=2}, {@code engagement:signatures=1,petitions=0,...},
+     * {@code media:objects=4}, {@code accountability:ratings=2}, plus the originating {@code DSR:<id>}.
+     *
+     * <p>WHY one shared per-module code (not one per module): each owning module appends exactly this row when
+     * its erasure handler runs, so the audit log proves the whole subject footprint was covered, module by
+     * module — the auditable companion to the single {@link #IDENTITY_ERASED} identity tombstone. The
+     * hash-chain is EXTENDED by the append, never broken (§25.1, L-1). References/counts only — never PII.
+     * Append-only; never repurpose.</p>
+     */
+    SUBJECT_DATA_ERASED,
+
+    /**
+     * A citizen recorded a consent decision (grant or withdrawal) for a processing purpose (PRD §18 PDPA,
+     * UC-A16; ADR-0016 §2/§7). actor = subject = the deciding account; {@code reason_code} =
+     * {@code <purpose>:<state>} (e.g. {@code BEHAVIOURAL_ANALYTICS:WITHDRAWN}). References/codes only —
+     * never PII. Append-only; never repurpose.
+     */
+    PRIVACY_CONSENT_CHANGED,
+
+    /**
+     * A data-subject request (ACCESS or ERASURE) was received (PRD §18 PDPA, UC-A17/UC-S09; ADR-0016 §3/§7).
+     * actor = subject = the requesting account; {@code reason_code} = the {@code DsrType}. The auditable proof
+     * the right was exercised. References only — never PII.
+     */
+    PRIVACY_DSR_RECEIVED,
+
+    /**
+     * A data-subject ACCESS export was generated/delivered (PRD §18 PDPA right of access; ADR-0016 §4/§7).
+     * actor = the principal that ran it (the subject self-service, or an ADMIN/ROOT on a tracked DSR),
+     * subject = the account exported. References only — never the exported PII itself.
+     */
+    PRIVACY_DSR_EXPORTED,
+
+    /**
+     * An ERASURE was requested and the {@code ERASURE_REQUESTED} fan-out event was published (PRD §18, §25.1;
+     * ADR-0016 §5/§7). actor = subject = the erasing account. Precedes the per-module severing
+     * ({@link #IDENTITY_ERASED} et al.). References only — never PII.
+     */
+    PRIVACY_ERASURE_REQUESTED,
+
+    /**
      * An admin granted a role to an account additively (M14, US-14.1, D15; actor = the granting admin,
      * subject = the target account, {@code reason_code} = the granted {@code RoleName}). The canonical
      * "who granted what to whom" trail for back-office RBAC changes. References/public-ids only — never PII
@@ -168,5 +212,16 @@ public enum AuditEventType {
      * {@code BY_ID:<uuid>:n=1}, {@code BY_WINDOW:REPORT_ROUTED:n=12}, {@code BY_WINDOW:ALL:n=0}. References +
      * counts only — never an event payload or any PII (PRD §18, L-1). Append-only; never repurpose.
      */
-    OUTBOX_DLQ_REPLAYED
+    OUTBOX_DLQ_REPLAYED,
+
+    /**
+     * A representative posted (or an authorised curator posted on their behalf) their <b>right-of-reply</b> to
+     * a rating about them - the D-rated-fairness rule (accountability; PRD &sect;10 US-6.2). actor = the
+     * replying principal (the representative's linked account, or an {@code ADMIN}/{@code ROOT} curator acting
+     * on-behalf), subject = the rated representative's public id; {@code reason_code} = the reply mode
+     * ({@code SELF} or {@code CURATED}). At most one reply per rating (the one-per-rating fairness cap,
+     * enforced by a DB unique). No reply text, score, comment, or PII is attached - references/codes only
+     * (PRD &sect;18, PDPA, L-1). Append-only; never repurpose.
+     */
+    RATING_REPLY_POSTED
 }

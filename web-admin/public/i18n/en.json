@@ -1,7 +1,24 @@
 {
   "app": {
     "title": "Taarifu — Admin Console",
-    "shortTitle": "Taarifu Admin"
+    "shortTitle": "Taarifu Admin",
+    "consoleLabel": "Admin Console"
+  },
+  "search": {
+    "label": "Search the console",
+    "placeholder": "Search reps, organisations, announcements, reports…",
+    "seeAll": "See all results",
+    "resultsTitle": "Search results",
+    "resultsFor": "Results for",
+    "matches": "matches",
+    "noResults": "No matches found.",
+    "noResultsHint": "Try a different spelling or fewer words.",
+    "promptTitle": "Search the console",
+    "promptText": "Find representatives, responder organisations, announcements, and public reports.",
+    "groupRepresentatives": "Representatives",
+    "groupOrganisations": "Organisations",
+    "groupReports": "Reports",
+    "groupAnnouncements": "Announcements"
   },
   "common": {
     "loading": "Loading…",
@@ -28,7 +45,12 @@
     "required": "Required",
     "saved": "Saved successfully.",
     "deleted": "Deleted.",
-    "all": "All"
+    "all": "All",
+    "close": "Close",
+    "continue": "Continue",
+    "view": "View",
+    "saving": "Saving…",
+    "unknown": "Unknown"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -43,10 +65,20 @@
     "announcements": "Announcements",
     "institutions": "Institutions",
     "tokens": "Tokens",
+    "payments": "Payments",
     "users": "Users & Roles",
+    "privacy": "Privacy & DSR",
     "logout": "Log out",
     "language": "Language",
-    "menu": "Menu"
+    "menu": "Menu",
+    "skipToContent": "Skip to content",
+    "breadcrumbs": "Breadcrumb",
+    "themeDark": "Switch to dark theme",
+    "themeLight": "Switch to light theme",
+    "sectionOverview": "Overview",
+    "sectionOperations": "Operations",
+    "sectionCivic": "Civic data",
+    "sectionAdmin": "Administration"
   },
   "auth": {
     "loginTitle": "Sign in to the Admin Console",
@@ -82,7 +114,73 @@
     "qaNewCategory": "New category",
     "manage": "Manage",
     "statOpenCases": "Open cases",
-    "statSlaBreached": "SLA breached"
+    "statSlaBreached": "SLA breached",
+    "statVerificationQueue": "Verification queue",
+    "respondersCard": "Manage responder organisations and routing."
+  },
+  "analytics": {
+    "reportsByStatus": "Reports by status",
+    "reportsByStatusHint": "Live distribution of cases across the lifecycle.",
+    "channelMix": "Channel mix",
+    "channelMixHint": "How reports reach us — app, web, USSD or SMS.",
+    "funnel": "Verification funnel (T0 → T3)",
+    "funnelHint": "Sign-up to verified-identity conversion.",
+    "funnelConversion": "Reached T3",
+    "slaBreaches": "SLA breaches",
+    "slaBreachesHint": "Breaches split by first-response vs resolution.",
+    "moderationActions": "Moderation actions",
+    "moderationActionsHint": "Actions taken by outcome.",
+    "responsiveness": "Responsiveness",
+    "responsivenessHint": "Median and p90 latencies over the last 30 days.",
+    "ttfrMedian": "Median TTFR",
+    "ttrMedian": "Median TTR",
+    "p90": "p90",
+    "noData": "No data for this period yet.",
+    "dateRange": "Date range",
+    "from": "From",
+    "to": "To",
+    "range": {
+      "7D": "7 days",
+      "30D": "30 days",
+      "90D": "90 days",
+      "CUSTOM": "Custom"
+    },
+    "volume": "Reports volume",
+    "volumeHint": "Total reports filed in the selected window, drilled down by category or area.",
+    "volumeTotal": "Total",
+    "drillBy": "Drill down by",
+    "byCategory": "By category",
+    "byArea": "By area",
+    "category": "Category",
+    "area": "Area",
+    "count": "Count",
+    "share": "Share",
+    "unattributed": "Unattributed",
+    "channelValue": {
+      "APP": "App",
+      "WEB": "Web",
+      "PWA": "PWA",
+      "USSD": "USSD",
+      "SMS": "SMS",
+      "IVR": "IVR",
+      "SYSTEM": "System"
+    },
+    "outcomeValue": {
+      "APPROVE": "Approve",
+      "HIDE": "Hide",
+      "REMOVE": "Remove",
+      "WARN": "Warn",
+      "SUSPEND": "Suspend",
+      "DISMISS": "Dismiss",
+      "VERIFY": "Verify",
+      "ESCALATE": "Escalate"
+    },
+    "funnelStep": {
+      "ACCOUNT_SIGNED_UP": "Signed up",
+      "PROFILE_COMPLETED": "Profile completed",
+      "IDENTITY_VERIFICATION_STARTED": "Verification started",
+      "IDENTITY_VERIFIED": "Verified"
+    }
   },
   "geography": {
     "regionsTitle": "Regions",
@@ -135,6 +233,8 @@
   },
   "reports": {
     "title": "Report Queue",
+    "subtitle": "Triage, assign, and resolve citizen reports.",
+    "noResultsHint": "Try clearing a filter or widening the area.",
     "code": "Code",
     "titleCol": "Title",
     "category": "Category",
@@ -200,6 +300,8 @@
   },
   "responders": {
     "title": "Responder Organisations",
+    "subtitle": "Government, parastatal, and private bodies that handle cases.",
+    "noResultsHint": "Create the first organisation to start routing cases.",
     "name": "Name",
     "type": "Type",
     "status": "Status",
@@ -258,6 +360,8 @@
   },
   "moderation": {
     "title": "Moderation Queue",
+    "subtitle": "Review flagged content, ordered by severity and SLA.",
+    "noItemsHint": "Nothing needs your attention in this status.",
     "status": "Status",
     "subject": "Subject",
     "severity": "Severity",
@@ -404,6 +508,8 @@
   },
   "users": {
     "title": "Users & Roles",
+    "subtitle": "One account per person; roles are additive and scoped.",
+    "noResultsHint": "Adjust the filters to find an account.",
     "myIdentity": "My identity",
     "tier": "Tier",
     "roles": "Roles",
@@ -510,6 +616,96 @@
       "SCHEDULED": "Scheduled",
       "PUBLISHED": "Published",
       "EXPIRED": "Expired"
+    }
+  },
+  "privacy": {
+    "title": "Privacy & Data-Subject Requests",
+    "subtitle": "Handle PDPA access (export) and erasure (anonymisation) requests.",
+    "slaNote": "Erasure anonymises personal data while keeping the civic record. SLA: acknowledge within 72 hours, complete within 30 days. Subjects are shown by masked contact only — never raw personal data.",
+    "type": "Type",
+    "subject": "Subject",
+    "status": "Status",
+    "requested": "Requested",
+    "due": "Due",
+    "allTypes": "All types",
+    "allStatuses": "All statuses",
+    "overdue": "Overdue",
+    "legalHold": "Legal hold",
+    "legalHoldHint": "Erasure is suspended: the subject holds an active staff/representative role, or the item is under investigation.",
+    "acknowledge": "Acknowledge",
+    "complete": "Complete",
+    "hold": "Hold",
+    "acknowledged": "Request acknowledged.",
+    "completed": "Request completed.",
+    "held": "Request placed on hold.",
+    "confirmComplete": "Mark this request complete? The export/anonymisation job runs server-side.",
+    "holdPrompt": "Enter a reason code to place this request on hold (e.g. UNDER_INVESTIGATION):",
+    "noResults": "No data-subject requests found.",
+    "noResultsHint": "New access and erasure requests will appear here as citizens raise them.",
+    "noResultsHintFiltered": "No requests match these filters. Try clearing one.",
+    "typeValue": {
+      "ACCESS": "Access (export)",
+      "ERASURE": "Erasure"
+    },
+    "statusValue": {
+      "PENDING": "Pending",
+      "ACKNOWLEDGED": "Acknowledged",
+      "IN_PROGRESS": "In progress",
+      "COMPLETED": "Completed",
+      "REJECTED": "Rejected",
+      "ON_HOLD": "On hold"
+    }
+  },
+  "payments": {
+    "title": "Mobile-Money Payments",
+    "subtitle": "Token-purchase top-ups via M-Pesa, Tigo Pesa, Airtel Money, and HaloPesa.",
+    "fenceNote": "Token purchases never buy democratic weight — signatures, ratings, and binding polls are always free. Refunds and voids return only convenience tokens.",
+    "provider": "Provider",
+    "buyer": "Buyer",
+    "amount": "Amount",
+    "tokens": "Tokens",
+    "status": "Status",
+    "reference": "Reference",
+    "created": "Created",
+    "updated": "Updated",
+    "from": "From",
+    "to": "To",
+    "allProviders": "All providers",
+    "allStatuses": "All statuses",
+    "totalSettled": "Settled",
+    "totalPending": "Pending",
+    "totalFailed": "Failed",
+    "totalRefunded": "Refunded",
+    "noResults": "No payments found.",
+    "noResultsHint": "Mobile-money token purchases will appear here once Phase-2 payments are live.",
+    "noResultsHintFiltered": "No payments match these filters. Try widening the date range.",
+    "viewDetail": "View payment",
+    "detailTitle": "Payment detail",
+    "timeline": "Status timeline",
+    "failureReason": "Failure reason",
+    "reversalReason": "Reversal reason",
+    "refund": "Refund",
+    "void": "Void",
+    "noActions": "No actions are available for this payment in its current state.",
+    "reasonLabel": "Reason (audit, no personal data)",
+    "reasonPlaceholder": "e.g. DUPLICATE_CHARGE",
+    "confirmRefund": "Refund this settled top-up? This reverses the convenience-token credit and cannot be undone.",
+    "confirmVoid": "Void this un-settled top-up? This cancels the attempt; no tokens were credited.",
+    "refundDone": "Payment refunded.",
+    "voidDone": "Payment voided.",
+    "providerValue": {
+      "MPESA": "M-Pesa",
+      "TIGOPESA": "Tigo Pesa",
+      "AIRTELMONEY": "Airtel Money",
+      "HALOPESA": "HaloPesa"
+    },
+    "statusValue": {
+      "INITIATED": "Initiated",
+      "PENDING": "Pending",
+      "SUCCEEDED": "Succeeded",
+      "FAILED": "Failed",
+      "VOIDED": "Voided",
+      "REFUNDED": "Refunded"
     }
   },
   "errors": {

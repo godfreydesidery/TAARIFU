@@ -1,7 +1,24 @@
 {
   "app": {
     "title": "Taarifu — Kituo cha Usimamizi",
-    "shortTitle": "Taarifu Admin"
+    "shortTitle": "Taarifu Admin",
+    "consoleLabel": "Kituo cha Usimamizi"
+  },
+  "search": {
+    "label": "Tafuta katika kituo",
+    "placeholder": "Tafuta wawakilishi, mashirika, matangazo, ripoti…",
+    "seeAll": "Ona matokeo yote",
+    "resultsTitle": "Matokeo ya utafutaji",
+    "resultsFor": "Matokeo ya",
+    "matches": "yanayolingana",
+    "noResults": "Hakuna kinacholingana.",
+    "noResultsHint": "Jaribu tahajia tofauti au maneno machache.",
+    "promptTitle": "Tafuta katika kituo",
+    "promptText": "Pata wawakilishi, mashirika ya watoa huduma, matangazo, na ripoti za umma.",
+    "groupRepresentatives": "Wawakilishi",
+    "groupOrganisations": "Mashirika",
+    "groupReports": "Ripoti",
+    "groupAnnouncements": "Matangazo"
   },
   "common": {
     "loading": "Inapakia…",
@@ -28,7 +45,12 @@
     "required": "Inahitajika",
     "saved": "Imehifadhiwa kikamilifu.",
     "deleted": "Imefutwa.",
-    "all": "Zote"
+    "all": "Zote",
+    "close": "Funga",
+    "continue": "Endelea",
+    "view": "Tazama",
+    "saving": "Inahifadhi…",
+    "unknown": "Haijulikani"
   },
   "nav": {
     "dashboard": "Dashibodi",
@@ -43,10 +65,20 @@
     "announcements": "Matangazo",
     "institutions": "Taasisi",
     "tokens": "Tokeni",
+    "payments": "Malipo",
     "users": "Watumiaji na Majukumu",
+    "privacy": "Faragha na DSR",
     "logout": "Toka",
     "language": "Lugha",
-    "menu": "Menyu"
+    "menu": "Menyu",
+    "skipToContent": "Rukia hadi maudhui",
+    "breadcrumbs": "Njia ya urambazaji",
+    "themeDark": "Badili kuwa hali ya giza",
+    "themeLight": "Badili kuwa hali ya mwanga",
+    "sectionOverview": "Muhtasari",
+    "sectionOperations": "Uendeshaji",
+    "sectionCivic": "Data ya kiraia",
+    "sectionAdmin": "Utawala"
   },
   "auth": {
     "loginTitle": "Ingia kwenye Kituo cha Usimamizi",
@@ -82,7 +114,73 @@
     "qaNewCategory": "Aina mpya",
     "manage": "Simamia",
     "statOpenCases": "Kesi zinazoendelea",
-    "statSlaBreached": "SLA imepitwa"
+    "statSlaBreached": "SLA imepitwa",
+    "statVerificationQueue": "Foleni ya uthibitisho",
+    "respondersCard": "Simamia mashirika ya watoa huduma na uelekezaji."
+  },
+  "analytics": {
+    "reportsByStatus": "Ripoti kwa hali",
+    "reportsByStatusHint": "Mgawanyo wa moja kwa moja wa kesi katika mzunguko.",
+    "channelMix": "Mchanganyiko wa njia",
+    "channelMixHint": "Jinsi ripoti zinavyofika — programu, wavuti, USSD au SMS.",
+    "funnel": "Mfereji wa uthibitisho (T0 → T3)",
+    "funnelHint": "Ubadilishaji kutoka kujisajili hadi utambulisho uliothibitishwa.",
+    "funnelConversion": "Walifika T3",
+    "slaBreaches": "Ukiukaji wa SLA",
+    "slaBreachesHint": "Ukiukaji uliogawanywa kwa jibu la kwanza dhidi ya utatuzi.",
+    "moderationActions": "Vitendo vya usimamizi",
+    "moderationActionsHint": "Vitendo vilivyochukuliwa kwa matokeo.",
+    "responsiveness": "Uharakishaji",
+    "responsivenessHint": "Wastani na p90 wa muda katika siku 30 zilizopita.",
+    "ttfrMedian": "Wastani wa TTFR",
+    "ttrMedian": "Wastani wa TTR",
+    "p90": "p90",
+    "noData": "Bado hakuna data kwa kipindi hiki.",
+    "dateRange": "Kipindi cha tarehe",
+    "from": "Kuanzia",
+    "to": "Hadi",
+    "range": {
+      "7D": "Siku 7",
+      "30D": "Siku 30",
+      "90D": "Siku 90",
+      "CUSTOM": "Maalum"
+    },
+    "volume": "Idadi ya ripoti",
+    "volumeHint": "Jumla ya ripoti zilizowasilishwa katika kipindi kilichochaguliwa, kwa aina au eneo.",
+    "volumeTotal": "Jumla",
+    "drillBy": "Chambua kwa",
+    "byCategory": "Kwa aina",
+    "byArea": "Kwa eneo",
+    "category": "Aina",
+    "area": "Eneo",
+    "count": "Idadi",
+    "share": "Sehemu",
+    "unattributed": "Bila kuhusishwa",
+    "channelValue": {
+      "APP": "Programu",
+      "WEB": "Wavuti",
+      "PWA": "PWA",
+      "USSD": "USSD",
+      "SMS": "SMS",
+      "IVR": "IVR",
+      "SYSTEM": "Mfumo"
+    },
+    "outcomeValue": {
+      "APPROVE": "Idhinisha",
+      "HIDE": "Ficha",
+      "REMOVE": "Ondoa",
+      "WARN": "Onya",
+      "SUSPEND": "Simamisha",
+      "DISMISS": "Tupilia mbali",
+      "VERIFY": "Thibitisha",
+      "ESCALATE": "Pandisha"
+    },
+    "funnelStep": {
+      "ACCOUNT_SIGNED_UP": "Amejisajili",
+      "PROFILE_COMPLETED": "Wasifu umekamilika",
+      "IDENTITY_VERIFICATION_STARTED": "Uthibitisho umeanza",
+      "IDENTITY_VERIFIED": "Amethibitishwa"
+    }
   },
   "geography": {
     "regionsTitle": "Mikoa",
@@ -135,6 +233,8 @@
   },
   "reports": {
     "title": "Foleni ya Ripoti",
+    "subtitle": "Panga, gawa, na tatua ripoti za wananchi.",
+    "noResultsHint": "Jaribu kuondoa kichujio au kupanua eneo.",
     "code": "Msimbo",
     "titleCol": "Kichwa",
     "category": "Aina",
@@ -200,6 +300,8 @@
   },
   "responders": {
     "title": "Mashirika ya Watoa Huduma",
+    "subtitle": "Taasisi za serikali, mashirika ya umma, na binafsi zinazoshughulikia kesi.",
+    "noResultsHint": "Tengeneza shirika la kwanza ili kuanza kuelekeza kesi.",
     "name": "Jina",
     "type": "Aina",
     "status": "Hali",
@@ -258,6 +360,8 @@
   },
   "moderation": {
     "title": "Foleni ya Usimamizi wa Maudhui",
+    "subtitle": "Pitia maudhui yaliyoripotiwa, kwa mpangilio wa ukali na SLA.",
+    "noItemsHint": "Hakuna kinachohitaji uangalizi wako katika hali hii.",
     "status": "Hali",
     "subject": "Mada",
     "severity": "Ukali",
@@ -404,6 +508,8 @@
   },
   "users": {
     "title": "Watumiaji na Majukumu",
+    "subtitle": "Akaunti moja kwa kila mtu; majukumu yanaongezeka na yana mipaka.",
+    "noResultsHint": "Rekebisha vichujio ili kupata akaunti.",
     "myIdentity": "Utambulisho wangu",
     "tier": "Ngazi",
     "roles": "Majukumu",
@@ -510,6 +616,96 @@
       "SCHEDULED": "Limepangwa",
       "PUBLISHED": "Limechapishwa",
       "EXPIRED": "Limeisha muda"
+    }
+  },
+  "privacy": {
+    "title": "Faragha na Maombi ya Mhusika wa Data",
+    "subtitle": "Shughulikia maombi ya ufikiaji (kuhamisha) na ufutaji (kubatilisha utambulisho) chini ya PDPA.",
+    "slaNote": "Ufutaji hubatilisha utambulisho wa data binafsi huku ukihifadhi rekodi ya kiraia. Muda: thibitisha ndani ya saa 72, kamilisha ndani ya siku 30. Wahusika huonyeshwa kwa mawasiliano yaliyofichwa pekee — kamwe si data binafsi halisi.",
+    "type": "Aina",
+    "subject": "Mhusika",
+    "status": "Hali",
+    "requested": "Iliombwa",
+    "due": "Mwisho",
+    "allTypes": "Aina zote",
+    "allStatuses": "Hali zote",
+    "overdue": "Imechelewa",
+    "legalHold": "Zuio la kisheria",
+    "legalHoldHint": "Ufutaji umesimamishwa: mhusika ana jukumu hai la wafanyakazi/uwakilishi, au kipengele kiko chini ya uchunguzi.",
+    "acknowledge": "Thibitisha",
+    "complete": "Kamilisha",
+    "hold": "Simamisha",
+    "acknowledged": "Ombi limethibitishwa.",
+    "completed": "Ombi limekamilika.",
+    "held": "Ombi limesimamishwa.",
+    "confirmComplete": "Tia alama ombi hili kuwa limekamilika? Kazi ya kuhamisha/kubatilisha hufanyika upande wa seva.",
+    "holdPrompt": "Weka msimbo wa sababu ya kusimamisha ombi hili (k.m. UNDER_INVESTIGATION):",
+    "noResults": "Hakuna maombi ya mhusika wa data yaliyopatikana.",
+    "noResultsHint": "Maombi mapya ya ufikiaji na ufutaji yataonekana hapa raia wanapoyawasilisha.",
+    "noResultsHintFiltered": "Hakuna ombi linalolingana na vichujio hivi. Jaribu kuondoa kimoja.",
+    "typeValue": {
+      "ACCESS": "Ufikiaji (kuhamisha)",
+      "ERASURE": "Ufutaji"
+    },
+    "statusValue": {
+      "PENDING": "Inasubiri",
+      "ACKNOWLEDGED": "Imethibitishwa",
+      "IN_PROGRESS": "Inaendelea",
+      "COMPLETED": "Imekamilika",
+      "REJECTED": "Imekataliwa",
+      "ON_HOLD": "Imesimamishwa"
+    }
+  },
+  "payments": {
+    "title": "Malipo ya Pesa za Simu",
+    "subtitle": "Malipo ya kununua tokeni kupitia M-Pesa, Tigo Pesa, Airtel Money, na HaloPesa.",
+    "fenceNote": "Kununua tokeni hakununui uzito wa kidemokrasia — sahihi, ukadiriaji, na kura zinazofunga daima ni bure. Marejesho na ubatilishaji hurudisha tokeni za urahisi pekee.",
+    "provider": "Mtoa huduma",
+    "buyer": "Mnunuzi",
+    "amount": "Kiasi",
+    "tokens": "Tokeni",
+    "status": "Hali",
+    "reference": "Rejea",
+    "created": "Iliundwa",
+    "updated": "Ilisasishwa",
+    "from": "Kuanzia",
+    "to": "Hadi",
+    "allProviders": "Watoa huduma wote",
+    "allStatuses": "Hali zote",
+    "totalSettled": "Iliyokamilika",
+    "totalPending": "Inasubiri",
+    "totalFailed": "Iliyoshindwa",
+    "totalRefunded": "Iliyorejeshwa",
+    "noResults": "Hakuna malipo yaliyopatikana.",
+    "noResultsHint": "Malipo ya tokeni kwa pesa za simu yataonekana hapa malipo ya Awamu ya 2 yatakapoanza.",
+    "noResultsHintFiltered": "Hakuna malipo yanayolingana na vichujio hivi. Jaribu kupanua kipindi cha tarehe.",
+    "viewDetail": "Tazama malipo",
+    "detailTitle": "Maelezo ya malipo",
+    "timeline": "Ratiba ya hali",
+    "failureReason": "Sababu ya kushindwa",
+    "reversalReason": "Sababu ya kubatilisha",
+    "refund": "Rejesha",
+    "void": "Batilisha",
+    "noActions": "Hakuna vitendo vinavyopatikana kwa malipo haya katika hali yake ya sasa.",
+    "reasonLabel": "Sababu (ukaguzi, bila taarifa binafsi)",
+    "reasonPlaceholder": "mf. DUPLICATE_CHARGE",
+    "confirmRefund": "Rejesha malipo haya yaliyokamilika? Hii inabatilisha tokeni za urahisi zilizoongezwa na haiwezi kutenduliwa.",
+    "confirmVoid": "Batilisha malipo haya ambayo hayajakamilika? Hii inafuta jaribio; hakuna tokeni zilizoongezwa.",
+    "refundDone": "Malipo yamerejeshwa.",
+    "voidDone": "Malipo yamebatilishwa.",
+    "providerValue": {
+      "MPESA": "M-Pesa",
+      "TIGOPESA": "Tigo Pesa",
+      "AIRTELMONEY": "Airtel Money",
+      "HALOPESA": "HaloPesa"
+    },
+    "statusValue": {
+      "INITIATED": "Imeanzishwa",
+      "PENDING": "Inasubiri",
+      "SUCCEEDED": "Imefanikiwa",
+      "FAILED": "Imeshindwa",
+      "VOIDED": "Imebatilishwa",
+      "REFUNDED": "Imerejeshwa"
     }
   },
   "errors": {

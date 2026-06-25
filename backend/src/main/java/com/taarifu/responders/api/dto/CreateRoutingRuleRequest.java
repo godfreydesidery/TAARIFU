@@ -10,9 +10,11 @@ import java.util.UUID;
  * Request DTO to create a routing rule (admin CRUD, PRD §24.2).
  *
  * <p>Responsibility: validated input for {@code POST /routing-rules}. Category/sub-category/preferred-
- * responder are referenced by public id. The reporting module consumes the resulting rules (via this
- * module's API) to resolve a report's responder. // TODO(wiring): validate category ids against
- * reporting.</p>
+ * responder are referenced by public id. The category and sub-category ids are existence-validated against
+ * reporting's published {@code IssueCategoryQueryApi} in {@code ResponderAdminService.createRoutingRule}
+ * (sync {@code responders → reporting}, ADR-0013 §4a) before the rule is persisted; the responders
+ * {@code RoutingHandler} consumes the resulting rules to resolve a routed report's OWNER responder
+ * (async, D21).</p>
  *
  * @param categoryPublicId      the routed reporting-category id (required).
  * @param subCategoryPublicId   optional sub-category id.

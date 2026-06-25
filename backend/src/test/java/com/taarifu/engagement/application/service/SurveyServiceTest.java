@@ -9,9 +9,15 @@ import com.taarifu.engagement.domain.model.SurveyResponse;
 import com.taarifu.engagement.domain.model.enums.SurveyType;
 import com.taarifu.engagement.domain.repository.SurveyRepository;
 import com.taarifu.engagement.domain.repository.SurveyResponseRepository;
+import com.taarifu.identity.api.ProfileLookupApi;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -21,6 +27,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -39,6 +46,10 @@ class SurveyServiceTest {
     private SurveyResponseRepository responses;
     @Mock
     private OutboxWriter outboxWriter;
+    @Mock
+    private SearchIndexApi searchIndex;
+    @Mock
+    private ProfileLookupApi profileLookup;
 
     private final EngagementMapper mapper = new EngagementMapper();
     private SurveyService service;
@@ -50,7 +61,7 @@ class SurveyServiceTest {
     void setUp() {
         // No token collaborator is injectable here — SurveyService cannot read a balance (integrity fence).
         // The OutboxWriter mock receives the survey_responded analytics fact (a passive side-record, not a gate).
-        service = new SurveyService(surveys, responses, mapper, outboxWriter);
+        service = new SurveyService(surveys, responses, mapper, outboxWriter, searchIndex, profileLookup);
     }
 
     private Survey openBindingPoll() {
@@ -108,5 +119,62 @@ class SurveyServiceTest {
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getErrorCode())
                 .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
+    void createDraft_removesFromDiscovery_neverIndexesADraft() {
+        // The no-leak fence: a freshly-created survey is DRAFT and must NOT be discoverable. The create path
+        // routes through reindexForDiscovery, whose non-public branch REMOVES (idempotent) — never upserts.
+        when(profileLookup.profileIdForAccount(responder)).thenReturn(Optional.of(responder));
+        service.create("Poll title", "Desc", "POLL", true,
+                null, "[{\"prompt\":\"x\"}]", null, null, false, responder);
+
+        verify(searchIndex, never()).upsert(any());
+        verify(searchIndex).remove(eq(SearchEntityType.POLL), any());
+    }
+
+    @Test
+    void open_indexesPublicProjection_neverQuestionsJsonOrResponses() {
+        // DRAFT -> OPEN makes the survey public-safe → it is upserted (under POLL for both SurveyTypes). Only
+        // the title + description snippet are indexed; the questions JSON and any response payload never are.
+        // The caller is the survey's author (responder == creatorProfileId), satisfying the author-or-staff gate.
+        Survey draft = Survey.create("Maoni ya Maji", "Tafadhali toa maoni.", SurveyType.SURVEY, false,
+                null, "[{\"prompt\":\"secret question\"}]", null, null, false, responder, null);
+        when(surveys.findByPublicId(surveyId)).thenReturn(Optional.of(draft));
+        // The author-or-staff gate maps the caller's ACCOUNT id to its PROFILE id; stub it to the survey's
+        // creator profile id (responder) so the author branch matches and open proceeds.
+        when(profileLookup.profileIdForAccount(responder)).thenReturn(Optional.of(responder));
+
+        service.open(surveyId, responder);
+
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndex).upsert(captor.capture());
+        SearchDocumentUpsert pushed = captor.getValue();
+        assertThat(pushed.entityType()).isEqualTo(SearchEntityType.POLL);
+        assertThat(pushed.title()).isEqualTo("Maoni ya Maji");
+        assertThat(pushed.snippetSw()).isEqualTo("Tafadhali toa maoni.");
+        assertThat(pushed.visibility()).isEqualTo(SearchVisibility.PUBLIC);
+        // The questions JSON must never leak into any indexed field.
+        assertThat(pushed.snippetSw()).doesNotContain("secret question");
+        assertThat(pushed.snippetEn()).doesNotContain("secret question");
+        assertThat(pushed.keywords()).doesNotContain("secret question");
+    }
+
+    @Test
+    void openRejectsNonAuthorNonStaff_asForbidden_andDoesNotOpenOrIndex() {
+        // Author-or-staff gate: a caller who is neither the survey's creator nor staff cannot open it. With no
+        // security context in this unit test callerIsStaff() is false, so a stranger caller is 403 — and the
+        // survey must NOT be opened or indexed (the gate fired before any side effect).
+        Survey draft = Survey.create("Poll", null, SurveyType.POLL, true,
+                null, null, null, null, false, UUID.randomUUID(), null); // creator != stranger
+        when(surveys.findByPublicId(surveyId)).thenReturn(Optional.of(draft));
+
+        assertThatThrownBy(() -> service.open(surveyId, UUID.randomUUID()))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getErrorCode())
+                .isEqualTo(ErrorCode.FORBIDDEN);
+
+        assertThat(draft.getStatus()).isEqualTo(com.taarifu.engagement.domain.model.enums.SurveyStatus.DRAFT);
+        verify(searchIndex, never()).upsert(any());
     }
 }

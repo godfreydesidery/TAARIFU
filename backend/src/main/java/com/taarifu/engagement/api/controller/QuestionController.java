@@ -6,6 +6,7 @@ import com.taarifu.common.pagination.PageMapper;
 import com.taarifu.common.pagination.PageRequestFactory;
 import com.taarifu.common.security.CurrentUser;
 import com.taarifu.common.security.RequiresTier;
+import com.taarifu.engagement.api.dto.AnswerQuestionRequest;
 import com.taarifu.engagement.api.dto.AskQuestionRequest;
 import com.taarifu.engagement.api.dto.QuestionDto;
 import com.taarifu.engagement.application.service.QuestionService;
@@ -121,6 +122,30 @@ public class QuestionController {
     public ApiResponse<QuestionDto> ask(@Valid @RequestBody AskQuestionRequest request) {
         QuestionDto dto = questionService.ask(
                 CurrentUser.requirePublicId(), request.targetRepId(), request.body());
+        return responses.ok(dto);
+    }
+
+    /**
+     * Publishes the targeted representative's answer to an {@code OPEN} question (UC-E10, US-10.2) — flips it
+     * to {@code ANSWERED}.
+     *
+     * <p><b>Authorization (target-rep only):</b> {@code isAuthenticated()} proves the caller is signed in; the
+     * data-dependent rule that the answerer must be the question's <i>targeted</i> representative (D13/D16) is
+     * enforced in {@link QuestionService#answer} — a non-target caller is {@code 403}, audited. The answerer is
+     * taken from the security context, never the body.</p>
+     *
+     * @param questionId the question to answer.
+     * @param request    the answer text (answerer identity comes from the token).
+     * @return an envelope carrying the now-ANSWERED {@link QuestionDto} (with the answer body).
+     */
+    @PostMapping("/{questionId}/answer")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Answer a question (OPEN → ANSWERED)",
+            description = "Targeted representative only. Publishes the answer.")
+    public ApiResponse<QuestionDto> answer(@PathVariable UUID questionId,
+                                           @Valid @RequestBody AnswerQuestionRequest request) {
+        QuestionDto dto = questionService.answer(
+                questionId, CurrentUser.requirePublicId(), request.body());
         return responses.ok(dto);
     }
 }

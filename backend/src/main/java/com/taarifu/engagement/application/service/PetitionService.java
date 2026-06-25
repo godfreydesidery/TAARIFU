@@ -21,7 +21,12 @@ import com.taarifu.engagement.domain.model.enums.PetitionTargetType;
 import com.taarifu.engagement.domain.repository.PetitionRepository;
 import com.taarifu.engagement.domain.repository.PetitionSignatureRepository;
 import com.taarifu.identity.api.ElectoralScopeApi;
+import com.taarifu.identity.api.ProfileLookupApi;
 import com.taarifu.institutions.api.RepresentativeQueryApi;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -48,9 +53,10 @@ import java.util.UUID;
  *
  * <p>WHY actor references are the authenticated principal's {@code publicId} (the JWT subject): the signer
  * is taken from {@code CurrentUser}, never from the request body, so a caller can only sign <i>as
- * themselves</i> — the foundation of the no-self-petition and one-per-person guards. Mapping the account
- * {@code publicId} to its identity {@code Profile} public id is a later cross-module wiring step (this
- * scaffold references the actor by the account public id consistently for signer + conflict checks).</p>
+ * themselves</i> — the foundation of the no-self-petition and one-per-person guards. The signer + conflict +
+ * electoral checks key on the <b>account</b> public id (the grain {@code ScopeGuard}/{@code ElectoralScopeApi}
+ * use); the petition's stored <b>authorship</b> is the identity {@code Profile} id, resolved from the account
+ * id via identity's {@link com.taarifu.identity.api.ProfileLookupApi} on the create path (api → api, no import).</p>
  */
 @Service
 @Transactional
@@ -69,6 +75,15 @@ public class PetitionService {
     private final ElectoralScopeApi electoralScopeApi;
     private final AuditEventService audit;
     private final OutboxWriter outboxWriter;
+    private final SearchIndexApi searchIndex;
+    private final ProfileLookupApi profileLookup;
+
+    /**
+     * Max characters of the petition body carried in the public discovery snippet — a lean public preview
+     * only (PRD §15 data budget; well under ADR-0017's {@code snippet_*} 1024-char column). The full body is
+     * re-read from this module by id when a result is tapped (the index never returns the aggregate — ADR-0013).
+     */
+    private static final int SEARCH_SNIPPET_MAX = 480;
 
     /**
      * @param petitions              petition persistence port.
@@ -83,6 +98,19 @@ public class PetitionService {
      *                               analytics fact in the sign transaction so the analytics sink records it
      *                               asynchronously, off the signer's path (Appendix E, M15). The token ledger is
      *                               NEVER consulted on this path (the integrity fence, D18/§23.5).
+     * @param searchIndex            the search module's published inbound port (ADR-0017 §1, ADR-0013 §1). This
+     *                               service <b>pushes</b> a public, PII-free projection of a publicly-visible
+     *                               (non-DRAFT) petition into the discovery index on create/sign/lifecycle-change
+     *                               and <b>removes</b> it when the petition is not (or no longer) public-safe —
+     *                               owner→search direction, an {@code api → api} call, never a reach-in. Token
+     *                               balance is NEVER read on this path; indexing is a passive side-record, not a
+     *                               gate (the fence stays intact, D18/§23.5).
+     * @param profileLookup          identity's published author-resolution port (ADR-0013 §1). {@link #create}
+     *                               maps the authenticated <b>account</b> public id to the authoring identity
+     *                               {@code Profile} public id through this {@code api → api} call, so the petition
+     *                               is stored/attributed by <b>profile</b> id (never the raw account id) —
+     *                               engagement never imports identity's {@code domain}. Returns id + public
+     *                               display name only, no PII (PRD §18, PDPA data minimisation).
      */
     public PetitionService(PetitionRepository petitions,
                            PetitionSignatureRepository signatures,
@@ -91,7 +119,9 @@ public class PetitionService {
                            RepresentativeQueryApi representativeQueryApi,
                            ElectoralScopeApi electoralScopeApi,
                            AuditEventService audit,
-                           OutboxWriter outboxWriter) {
+                           OutboxWriter outboxWriter,
+                           SearchIndexApi searchIndex,
+                           ProfileLookupApi profileLookup) {
         this.petitions = petitions;
         this.signatures = signatures;
         this.mapper = mapper;
@@ -100,17 +130,28 @@ public class PetitionService {
         this.electoralScopeApi = electoralScopeApi;
         this.audit = audit;
         this.outboxWriter = outboxWriter;
+        this.searchIndex = searchIndex;
+        this.profileLookup = profileLookup;
     }
 
     /**
-     * Lists publicly-visible petitions (non-DRAFT), paged.
+     * Lists publicly-visible petitions (non-DRAFT), paged, optionally filtered to a target type.
      *
-     * @param pageable bounded paging/sorting.
+     * <p>Read-depth (citizen-facing): an optional {@code targetType} ({@code REPRESENTATIVE}/{@code OFFICE})
+     * narrows the public list so a constituent can browse, e.g., only petitions addressed to representatives.
+     * A {@code null} filter returns all public statuses (the prior behaviour). Drafts are never returned
+     * (the {@link #PUBLIC_STATUSES} set is the visibility fence — PRD §22.6).</p>
+     *
+     * @param targetType optional target-type filter, or {@code null} for all.
+     * @param pageable   bounded paging/sorting.
      * @return a page of {@link PetitionDto}.
      */
     @Transactional(readOnly = true)
-    public Page<PetitionDto> listPublic(Pageable pageable) {
-        return petitions.findByStatusIn(PUBLIC_STATUSES, pageable).map(mapper::toPetitionDto);
+    public Page<PetitionDto> listPublic(PetitionTargetType targetType, Pageable pageable) {
+        Page<Petition> page = (targetType == null)
+                ? petitions.findByStatusIn(PUBLIC_STATUSES, pageable)
+                : petitions.findByTargetTypeAndStatusIn(targetType, PUBLIC_STATUSES, pageable);
+        return page.map(mapper::toPetitionDto);
     }
 
     /**
@@ -156,11 +197,26 @@ public class PetitionService {
             throw new ApiException(ErrorCode.CONFLICT_OF_INTEREST);
         }
 
-        // TODO(wiring): resolve creatorPublicId (account) -> identity Profile public id, and validate
-        // targetId against the institutions registry, once those modules are wired (cross-module step).
+        // Resolve the authenticated ACCOUNT public id (the JWT-subject grain from CurrentUser) to the authoring
+        // identity PROFILE public id via identity's published ProfileLookupApi (api -> api; engagement never
+        // imports identity's domain - ADR-0013 §1). The petition is attributed/displayed by PROFILE id, never
+        // the raw account id, and the author renders by display name through the same port on the read path. A
+        // caller whose account has no resolvable profile (deny-by-default empty) cannot author - surfaced as a
+        // clean BAD_REQUEST rather than storing an unattributable row (the conflict/electoral checks above run on
+        // the account id, consistent with ScopeGuard/ElectoralScopeApi which key on the account grain). The
+        // institutions target is referenced by id only; its electoral seat is resolved on the binding SIGN path
+        // via RepresentativeQueryApi (no separate validate-target port - an unknown target yields no signable
+        // scope and a clean NOT_FOUND there, the deny-by-default boundary).
+        UUID creatorProfileId = profileLookup.profileIdForAccount(creatorPublicId)
+                .orElseThrow(() -> new ApiException(ErrorCode.BAD_REQUEST));
         Petition petition = Petition.create(title, body, targetType, targetId,
-                signatureGoal, deadline, creatorPublicId, null);
+                signatureGoal, deadline, creatorProfileId, null);
         petitions.save(petition);
+        // SEARCH (ADR-0017 §1, ADR-0013 §1): keep the discovery projection in step with the petition's public
+        // visibility. A freshly-created petition is DRAFT, so reindexForDiscovery REMOVES (idempotent no-op on
+        // a never-indexed row) — a draft is NEVER discoverable (the no-leak fence, PRD §18). It is upserted only
+        // once moderation moves it to ACTIVE (the activate path), which routes through this same single helper.
+        reindexForDiscovery(petition);
         return mapper.toPetitionDto(petition);
     }
 
@@ -286,7 +342,134 @@ public class PetitionService {
                         petition.getTargetType().name()),     // outcome = REPRESENTATIVE / OFFICE (controlled vocab)
                 Instant.now()));
 
+        // SEARCH (ADR-0017 §1): a sign may flip the petition ACTIVE -> SUCCEEDED (both publicly visible), and it
+        // bumps the signature count shown on the discovery row. Re-index here — an idempotent PUBLIC upsert that
+        // keeps the projection fresh. WHY this does NOT breach the fence (D18/§23.5): the upsert is a passive
+        // side-record emitted AFTER the binding act; it reads no token balance and never influences the count.
+        reindexForDiscovery(petition);
         return mapper.toPetitionDto(petition);
+    }
+
+    /**
+     * Approves a {@code DRAFT} petition into {@code ACTIVE} — the <b>moderation-before-public</b> review gate
+     * (UC-E02, US-9.1) — and makes it discoverable.
+     *
+     * <p><b>WHY this is the moderation gate (and why it is a staff endpoint, not an event consumer).</b> The
+     * PRD models a petition as {@code DRAFT → (moderation) → ACTIVE}: it must be reviewed before the public
+     * ever sees it (US-9.1 "moderation before public"). The moderation module's pipeline is a <i>reactive
+     * takedown</i> flow (flag → queue → hide/remove) and publishes no "approved → publish" event, so the
+     * pre-publication approval is implemented as this staff-gated review action — the controller restricts it
+     * to {@code ROLE_MODERATOR} (ADMIN/ROOT inherit via the role hierarchy). This keeps the gate entirely
+     * server-side and inside the owning module; a future event-driven hand-off (a moderation-published outbox
+     * event consumed here) is recorded as a CENTRAL NEED, not built across the boundary now.</p>
+     *
+     * <p>WHY this lives here (not only on the entity): activation is the {@code DRAFT -> ACTIVE} visibility
+     * change, so it is the moment the petition first becomes public-safe and must enter discovery. Routing it
+     * through the single {@link #reindexForDiscovery(Petition)} fence keeps the index-vs-no-index decision in
+     * one place (DRY). The {@link Petition#activate()} aggregate guard enforces "only from DRAFT"; a
+     * re-activation attempt is surfaced as a clean {@link ErrorCode#CONFLICT}.</p>
+     *
+     * @param petitionPublicId  the petition to approve/activate.
+     * @param moderatorPublicId the reviewing moderator's account public id (from {@code CurrentUser}, never the
+     *                          body) — recorded as the audit actor.
+     * @return the now-ACTIVE {@link PetitionDto}.
+     * @throws ResourceNotFoundException if the petition does not exist.
+     * @throws ApiException {@link ErrorCode#CONFLICT} if the petition is not in {@code DRAFT}.
+     */
+    public PetitionDto activate(UUID petitionPublicId, UUID moderatorPublicId) {
+        Petition petition = require(petitionPublicId);
+        try {
+            petition.activate();
+        } catch (IllegalStateException notDraft) {
+            // Already public (or terminal): re-approving is a no-op conflict, surfaced as a clean 409.
+            throw new ApiException(ErrorCode.CONFLICT, notDraft);
+        }
+        // L-1: a petition becoming public is a state-changing moderation decision — append it to the unified
+        // audit store as MODERATION_ACTION_TAKEN with reason APPROVE (the same code the moderation queue uses
+        // for an approve action), actor = reviewing moderator, subject = the petition. References only — never
+        // the petition body or any PII (PRD §18, §25.8).
+        audit.record(AuditEvent.Builder
+                .of(AuditEventType.MODERATION_ACTION_TAKEN, AuditOutcome.SUCCESS)
+                .actor(moderatorPublicId)
+                .subject(petition.getPublicId())
+                .reason("APPROVE")
+                .build());
+        // Now publicly visible (ACTIVE) → upsert the public projection into discovery (ADR-0017 §1).
+        reindexForDiscovery(petition);
+        return mapper.toPetitionDto(petition);
+    }
+
+    /**
+     * Pushes (or removes) this petition's <b>public, PII-free</b> discovery projection in the search index
+     * (ADR-0017 §1; ADR-0013 §1 owner→search). The single place the index-vs-no-index decision lives, so the
+     * privacy fence is enforced once and cannot drift across the create/activate/sign call sites — mirroring
+     * reporting's {@code reindexForDiscovery}.
+     *
+     * <p><b>The fence (PRD §18, ADR-0017 §1/§4):</b> a petition is indexed <b>only if</b> it is publicly
+     * visible — anything past {@code DRAFT} ({@link Petition#isPubliclyVisible()}). A {@code DRAFT} is
+     * <b>never</b> indexed, and any time a petition is, or becomes, non-public this calls
+     * {@link SearchIndexApi#remove} so it is positively pulled from discovery (removing an absent row is an
+     * idempotent no-op — defence-in-depth).</p>
+     *
+     * <p><b>What is pushed (public-display + opaque ids only — never PII):</b> the petition
+     * {@link Petition#getTitle() title} as the discovery label and a short {@link #snippet(String) snippet} of
+     * the body as the preview (both already public for a non-DRAFT petition). The signature tally is encoded
+     * into the keywords so a search row reflects momentum without re-reading the aggregate. <b>Never</b> the
+     * signer list, the creator id, or any PII. {@code authoredByAccountId} is the creator profile id, carried
+     * solely for the search module's suspended-author visibility maintenance (ADR-0017 §3) — never returned.
+     * No area/category facet is set: a petition is targeted at an institutions-module addressee by id, not a
+     * ward/category, so those discovery facets are intentionally {@code null}.</p>
+     *
+     * @param petition the petition whose discovery projection is being maintained.
+     * @return {@code true} if the petition was upserted into discovery (it is publicly visible); {@code false}
+     *         if it was removed/absent (DRAFT or any non-public state). The one-off backfill adapter
+     *         ({@link com.taarifu.engagement.application.service.search.PetitionBackfillSource}) reuses this
+     *         exact method and counts a {@code true} as one indexed row — so the fence can never drift between
+     *         the live write path and the backfill (DRY; the
+     *         {@link com.taarifu.search.domain.port.SearchBackfillSource} contract). Public (the same-module
+     *         backfill adapter lives in a {@code service.search} sub-package and reuses this method directly).
+     */
+    public boolean reindexForDiscovery(Petition petition) {
+        if (!petition.isPubliclyVisible()) {
+            // DRAFT (or any non-public state): ensure it is absent from discovery (idempotent remove).
+            searchIndex.remove(SearchEntityType.PETITION, petition.getPublicId());
+            return false;
+        }
+        searchIndex.upsert(new SearchDocumentUpsert(
+                SearchEntityType.PETITION,
+                petition.getPublicId(),
+                petition.getTitle(),
+                // Swahili-first corpus: the citizen's free text serves both locales (no machine translation);
+                // the FTS config is `simple` (no per-language stemming), so one snippet serves SW/EN inputs.
+                snippet(petition.getBody()),
+                snippet(petition.getBody()),
+                // Keywords: the petition status as a searchable term (e.g. SUCCEEDED) — public, non-PII.
+                petition.getStatus().name(),
+                null,                                // areaId: a petition is addressee-targeted, not ward-scoped
+                null,                                // categoryId: n/a for a petition
+                SearchVisibility.PUBLIC,
+                // authoredByAccountId: visibility-maintenance only (ADR-0017 §3); never returned. Null for an
+                // org-authored petition, which is fine (an authorless row).
+                petition.getCreatorProfileId()));
+        return true;
+    }
+
+    /**
+     * Truncates citizen free text to a lean, index-safe discovery snippet ({@link #SEARCH_SNIPPET_MAX} chars),
+     * appending an ellipsis when cut. Keeps the index payload lean (PRD §15) and under the index column bound.
+     *
+     * @param text the source text (may be {@code null}).
+     * @return the trimmed snippet, or {@code null} if the input is {@code null}/blank.
+     */
+    private String snippet(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        String trimmed = text.strip();
+        if (trimmed.length() <= SEARCH_SNIPPET_MAX) {
+            return trimmed;
+        }
+        return trimmed.substring(0, SEARCH_SNIPPET_MAX) + "…";
     }
 
     /**

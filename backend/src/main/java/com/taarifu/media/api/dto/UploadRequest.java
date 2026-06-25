@@ -17,8 +17,12 @@ import java.util.UUID;
  * (path-traversal / collision safety).</p>
  *
  * <p>WHY {@code ownerType}/{@code ownerId} are opaque here: the host resource lives in another module
- * this one must not import (ARCHITECTURE.md §3.2). The host module validates ownership/visibility at
- * attach time (// TODO(wiring)); this DTO only carries the reference.</p>
+ * this one must not import (ARCHITECTURE.md §3.2). The host module validates ownership/visibility — at
+ * file time through {@code media.api.MediaAttachmentApi#validateAndBind} (the wired pipeline path, e.g.
+ * reporting's {@code MediaAttachmentValidator}) and at serve time through its visibility port (e.g.
+ * {@code reporting.api.ReportMediaAccessApi}). PHASE-3: an upfront "may this caller attach to this existing
+ * host?" check on the bound-at-request path needs a host-published attach-authorization port (the seam
+ * {@code MediaService.requestUpload} is ready to call); this DTO only carries the reference.</p>
  *
  * @param ownerType        host-resource discriminator (e.g. {@code REPORT}, {@code PROFILE_AVATAR}).
  * @param ownerId          host resource public id the attachment will belong to.

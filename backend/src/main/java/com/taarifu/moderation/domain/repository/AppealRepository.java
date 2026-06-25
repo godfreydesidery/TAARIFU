@@ -3,12 +3,15 @@ package com.taarifu.moderation.domain.repository;
 import com.taarifu.moderation.api.dto.AppealSummaryDto;
 import com.taarifu.moderation.domain.model.Appeal;
 import com.taarifu.moderation.domain.model.enums.AppealStatus;
+import com.taarifu.moderation.domain.repository.projection.CountByKeyProjection;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -82,4 +85,32 @@ public interface AppealRepository extends JpaRepository<Appeal, Long> {
             WHERE a.status = :status
             """)
     Page<AppealSummaryDto> findSummariesByStatus(@Param("status") AppealStatus status, Pageable pageable);
+
+    // --- Transparency report aggregations (§25, M-Phase 3; ADR-0018) — PII-free counts only -------------
+
+    /**
+     * Counts appeals filed in {@code [from, to)} grouped by {@link Appeal#getStatus() status} — the
+     * appeal-outcome (fairness) breakdown for the transparency report (§25). Windowed on {@code createdAt}
+     * (when the appeal was filed) so an OPEN appeal still in flight is counted. Returns code-keyed counts
+     * only; no appellant, moderator, or content.
+     *
+     * @param from inclusive window start (UTC).
+     * @param to   exclusive window end (UTC).
+     * @return one {@link CountByKeyProjection} per appeal status present in the window.
+     */
+    @Query("""
+            SELECT a.status AS key, COUNT(a) AS count
+            FROM Appeal a
+            WHERE a.createdAt >= :from AND a.createdAt < :to
+            GROUP BY a.status
+            """)
+    List<CountByKeyProjection> countByStatusInWindow(@Param("from") Instant from, @Param("to") Instant to);
+
+    /**
+     * @param from inclusive window start (UTC).
+     * @param to   exclusive window end (UTC).
+     * @return total appeals filed in the window.
+     */
+    @Query("SELECT COUNT(a) FROM Appeal a WHERE a.createdAt >= :from AND a.createdAt < :to")
+    long countInWindow(@Param("from") Instant from, @Param("to") Instant to);
 }

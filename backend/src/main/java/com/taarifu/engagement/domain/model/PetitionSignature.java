@@ -27,9 +27,10 @@ import java.util.UUID;
  * it checks <b>tier (T3) + electoral scope + one-per-person</b> only and must <b>never</b> read a token
  * balance. The T3 gate is the {@code @RequiresTier("T3")} on the sign endpoint (re-resolved live by
  * {@code RequiresTierAspect}); the one-per-person guarantee is <b>this unique constraint</b>; the
- * electoral-scope check and the no-self-petition conflict guard (D13/D16) are applied in the service via
- * the shared {@link com.taarifu.common.security.ScopeGuard} seam (electoral-scope enforcement is wired in
- * integration — see the service // TODO(wiring)). The unique constraint is the load-bearing
+ * electoral-scope check and the no-self-petition conflict guard (D13/D16) are applied in the service: the
+ * no-self guard via the shared {@link com.taarifu.common.security.ScopeGuard} seam, and the two-tier
+ * electoral-scope check (constituency/ward) via institutions' {@code RepresentativeQueryApi} × identity's
+ * {@code ElectoralScopeApi} (both api → api, no import). The unique constraint is the load-bearing
  * "one person = one signature regardless of token balance" rule (PRD §23.5).</p>
  *
  * <p>WHY the petition side is a real FK but the signer is a UUID: the petition is owned by this very
@@ -96,6 +97,26 @@ public class PetitionSignature extends BaseEntity {
         s.comment = comment;
         s.publicSignature = publicSignature;
         return s;
+    }
+
+    /**
+     * De-identifies this signature on a data-subject ERASURE (PRD §25.1; ADR-0016 §5.6) — the signature
+     * <b>survives as a counted civic act</b> while its tie to the now-erased signer is severed.
+     *
+     * <p>WHY a tombstone token rather than {@code null}: {@link #signerProfileId} is {@code NOT NULL} and is
+     * half of the {@code (petition, signer)} one-per-person unique key (UC-E03). Nulling it is impossible;
+     * deleting the row would silently <b>decrement the petition's signature count</b> and rewrite a democratic
+     * tally (§23.5 integrity fence). So the signer is replaced by a caller-supplied <b>deterministic</b>
+     * per-subject tombstone token — the signature still counts, the row stays unique on its petition, and the
+     * erased person is no longer recoverable from it. Determinism makes a redelivery a no-op (the second pass
+     * finds the original signer id already gone, so it matches nothing — at-least-once safe, ADR-0014 §3).
+     * Any free-text {@link #comment} (citizen-supplied PII) is cleared in the same step.</p>
+     *
+     * @param signerTombstone the deterministic, non-account per-subject token replacing the real signer id.
+     */
+    public void anonymiseSigner(UUID signerTombstone) {
+        this.signerProfileId = signerTombstone;
+        this.comment = null;
     }
 
     /** @return the signed petition. */

@@ -15,8 +15,8 @@ import java.util.UUID;
  * <p>Responsibility: bind the USSD module's consumer-owned reporting seam to reporting's real citizen
  * file/track command port, so the feature-phone menu offers the real active categories, files a real
  * {@code Report} (same lifecycle/SLA/ticket-code/routing path as a web filing), and tracks a real ticket
- * code — no in-process stub any more. This replaces the prior fixed-list/mint stub; the {@code // TODO(wiring)}
- * is now closed.</p>
+ * code — no in-process stub any more. This replaces the prior fixed-list/mint stub and is fully wired to the
+ * live reporting port.</p>
  *
  * <p>This adapter holds <b>no logic</b> — it maps between the two modules' equivalent small records and
  * delegates by {@code UUID}/code only (never a reporting entity), the ADR-0013 pattern. No token is read on

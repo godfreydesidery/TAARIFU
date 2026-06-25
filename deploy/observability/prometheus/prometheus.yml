@@ -29,10 +29,18 @@ global:
     # TAARIFU_ENV to the container, but only this literal value is what actually ships.
     env: dev
 
-# Alerting rules live in a sibling file; loaded here so a single Prometheus
+# Alerting rules live in sibling files; loaded here so a single Prometheus
 # evaluates them. Alertmanager wiring is a separate concern (see alertmanager block).
+#   alerts.yml      — app/SLO rules (5xx, latency p95, outbox DLQ, JVM). Apply to BOTH
+#                     the compose AND the Helm/K8s topology.
+#   alerts-k8s.yml  — Kubernetes-platform rules (CrashLoop, stuck rollout, OOMKilled,
+#                     HPA maxed, PVC full). ONLY meaningful on Kubernetes (needs
+#                     kube-state-metrics). Load it in the CLUSTER Prometheus (e.g. a
+#                     PrometheusRule CR). NOT loaded in the compose stack below — its
+#                     kube_* series do not exist there, so it is left commented here.
 rule_files:
   - "alerts.yml"
+  # - "alerts-k8s.yml"   # enable in the Helm/K8s topology (ADR-0021)
 
 # Alertmanager target. Commented routing belongs to Alertmanager's own config;
 # Prometheus only needs to know where to PUSH firing alerts.

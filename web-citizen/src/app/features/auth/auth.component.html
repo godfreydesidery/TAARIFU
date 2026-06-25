@@ -1,0 +1,91 @@
+<!-- Passwordless phone+OTP auth. Swahili-first; numeric inputmode; large targets (a11y / low-end phones). -->
+<div class="auth-wrap">
+  <div class="auth-head">
+    <button
+      type="button"
+      class="btn btn-sm btn-outline-secondary auth-lang"
+      (click)="toggleLanguage()"
+      [attr.aria-label]="'a11y.switchLanguage' | translate"
+    >
+      {{ localeLabel }}
+    </button>
+    <div class="auth-brand">
+      <span class="auth-brand__mark" aria-hidden="true">T</span>
+      <h1 class="auth-brand__title">Taarifu</h1>
+      <p class="auth-brand__tag lead-tz">{{ 'auth.tagline' | translate }}</p>
+    </div>
+  </div>
+
+  <div class="tz-card auth-card">
+    @if (step() === 'phone') {
+      <!-- Step 1: phone -->
+      <form [formGroup]="phoneForm" (ngSubmit)="requestOtp()" novalidate>
+        <h2 class="auth-step-title">{{ 'auth.enterPhoneTitle' | translate }}</h2>
+        <p class="text-muted">{{ 'auth.enterPhoneHelp' | translate }}</p>
+
+        <label class="form-label" for="phone">{{ 'auth.phoneLabel' | translate }}</label>
+        <input
+          id="phone"
+          type="tel"
+          inputmode="tel"
+          autocomplete="tel"
+          class="form-control form-control-lg"
+          formControlName="phone"
+          placeholder="+255712345678"
+          [attr.aria-invalid]="phoneForm.controls.phone.touched && phoneForm.controls.phone.invalid"
+          [attr.aria-describedby]="'phone-help phone-err'"
+        />
+        <div id="phone-help" class="form-text">{{ 'auth.phoneFormatHint' | translate }}</div>
+        @if (phoneForm.controls.phone.touched && phoneForm.controls.phone.invalid) {
+          <div id="phone-err" class="invalid-feedback d-block">{{ 'auth.phoneInvalid' | translate }}</div>
+        }
+
+        <button
+          type="submit"
+          class="btn btn-success btn-lg w-100 mt-3"
+          [disabled]="busy()"
+        >
+          @if (busy()) {
+            <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+          }
+          {{ 'auth.sendCode' | translate }}
+        </button>
+      </form>
+    } @else {
+      <!-- Step 2: OTP -->
+      <form [formGroup]="otpForm" (ngSubmit)="verifyOtp()" novalidate>
+        <h2 class="auth-step-title">{{ 'auth.enterCodeTitle' | translate }}</h2>
+        <p class="text-muted">{{ 'auth.enterCodeHelp' | translate }}</p>
+
+        <label class="form-label" for="code">{{ 'auth.codeLabel' | translate }}</label>
+        <input
+          id="code"
+          type="text"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          maxlength="8"
+          class="form-control form-control-lg auth-otp"
+          formControlName="code"
+          [attr.aria-invalid]="otpForm.controls.code.touched && otpForm.controls.code.invalid"
+          [attr.aria-describedby]="'code-err'"
+        />
+        @if (otpForm.controls.code.touched && otpForm.controls.code.invalid) {
+          <div id="code-err" class="invalid-feedback d-block">{{ 'auth.codeInvalid' | translate }}</div>
+        }
+
+        <button type="submit" class="btn btn-success btn-lg w-100 mt-3" [disabled]="busy()">
+          @if (busy()) {
+            <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+          }
+          {{ 'auth.verify' | translate }}
+        </button>
+        <button type="button" class="btn btn-link w-100 mt-2" (click)="backToPhone()" [disabled]="busy()">
+          {{ 'auth.changePhone' | translate }}
+        </button>
+      </form>
+    }
+  </div>
+
+  <a routerLink="/feed" class="btn btn-link auth-skip">{{ 'auth.continueAsGuest' | translate }}</a>
+  <p class="auth-privacy text-muted">{{ 'auth.privacyNote' | translate }}</p>
+</div>

@@ -1,19 +1,218 @@
-/* Global styles. Bootstrap 5.3 is the UI system (matches the legacy admin dashboard's lineage). */
+// =============================================================================
+// Taarifu Admin — Global stylesheet (entry point)
+// -----------------------------------------------------------------------------
+// Build order matters:
+//   1. tokens                — raw design values (SCSS vars).
+//   2. bootstrap-overrides   — map tokens onto Bootstrap's SCSS vars.
+//   3. bootstrap             — compiled with our overrides applied.
+//   4. CSS custom properties — runtime theme roles (light + dark) so the theme
+//      toggle recolours the app with NO rebuild and components stay theme-blind.
+//   5. component partials     — design-system classes built on the roles above.
+//
+// Bootstrap is imported from source (not a CDN) so it is bundled + tree-shaken,
+// keeping the app self-hosted and offline-friendly for in-country deployments
+// (CLAUDE.md §5; PRD §15 data budget). No web fonts are loaded (system stack).
+// =============================================================================
+@use 'styles/tokens' as *;
 
-/* Import Bootstrap's full SCSS so it is bundled and tree-shaken by the build (no external CDN —
-   keeps the app self-hosted and offline-friendly for in-country deployments). */
+// 2 + 3: Bootstrap, compiled with our brand overrides.
+@import 'styles/bootstrap-overrides';
 @import 'bootstrap/scss/bootstrap';
 
-/* App-wide base: respect prefers-reduced-motion (accessibility) and a sane default font stack. */
+// -----------------------------------------------------------------------------
+// 4. Theme roles as CSS custom properties.
+// -----------------------------------------------------------------------------
+// Components reference these *roles* (--tf-surface, --tf-text, …) rather than raw
+// colours, so a single [data-theme] swap re-skins the whole app. Light is the
+// default (operators on a desktop); dark is opt-in via the topbar toggle and is
+// persisted by ThemeService. `prefers-color-scheme` is honoured for first paint
+// when the user has no saved preference (handled in ThemeService).
+// -----------------------------------------------------------------------------
+:root {
+  // Scale / shape / motion (mirrors tokens so component SCSS can use var()).
+  --tf-fs-xs: #{$fs-xs};
+  --tf-fs-sm: #{$fs-sm};
+  --tf-fs-lg: #{$fs-lg};
+  --tf-fs-xl: #{$fs-xl};
+  --tf-fs-2xl: #{$fs-2xl};
+  --tf-space-1: #{$space-1};
+  --tf-space-2: #{$space-2};
+  --tf-space-3: #{$space-3};
+  --tf-space-4: #{$space-4};
+  --tf-space-5: #{$space-5};
+  --tf-space-6: #{$space-6};
+  --tf-space-7: #{$space-7};
+  --tf-radius-sm: #{$radius-sm};
+  --tf-radius: #{$radius};
+  --tf-radius-lg: #{$radius-lg};
+  --tf-radius-pill: #{$radius-pill};
+  --tf-ease: #{$ease-out};
+  --tf-dur: #{$dur};
+  --tf-font-mono: #{$font-family-mono};
+  --tf-sidenav-width: #{$sidenav-width};
+  --tf-topbar-height: #{$topbar-height};
+  --tf-focus-ring: #{rgba($brand-primary, 0.32)};
+  --tf-focus-ring-width: 0.2rem;
+
+  // Brand (theme-stable).
+  --tf-primary: #{$brand-primary};
+  --tf-primary-700: #{$brand-primary-700};
+  --tf-primary-300: #{$brand-primary-300};
+  --tf-accent: #{$brand-accent};
+
+  // Status.
+  --tf-success: #{$status-success};
+  --tf-warning: #{$status-warning};
+  --tf-danger: #{$status-danger};
+  --tf-info: #{$status-info};
+
+  // ---- LIGHT theme roles ----
+  --tf-primary-100: #{$brand-primary-100};
+  --tf-success-100: #{$status-success-100};
+  --tf-warning-100: #{$status-warning-100};
+  --tf-danger-100: #{$status-danger-100};
+  --tf-info-100: #{$status-info-100};
+
+  --tf-neutral-100: #{$neutral-100};
+  --tf-neutral-300: #{$neutral-300};
+
+  --tf-app-bg: #{$neutral-25};
+  --tf-surface: #{$neutral-0};
+  --tf-surface-muted: #{$neutral-50};
+  --tf-sidebar-bg: #{$neutral-0};
+  --tf-sidebar-fg: #{$neutral-600};
+  --tf-sidebar-hover: #{$neutral-50};
+  --tf-border: #{$neutral-200};
+
+  --tf-text: #{$neutral-800};
+  --tf-text-strong: #{$neutral-900};
+  --tf-text-muted: #{$neutral-500};
+  --tf-text-faint: #{$neutral-400};
+
+  --tf-shadow-xs: #{$shadow-xs};
+  --tf-shadow-sm: #{$shadow-sm};
+  --tf-shadow: #{$shadow};
+  --tf-shadow-lg: #{$shadow-lg};
+
+  --tf-skeleton-base: #{$neutral-100};
+  --tf-skeleton-shine: #{$neutral-50};
+
+  // Chart axis/grid hints consumed by ChartComponent (kept here so charts match
+  // the active theme — read at render time via getComputedStyle).
+  --tf-chart-grid: #{$neutral-100};
+  --tf-chart-tick: #{$neutral-500};
+}
+
+// ---- DARK theme roles ----
+:root[data-theme='dark'] {
+  --tf-primary: #2fa3a3;       // lift the teal so it reads on a dark surface
+  --tf-primary-700: #5fc2c2;
+  --tf-primary-300: #2a5e5e;
+
+  --tf-primary-100: #103a3a;
+  --tf-success-100: #123a28;
+  --tf-warning-100: #3a2e10;
+  --tf-danger-100: #3a1a1e;
+  --tf-info-100: #102a3a;
+  --tf-success: #3ec07e;
+  --tf-warning: #e0a73a;
+  --tf-danger: #e06873;
+  --tf-info: #4aa7dd;
+
+  --tf-neutral-100: #2a323a;
+  --tf-neutral-300: #4d5862;
+
+  --tf-app-bg: #12161a;
+  --tf-surface: #1a2026;
+  --tf-surface-muted: #20272e;
+  --tf-sidebar-bg: #161c21;
+  --tf-sidebar-fg: #9aa6b2;
+  --tf-sidebar-hover: #20272e;
+  --tf-border: #2c343c;
+
+  --tf-text: #e3e8ed;
+  --tf-text-strong: #f3f6f8;
+  --tf-text-muted: #9aa6b2;
+  --tf-text-faint: #6b7783;
+
+  --tf-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --tf-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --tf-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+  --tf-shadow-lg: 0 14px 32px rgba(0, 0, 0, 0.6);
+
+  --tf-skeleton-base: #232a30;
+  --tf-skeleton-shine: #2c343c;
+
+  --tf-chart-grid: #2c343c;
+  --tf-chart-tick: #9aa6b2;
+}
+
+// -----------------------------------------------------------------------------
+// Base element styling that consumes the roles (so it follows the theme).
+// -----------------------------------------------------------------------------
+html { color-scheme: light; }
+html[data-theme='dark'] { color-scheme: dark; }
+
+body {
+  min-height: 100vh;
+  background-color: var(--tf-app-bg);
+  color: var(--tf-text);
+  font-family: $font-family-base;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color var(--tf-dur) var(--tf-ease), color var(--tf-dur) var(--tf-ease);
+}
+
+// Theme-aware surfaces for native Bootstrap components (cards/tables/inputs/
+// modals/dropdowns/list-groups) so dark mode is coherent without rewriting them.
+.card,
+.list-group-item,
+.dropdown-menu,
+.modal-content,
+.offcanvas {
+  background-color: var(--tf-surface);
+  color: var(--tf-text);
+  border-color: var(--tf-border);
+}
+.text-muted { color: var(--tf-text-muted) !important; }
+.table { color: var(--tf-text); --bs-table-bg: transparent; }
+.form-control,
+.form-select {
+  background-color: var(--tf-surface);
+  color: var(--tf-text);
+  border-color: var(--tf-border);
+}
+.form-control::placeholder { color: var(--tf-text-faint); }
+.form-control:focus,
+.form-select:focus {
+  background-color: var(--tf-surface);
+  color: var(--tf-text);
+  border-color: var(--tf-primary-300);
+  box-shadow: 0 0 0 var(--tf-focus-ring-width) var(--tf-focus-ring);
+}
+hr { border-color: var(--tf-border); opacity: 1; }
+
+// Visible keyboard focus everywhere (WCAG 2.4.7) — overrides any UA removal.
+a:focus-visible,
+button:focus-visible,
+.btn:focus-visible,
+[tabindex]:focus-visible {
+  outline: var(--tf-focus-ring-width) solid var(--tf-focus-ring);
+  outline-offset: 2px;
+}
+
+// Respect reduced-motion: disable all non-essential animation (accessibility).
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
-body {
-  min-height: 100vh;
-}
+// -----------------------------------------------------------------------------
+// 5. Design-system component + shell partials (use the roles declared above).
+// -----------------------------------------------------------------------------
+@import 'styles/components';
+@import 'styles/shell';

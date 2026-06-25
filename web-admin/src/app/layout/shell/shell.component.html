@@ -1,25 +1,58 @@
 <!--
-  Admin shell template: skip-link → header → (sidenav + content).
-  Bootstrap 5 utility classes; icon+label nav for low-literacy accessibility (CLAUDE.md §5).
+  Admin shell: skip-link → topbar (menu + breadcrumbs + theme/locale/logout) → (sidebar + content).
+  Sectioned icon+label nav for scannability + low-literacy accessibility (CLAUDE.md §5).
 -->
-<a class="visually-hidden-focusable skip-link" href="#main-content">{{ 'nav.menu' | translate }}</a>
+<a class="visually-hidden-focusable skip-link btn btn-primary btn-sm" href="#main-content">
+  {{ 'nav.skipToContent' | translate }}
+</a>
 
-<header class="navbar navbar-dark bg-dark px-3 sticky-top shadow-sm">
-  <button
-    type="button"
-    class="btn btn-outline-light btn-sm me-2 d-md-none"
-    (click)="toggleSidenav()"
-    [attr.aria-expanded]="sidenavOpen()"
-    aria-controls="app-sidenav"
-    [attr.aria-label]="'nav.menu' | translate"
-  >
-    <span aria-hidden="true">&#9776;</span>
-  </button>
+<div class="app-shell">
+  <!-- ===== Topbar ===== -->
+  <header class="app-topbar">
+    <button
+      type="button"
+      class="app-topbar__icon-btn d-md-none"
+      (click)="toggleSidenav()"
+      [attr.aria-expanded]="sidenavOpen()"
+      aria-controls="app-sidebar"
+      [attr.aria-label]="'nav.menu' | translate"
+    >
+      <span aria-hidden="true">&#9776;</span>
+    </button>
 
-  <span class="navbar-brand mb-0 h1 fs-6">{{ 'app.shortTitle' | translate }}</span>
+    <!-- Breadcrumbs -->
+    <nav class="app-breadcrumbs" [attr.aria-label]="'nav.breadcrumbs' | translate">
+      @for (crumb of crumbs(); track crumb.label; let last = $last) {
+        <span class="crumb" [class.is-current]="last" [attr.aria-current]="last ? 'page' : null">
+          @if (crumb.link && !last) {
+            <a [routerLink]="crumb.link">{{ crumb.label }}</a>
+          } @else {
+            {{ crumb.label }}
+          }
+        </span>
+        @if (!last) {
+          <span class="crumb-sep" aria-hidden="true">/</span>
+        }
+      }
+    </nav>
 
-  <div class="ms-auto d-flex align-items-center gap-2">
-    <!-- Language switch: a real labelled select for SW/EN (WCAG; CLAUDE.md §5 i18n). -->
+    <span class="app-topbar__spacer"></span>
+
+    <!-- Global search (EI-10 / SY5) — typeahead over public reps/orgs/announcements/reports. -->
+    <app-search-box class="app-topbar__search" />
+
+    <!-- Theme toggle -->
+    <button
+      type="button"
+      class="app-topbar__icon-btn"
+      (click)="toggleTheme()"
+      [attr.aria-label]="(theme() === 'dark' ? 'nav.themeLight' : 'nav.themeDark') | translate"
+      [attr.title]="(theme() === 'dark' ? 'nav.themeLight' : 'nav.themeDark') | translate"
+    >
+      <span aria-hidden="true">{{ theme() === 'dark' ? '☀' : '☾' }}</span>
+    </button>
+
+    <!-- Language switch -->
     <label class="visually-hidden" for="locale-select">{{ 'nav.language' | translate }}</label>
     <select
       id="locale-select"
@@ -27,170 +60,62 @@
       [value]="locale()"
       (change)="onLocaleChange($any($event.target).value)"
     >
-      <option value="sw">Kiswahili</option>
       <option value="en">English</option>
+      <option value="sw">Kiswahili</option>
     </select>
 
-    <button type="button" class="btn btn-outline-light btn-sm" (click)="logout()">
+    <button type="button" class="btn btn-outline-secondary btn-sm" (click)="logout()">
       {{ 'nav.logout' | translate }}
     </button>
+  </header>
+
+  <div class="app-body">
+    <!-- ===== Sidebar ===== -->
+    <nav
+      id="app-sidebar"
+      class="app-sidebar"
+      [class.open]="sidenavOpen()"
+      [attr.aria-label]="'nav.menu' | translate"
+    >
+      <a routerLink="/dashboard" class="app-sidebar__brand" (click)="onNavigate()">
+        <span class="app-sidebar__logo" aria-hidden="true">T</span>
+        <span class="app-sidebar__brand-text">
+          <span class="app-sidebar__brand-name">Taarifu</span>
+          <span class="app-sidebar__brand-sub">{{ 'app.consoleLabel' | translate }}</span>
+        </span>
+      </a>
+
+      <div class="app-sidebar__nav">
+        @for (section of visibleSections(); track section.labelKey) {
+          <div class="nav-section">
+            <div class="nav-section__label">{{ section.labelKey | translate }}</div>
+            @for (item of section.items; track item.path) {
+              <a
+                class="nav-item-link"
+                [routerLink]="item.path"
+                routerLinkActive="active"
+                ariaCurrentWhenActive="page"
+                (click)="onNavigate()"
+              >
+                <span class="nav-item-link__icon" aria-hidden="true">{{ item.icon }}</span>
+                <span class="nav-item-link__label">{{ item.labelKey | translate }}</span>
+              </a>
+            }
+          </div>
+        }
+      </div>
+    </nav>
+
+    <!-- Backdrop closes the drawer on mobile when tapped. -->
+    @if (sidenavOpen()) {
+      <div class="app-backdrop d-md-none" (click)="toggleSidenav()" aria-hidden="true"></div>
+    }
+
+    <!-- ===== Content ===== -->
+    <main id="main-content" class="app-content" tabindex="-1">
+      <div class="app-content__inner">
+        <router-outlet />
+      </div>
+    </main>
   </div>
-</header>
-
-<div class="shell-body">
-  <!-- Collapsible sidenav. Hidden off-canvas on mobile when closed. -->
-  <nav
-    id="app-sidenav"
-    class="app-sidenav bg-light border-end"
-    [class.open]="sidenavOpen()"
-    [attr.aria-label]="'nav.menu' | translate"
-  >
-    <ul class="nav flex-column p-2 mb-0">
-      <li class="nav-item">
-        <a
-          class="nav-link d-flex align-items-center gap-2"
-          routerLink="/dashboard"
-          routerLinkActive="active"
-          ariaCurrentWhenActive="page"
-          (click)="onNavigate()"
-        >
-          <span aria-hidden="true">&#9632;</span>{{ 'nav.dashboard' | translate }}
-        </a>
-      </li>
-      @if (canModerate()) {
-        <li class="nav-item">
-          <a
-            class="nav-link d-flex align-items-center gap-2"
-            routerLink="/reports"
-            routerLinkActive="active"
-            ariaCurrentWhenActive="page"
-            (click)="onNavigate()"
-          >
-            <span aria-hidden="true">&#9993;</span>{{ 'nav.reports' | translate }}
-          </a>
-        </li>
-        <li class="nav-item">
-          <a
-            class="nav-link d-flex align-items-center gap-2"
-            routerLink="/moderation"
-            routerLinkActive="active"
-            ariaCurrentWhenActive="page"
-            (click)="onNavigate()"
-          >
-            <span aria-hidden="true">&#9873;</span>{{ 'nav.moderation' | translate }}
-          </a>
-        </li>
-        <li class="nav-item">
-          <a
-            class="nav-link d-flex align-items-center gap-2"
-            routerLink="/responders"
-            routerLinkActive="active"
-            ariaCurrentWhenActive="page"
-            (click)="onNavigate()"
-          >
-            <span aria-hidden="true">&#9881;</span>{{ 'nav.responders' | translate }}
-          </a>
-        </li>
-      }
-      <li class="nav-item">
-        <a
-          class="nav-link d-flex align-items-center gap-2"
-          routerLink="/geography/regions"
-          routerLinkActive="active"
-          ariaCurrentWhenActive="page"
-          (click)="onNavigate()"
-        >
-          <span aria-hidden="true">&#9978;</span>{{ 'nav.geography' | translate }}
-        </a>
-      </li>
-      <li class="nav-item">
-        <a
-          class="nav-link d-flex align-items-center gap-2"
-          routerLink="/representatives"
-          routerLinkActive="active"
-          ariaCurrentWhenActive="page"
-          (click)="onNavigate()"
-        >
-          <span aria-hidden="true">&#9823;</span>{{ 'nav.representatives' | translate }}
-        </a>
-      </li>
-      <li class="nav-item">
-        <a
-          class="nav-link d-flex align-items-center gap-2"
-          routerLink="/parties"
-          routerLinkActive="active"
-          ariaCurrentWhenActive="page"
-          (click)="onNavigate()"
-        >
-          <span aria-hidden="true">&#9873;</span>{{ 'nav.parties' | translate }}
-        </a>
-      </li>
-      <li class="nav-item">
-        <a
-          class="nav-link d-flex align-items-center gap-2"
-          routerLink="/announcements"
-          routerLinkActive="active"
-          ariaCurrentWhenActive="page"
-          (click)="onNavigate()"
-        >
-          <span aria-hidden="true">&#128226;</span>{{ 'nav.announcements' | translate }}
-        </a>
-      </li>
-      @if (isAdmin()) {
-        <li class="nav-item">
-          <a
-            class="nav-link d-flex align-items-center gap-2"
-            routerLink="/issue-categories"
-            routerLinkActive="active"
-            ariaCurrentWhenActive="page"
-            (click)="onNavigate()"
-          >
-            <span aria-hidden="true">&#9998;</span>{{ 'nav.issueCategories' | translate }}
-          </a>
-        </li>
-        <li class="nav-item">
-          <a
-            class="nav-link d-flex align-items-center gap-2"
-            routerLink="/institutions/parliaments"
-            routerLinkActive="active"
-            ariaCurrentWhenActive="page"
-            (click)="onNavigate()"
-          >
-            <span aria-hidden="true">&#9962;</span>{{ 'nav.institutions' | translate }}
-          </a>
-        </li>
-        <li class="nav-item">
-          <a
-            class="nav-link d-flex align-items-center gap-2"
-            routerLink="/tokens"
-            routerLinkActive="active"
-            ariaCurrentWhenActive="page"
-            (click)="onNavigate()"
-          >
-            <span aria-hidden="true">&#9679;</span>{{ 'nav.tokens' | translate }}
-          </a>
-        </li>
-        <li class="nav-item">
-          <a
-            class="nav-link d-flex align-items-center gap-2"
-            routerLink="/users"
-            routerLinkActive="active"
-            ariaCurrentWhenActive="page"
-            (click)="onNavigate()"
-          >
-            <span aria-hidden="true">&#9787;</span>{{ 'nav.users' | translate }}
-          </a>
-        </li>
-      }
-    </ul>
-  </nav>
-
-  <!-- Backdrop closes the sidenav on mobile when tapped. -->
-  @if (sidenavOpen()) {
-    <div class="sidenav-backdrop d-md-none" (click)="toggleSidenav()" aria-hidden="true"></div>
-  }
-
-  <main id="main-content" class="app-content p-3 p-md-4" tabindex="-1">
-    <router-outlet />
-  </main>
 </div>

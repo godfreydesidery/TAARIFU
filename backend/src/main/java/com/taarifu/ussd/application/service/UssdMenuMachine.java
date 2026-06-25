@@ -2,6 +2,7 @@ package com.taarifu.ussd.application.service;
 
 import com.taarifu.ussd.api.dto.UssdGatewayRequest;
 import com.taarifu.ussd.api.dto.UssdGatewayResponse;
+import com.taarifu.ussd.application.port.UssdGeographyPort;
 import com.taarifu.ussd.application.port.UssdIdentityPort;
 import com.taarifu.ussd.application.port.UssdReportingPort;
 import com.taarifu.ussd.application.port.UssdReportingPort.UssdCategoryOption;
@@ -55,6 +56,7 @@ public class UssdMenuMachine {
     private final UssdSessionStore sessions;
     private final UssdIdentityPort identity;
     private final UssdReportingPort reporting;
+    private final UssdGeographyPort geography;
     private final UssdAlertService alerts;
     private final UssdSmsSender sms;
 
@@ -62,14 +64,16 @@ public class UssdMenuMachine {
      * @param sessions  session store (DB-backed ephemeral state).
      * @param identity  identity port (link/create by MSISDN; registered area).
      * @param reporting reporting port (categories, file, track).
+     * @param geography geography port (resolve a typed ward code → ward id; A7).
      * @param alerts    area-alert subscription service.
      * @param sms       outbound SMS port (ticket confirmation).
      */
     public UssdMenuMachine(UssdSessionStore sessions, UssdIdentityPort identity, UssdReportingPort reporting,
-                           UssdAlertService alerts, UssdSmsSender sms) {
+                           UssdGeographyPort geography, UssdAlertService alerts, UssdSmsSender sms) {
         this.sessions = sessions;
         this.identity = identity;
         this.reporting = reporting;
+        this.geography = geography;
         this.alerts = alerts;
         this.sms = sms;
     }
@@ -272,20 +276,29 @@ public class UssdMenuMachine {
     }
 
     /**
-     * Resolves a typed ward code to a ward public id.
+     * Resolves a citizen-typed ward identifier to a ward public id (A7, ADR-0019).
      *
-     * @return the ward id, or {@code null} if the code is unrecognised.
+     * <p>Tries the two forms a feature-phone user might enter, in order: (1) a raw <b>UUID</b> typed directly
+     * (back-compat — e.g. a deep-linked id), and (2) a friendly official <b>ward code</b> resolved via
+     * geography's published {@code WardCodeQueryApi} through the consumer-owned {@link UssdGeographyPort}. A
+     * code is the realistic feature-phone input — a citizen can type a short Kata code but never a 36-char UUID.
+     * An unrecognised entry yields {@code null} so the machine re-prompts (EI-3, deny-by-default), never crashes
+     * the dialogue.</p>
+     *
+     * @param code the typed ward identifier (a UUID or an official ward code; case-insensitive for codes).
+     * @return the ward id, or {@code null} if neither form resolves.
      */
     private UUID resolveWardCode(String code) {
-        // TODO(wiring): resolve via geography's published ward lookup (by human ward code) once available;
-        // until then, treat a UUID typed directly as the ward id and reject anything else (scaffold).
-        if (code == null) {
+        if (code == null || code.isBlank()) {
             return null;
         }
+        String trimmed = code.trim();
+        // (1) Back-compat: a directly typed UUID is the ward id as-is.
         try {
-            return UUID.fromString(code.trim());
-        } catch (IllegalArgumentException ex) {
-            return null;
+            return UUID.fromString(trimmed);
+        } catch (IllegalArgumentException notAUuid) {
+            // (2) The realistic case: resolve a friendly ward code via geography's published lookup.
+            return geography.wardIdByCode(trimmed).orElse(null);
         }
     }
 

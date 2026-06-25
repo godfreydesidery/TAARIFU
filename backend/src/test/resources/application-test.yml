@@ -12,6 +12,17 @@
 # Test secrets below are DUMMY values (no real secrets) — they only need to be present.
 # =============================================================================
 spring:
+  # --- Connection pool: kept deliberately small for tests. ---
+  # The suite has many distinct @SpringBootTest context variants (@TestPropertySource/@MockBean), each cached
+  # with its own Hikari pool against the SAME (reused) PostgreSQL. Hikari's minimum-idle defaults to
+  # maximum-pool-size, so the default 10 × ~13 cached contexts eagerly opens >100 connections and trips
+  # PostgreSQL's max_connections ("FATAL: sorry, too many clients already"). ITs are low-concurrency — a tiny
+  # pool (a few connections per context: enough for a web request thread plus the relay/a second tx) keeps the
+  # total well under the server limit no matter how many context variants accrue.
+  datasource:
+    hikari:
+      maximum-pool-size: 4
+      minimum-idle: 1
   flyway:
     enabled: false
   jpa:
@@ -40,3 +51,9 @@ taarifu:
       dev-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
   geography:
     geocoder: stub
+  payments:
+    reconciliation:
+      # Disable the @Scheduled top-up reconciliation poller in tests so it never races an IT that manipulates
+      # top_up rows directly (the documented purpose of this toggle; mirrors keeping the outbox relay quiet).
+      # The reconcile/expire logic is unit/slice-tested by calling the job method explicitly instead.
+      enabled: false

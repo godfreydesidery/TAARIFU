@@ -7,6 +7,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -45,4 +46,13 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
      */
     Page<Question> findByTargetRepIdAndStatusIn(UUID targetRepId, Collection<QuestionStatus> statuses,
                                                 Pageable pageable);
+
+    /**
+     * Lists every question the subject asked, for the PDPA fan-out (data-subject ACCESS export + ERASURE
+     * severing; ADR-0016 §4/§5).
+     *
+     * @param askerProfileId the asker's account public id (the DSR subject).
+     * @return every (non-deleted) question still attributed to this asker; empty if none / already severed.
+     */
+    List<Question> findByAskerProfileId(UUID askerProfileId);
 }

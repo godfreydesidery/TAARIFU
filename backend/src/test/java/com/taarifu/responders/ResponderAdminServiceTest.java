@@ -5,6 +5,7 @@ import com.taarifu.common.domain.port.ClockPort;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
 import com.taarifu.common.error.ResourceNotFoundException;
+import com.taarifu.common.outbox.EventEnvelope;
 import com.taarifu.common.outbox.OutboxWriter;
 import com.taarifu.common.security.ScopeGuard;
 import com.taarifu.reporting.api.IssueCategoryQueryApi;
@@ -13,6 +14,9 @@ import com.taarifu.reporting.api.ReportQueryApi;
 import com.taarifu.reporting.api.dto.ReportScopeDto;
 import com.taarifu.responders.api.dto.CreateAssignmentRequest;
 import com.taarifu.responders.api.dto.ResponderAssignmentDto;
+import com.taarifu.responders.api.event.ResponderAssignedEvent;
+import com.taarifu.responders.api.event.ResponderEventTypes;
+import com.taarifu.responders.application.mapper.OrganisationSearchProjection;
 import com.taarifu.responders.application.mapper.ResponderMapper;
 import com.taarifu.responders.application.service.ResponderAdminService;
 import com.taarifu.responders.domain.model.Organisation;
@@ -22,12 +26,20 @@ import com.taarifu.responders.domain.model.enums.AssignmentRole;
 import com.taarifu.responders.domain.model.enums.CoverageType;
 import com.taarifu.responders.domain.model.enums.OrganisationType;
 import com.taarifu.responders.domain.model.enums.ResponderType;
+import com.taarifu.responders.api.dto.CreateOrganisationRequest;
+import com.taarifu.responders.api.dto.OrganisationDto;
+import com.taarifu.responders.domain.model.enums.OrganisationStatus;
 import com.taarifu.responders.domain.repository.OrganisationRepository;
 import com.taarifu.responders.domain.repository.ResponderAssignmentRepository;
 import com.taarifu.responders.domain.repository.ResponderRepository;
 import com.taarifu.responders.domain.repository.RoutingRuleRepository;
+import com.taarifu.search.api.SearchIndexApi;
+import com.taarifu.search.api.dto.SearchDocumentUpsert;
+import com.taarifu.search.domain.model.enums.SearchEntityType;
+import com.taarifu.search.domain.model.enums.SearchVisibility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -64,6 +76,7 @@ class ResponderAdminServiceTest {
     private ScopeGuard scopeGuard;
     private AuditEventService audit;
     private OutboxWriter outboxWriter;
+    private SearchIndexApi searchIndexApi;
     private ResponderAdminService service;
 
     private final UUID reportId = UUID.randomUUID();
@@ -85,10 +98,12 @@ class ResponderAdminServiceTest {
         scopeGuard = mock(ScopeGuard.class);
         audit = mock(AuditEventService.class);
         outboxWriter = mock(OutboxWriter.class);
+        searchIndexApi = mock(SearchIndexApi.class);
         ClockPort clock = () -> Instant.parse("2026-06-23T09:00:00Z");
         service = new ResponderAdminService(organisationRepository, responderRepository,
                 routingRuleRepository, assignmentRepository, reportQueryApi, issueCategoryQueryApi,
-                reportLifecycleApi, scopeGuard, audit, new ResponderMapper(), clock, outboxWriter);
+                reportLifecycleApi, scopeGuard, audit, new ResponderMapper(), clock, outboxWriter,
+                searchIndexApi, new OrganisationSearchProjection());
 
         Organisation org = Organisation.create("TANESCO", OrganisationType.PARASTATAL);
         responder = Responder.create(org, "TANESCO — Kilimanjaro", ResponderType.UTILITY,
@@ -208,6 +223,124 @@ class ResponderAdminServiceTest {
         verify(assignmentRepository, never()).save(any());
         // The report check runs first — the responder is never even looked up.
         verify(responderRepository, never()).findByPublicId(any());
+    }
+
+    @Test
+    void assign_owner_emitsResponderAssignedBackEvent_closingTheRoutingRoundTrip() {
+        // D21 / ADR-0014 §5b: a MANUAL OWNER assignment must emit RESPONDER_ASSIGNED on the outbox so
+        // reporting's handler sets Report.assignedResponderId + NEW → ASSIGNED — the same round-trip the
+        // system RoutingHandler drives. This fails the moment the back-event emission is dropped, breaking
+        // the citizen-facing "official triages" loop on a manual assignment.
+        CreateAssignmentRequest req =
+                new CreateAssignmentRequest(responderPublicId, AssignmentRole.OWNER, null);
+
+        service.assignResponder(reportId, req, actor);
+
+        ArgumentCaptor<EventEnvelope<?>> captor = forEnvelopeCaptor();
+        verify(outboxWriter, org.mockito.Mockito.atLeastOnce()).append(captor.capture());
+        EventEnvelope<?> assigned = captor.getAllValues().stream()
+                .filter(e -> ResponderEventTypes.RESPONDER_ASSIGNED.equals(e.eventType()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("RESPONDER_ASSIGNED was not appended for an OWNER assignment"));
+        assertThat(assigned.aggregateType()).isEqualTo(ResponderEventTypes.AGGREGATE_RESPONDER_ASSIGNMENT);
+        // Payload carries ids/enums only (no PII): reportId, responderId, role=OWNER.
+        assertThat(assigned.payload()).isInstanceOf(ResponderAssignedEvent.class);
+        ResponderAssignedEvent payload = (ResponderAssignedEvent) assigned.payload();
+        assertThat(payload.reportId()).isEqualTo(reportId);
+        assertThat(payload.responderId()).isEqualTo(responder.getPublicId());
+        assertThat(payload.role()).isEqualTo(AssignmentRole.OWNER);
+    }
+
+    @Test
+    void assign_collaborator_doesNotEmitResponderAssigned_soTheOwnerPointerIsUntouched() {
+        // §24.3: a COLLABORATOR must NOT move the report's accountable OWNER pointer nor re-drive the
+        // lifecycle, so no RESPONDER_ASSIGNED is emitted for it. An OWNER already exists; we add a
+        // COLLABORATOR for a different responder. Fails if a COLLABORATOR were to emit the back-event.
+        ResponderAssignment existingOwner = ResponderAssignment.create(
+                reportId, responder, AssignmentRole.OWNER, actor, Instant.now());
+        when(assignmentRepository.findOwner(reportId, AssignmentRole.OWNER))
+                .thenReturn(Optional.of(existingOwner));
+        UUID collaboratorId = UUID.randomUUID();
+        Responder collaborator = Responder.create(
+                Organisation.create("DAWASA", OrganisationType.PARASTATAL),
+                "DAWASA", ResponderType.UTILITY, CoverageType.NATIONWIDE);
+        when(responderRepository.findByPublicId(collaboratorId)).thenReturn(Optional.of(collaborator));
+        CreateAssignmentRequest req =
+                new CreateAssignmentRequest(collaboratorId, AssignmentRole.COLLABORATOR, null);
+
+        service.assignResponder(reportId, req, actor);
+
+        ArgumentCaptor<EventEnvelope<?>> captor = forEnvelopeCaptor();
+        verify(outboxWriter, org.mockito.Mockito.atLeastOnce()).append(captor.capture());
+        assertThat(captor.getAllValues())
+                .noneMatch(e -> ResponderEventTypes.RESPONDER_ASSIGNED.equals(e.eventType()));
+    }
+
+    /** Captor for the generic {@link EventEnvelope} appended to the outbox (one cast, documented once). */
+    @SuppressWarnings("unchecked")
+    private static ArgumentCaptor<EventEnvelope<?>> forEnvelopeCaptor() {
+        return ArgumentCaptor.forClass((Class<EventEnvelope<?>>) (Class<?>) EventEnvelope.class);
+    }
+
+    // --- search indexing (ADR-0017 §1): the public provider directory into discovery ---
+
+    @Test
+    void createOrganisation_pushesStaffOnlyDocument_becauseNewOrgIsPendingUnverified() {
+        when(organisationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        CreateOrganisationRequest req = new CreateOrganisationRequest(
+                "TANESCO", OrganisationType.PARASTATAL, null, null, null);
+
+        OrganisationDto dto = service.createOrganisation(req);
+
+        // A freshly-created org is PENDING + unverified (NOT publicly listable), so it is indexed STAFF-only —
+        // it must never surface to a guest before verification (§24.4 anti-spoofing). The title is the public
+        // name, the type is a keyword facet, and NO PII / no author is indexed. Fails if create→index is
+        // dropped or maps a non-listable org to PUBLIC.
+        assertThat(dto.name()).isEqualTo("TANESCO");
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndexApi).upsert(captor.capture());
+        SearchDocumentUpsert pushed = captor.getValue();
+        assertThat(pushed.entityType()).isEqualTo(SearchEntityType.ORGANISATION);
+        assertThat(pushed.title()).isEqualTo("TANESCO");
+        assertThat(pushed.keywords()).isEqualTo("PARASTATAL");
+        assertThat(pushed.visibility()).isEqualTo(SearchVisibility.STAFF);
+        assertThat(pushed.authoredByAccountId()).isNull();
+    }
+
+    @Test
+    void verifyActiveOrganisation_flipsItPublicInDiscovery() {
+        // An ACTIVE-but-unverified org becomes publicly listable once verified (§24.4) — verification must
+        // re-push it as PUBLIC so it appears in discovery. This fails the moment the verify→index call is
+        // removed, or the visibility no longer mirrors isPubliclyListable().
+        UUID orgId = UUID.randomUUID();
+        Organisation org = Organisation.create("CRDB Bank", OrganisationType.PRIVATE_COMPANY);
+        org.changeStatus(OrganisationStatus.ACTIVE);
+        when(organisationRepository.findByPublicId(orgId)).thenReturn(Optional.of(org));
+
+        service.setOrganisationVerified(orgId, true);
+
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndexApi).upsert(captor.capture());
+        assertThat(captor.getValue().visibility()).isEqualTo(SearchVisibility.PUBLIC);
+    }
+
+    @Test
+    void unverifyOrganisation_dropsItToStaffOnly_notRemoved() {
+        // Un-verifying a previously-public org must immediately drop it out of public discovery (§24.4). We
+        // re-push it STAFF-only (an idempotent visibility flip) rather than removing the row, so it is
+        // re-listable on re-verification. Fails if un-verify keeps it PUBLIC or calls remove().
+        UUID orgId = UUID.randomUUID();
+        Organisation org = Organisation.create("CRDB Bank", OrganisationType.PRIVATE_COMPANY);
+        org.changeStatus(OrganisationStatus.ACTIVE);
+        org.setVerified(true);
+        when(organisationRepository.findByPublicId(orgId)).thenReturn(Optional.of(org));
+
+        service.setOrganisationVerified(orgId, false);
+
+        ArgumentCaptor<SearchDocumentUpsert> captor = ArgumentCaptor.forClass(SearchDocumentUpsert.class);
+        verify(searchIndexApi).upsert(captor.capture());
+        assertThat(captor.getValue().visibility()).isEqualTo(SearchVisibility.STAFF);
+        verify(searchIndexApi, never()).remove(any(), any());
     }
 
     @Test

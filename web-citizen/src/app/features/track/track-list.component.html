@@ -1,0 +1,64 @@
+<section aria-labelledby="track-title">
+  <h1 id="track-title" class="track-h">{{ 'track.title' | translate }}</h1>
+
+  <!-- ===== Offline drafts (always first, so nothing the citizen wrote is hidden) ===== -->
+  @if (drafts.drafts().length) {
+    <h2 class="track-section-h">{{ 'track.pending' | translate }}</h2>
+    @for (d of drafts.drafts(); track d.idempotencyKey) {
+      <article class="tz-card track-draft">
+        <div class="track-draft__top">
+          <span class="tz-pill track-draft__pill"
+                [class.track-draft__pill--failed]="d.status === 'failed'">
+            @if (d.status === 'failed') {
+              {{ 'track.draftFailed' | translate }}
+            } @else if (d.status === 'syncing') {
+              {{ 'track.draftSyncing' | translate }}
+            } @else {
+              {{ 'track.draftPending' | translate }}
+            }
+          </span>
+        </div>
+        <h3 class="track-draft__title">{{ d.label }}</h3>
+        @if (d.lastError) {
+          <p class="track-draft__err">{{ d.lastError }}</p>
+        }
+      </article>
+    }
+  }
+
+  <!-- ===== Submitted reports ===== -->
+  @if (loading()) {
+    <div class="tz-skeleton mt-2" style="height: 4.5rem"></div>
+    <div class="tz-skeleton mt-2" style="height: 4.5rem"></div>
+    <span class="sr-only">{{ 'common.loading' | translate }}</span>
+  } @else if (errored()) {
+    <div class="tz-card track-empty" role="alert">
+      <p class="mb-2">{{ 'common.errorLoading' | translate }}</p>
+      <button type="button" class="btn btn-outline-success" (click)="load()">{{ 'common.retry' | translate }}</button>
+    </div>
+  } @else if (reportsList().length === 0 && drafts.drafts().length === 0) {
+    <div class="tz-card track-empty">
+      <p class="track-empty__lead lead-tz">{{ 'track.emptyTitle' | translate }}</p>
+      <p class="text-muted">{{ 'track.emptyHelp' | translate }}</p>
+      <a routerLink="/report" class="btn btn-success">{{ 'feed.fileCta' | translate }}</a>
+    </div>
+  } @else {
+    @if (reportsList().length) {
+      <h2 class="track-section-h">{{ 'track.submitted' | translate }}</h2>
+    }
+    @for (r of reportsList(); track r.id) {
+      <a [routerLink]="['/track', r.id]" class="tz-card track-item">
+        <div class="track-item__top">
+          <span class="track-item__cat">{{ r.categoryName }}</span>
+          <app-status-pill [status]="r.status" />
+        </div>
+        <h3 class="track-item__title">{{ r.title }}</h3>
+        <div class="track-item__meta">
+          <span>{{ r.code }}</span>
+          <span aria-hidden="true">·</span>
+          <span>{{ r.createdAt | date: 'mediumDate' }}</span>
+        </div>
+      </a>
+    }
+  }
+</section>

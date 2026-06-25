@@ -10,9 +10,12 @@ import com.taarifu.accountability.api.dto.UpdatePromiseStatusDto;
 import com.taarifu.accountability.application.mapper.AccountabilityMapper;
 import com.taarifu.accountability.domain.model.Attendance;
 import com.taarifu.accountability.domain.model.Promise;
+import com.taarifu.accountability.domain.model.PromiseStatusEntry;
 import com.taarifu.accountability.domain.model.RepresentativeContribution;
+import com.taarifu.accountability.domain.model.enums.PromiseStatus;
 import com.taarifu.accountability.domain.repository.AttendanceRepository;
 import com.taarifu.accountability.domain.repository.PromiseRepository;
+import com.taarifu.accountability.domain.repository.PromiseStatusEntryRepository;
 import com.taarifu.accountability.domain.repository.RepresentativeContributionRepository;
 import com.taarifu.common.error.ApiException;
 import com.taarifu.common.error.ErrorCode;
@@ -48,9 +51,12 @@ import java.util.UUID;
  * api port only; this service never reaches into institutions' {@code domain}/{@code infrastructure}.</p>
  *
  * <p>{@code linkedProjectIds} on a promise are still accepted as opaque public ids and not yet validated:
- * there is no projects module/published port to validate them against. That remains a documented
- * {@code // TODO(wiring)} pending the projects seam — distinct from the representative-existence guard,
- * which is now wired.</p>
+ * there is no projects module/published port to validate them against — distinct from the
+ * representative-existence guard, which is now wired.
+ * // PHASE-3: needs the projects module's published existence query (e.g. {@code projects.api.ProjectQueryApi
+ * .exists(UUID)}); this service's referenced-existence guard pattern — already used for the representative via
+ * {@code RepresentativeQueryApi.exists} — is the ready receiver to validate each linked project id once that
+ * module ships its api port.</p>
  */
 @Service
 @Transactional
@@ -59,25 +65,29 @@ public class CurationService {
     private final RepresentativeContributionRepository contributionRepository;
     private final AttendanceRepository attendanceRepository;
     private final PromiseRepository promiseRepository;
+    private final PromiseStatusEntryRepository promiseStatusEntryRepository;
     private final AccountabilityMapper mapper;
     private final RepresentativeQueryApi representativeQueryApi;
 
     /**
-     * @param contributionRepository contribution persistence port.
-     * @param attendanceRepository   attendance persistence port.
-     * @param promiseRepository      promise persistence port.
-     * @param mapper                 entity → DTO mapper.
-     * @param representativeQueryApi institutions' published port used to confirm the referenced
-     *                               representative exists before persisting any curated record (ADR-0013).
+     * @param contributionRepository       contribution persistence port.
+     * @param attendanceRepository         attendance persistence port.
+     * @param promiseRepository            promise persistence port.
+     * @param promiseStatusEntryRepository append-only promise status-timeline persistence port.
+     * @param mapper                       entity → DTO mapper.
+     * @param representativeQueryApi       institutions' published port used to confirm the referenced
+     *                                     representative exists before persisting any curated record (ADR-0013).
      */
     public CurationService(RepresentativeContributionRepository contributionRepository,
                            AttendanceRepository attendanceRepository,
                            PromiseRepository promiseRepository,
+                           PromiseStatusEntryRepository promiseStatusEntryRepository,
                            AccountabilityMapper mapper,
                            RepresentativeQueryApi representativeQueryApi) {
         this.contributionRepository = contributionRepository;
         this.attendanceRepository = attendanceRepository;
         this.promiseRepository = promiseRepository;
+        this.promiseStatusEntryRepository = promiseStatusEntryRepository;
         this.mapper = mapper;
         this.representativeQueryApi = representativeQueryApi;
     }
@@ -133,6 +143,11 @@ public class CurationService {
         Promise saved = promiseRepository.save(Promise.create(
                 request.representativeId(), request.text(), request.madeAt(), request.status(),
                 request.evidenceRef(), request.linkedProjectIds()));
+        // Open the citizen-visible timeline with the promise's INITIAL state (US-6.3). Promise.create defaults
+        // a null status to MADE, so read it back from the saved entity (never the raw, possibly-null request)
+        // — the first timeline entry must mirror the persisted status exactly.
+        promiseStatusEntryRepository.save(PromiseStatusEntry.record(
+                saved, saved.getStatus(), saved.getEvidenceRef(), null));
         return mapper.toPromiseDto(saved);
     }
 
@@ -148,8 +163,20 @@ public class CurationService {
         Promise promise = promiseRepository.findByPublicId(promisePublicId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "accountability.promise.notFound", promisePublicId));
+        PromiseStatus previous = promise.getStatus();
         promise.updateStatus(request.status(), request.evidenceRef());
-        return mapper.toPromiseDto(promiseRepository.save(promise));
+        Promise saved = promiseRepository.save(promise);
+        // Append a timeline entry ONLY on a genuine transition (US-6.3 — the timeline is the dated provenance
+        // of how a promise MOVED). A no-op re-statement (e.g. attaching new evidence to the same status)
+        // updates the promise but adds no spurious "moved to X" row; an evidence/note-only correction without
+        // a status change is intentionally NOT a timeline event. WHY append (never edit a prior entry): the
+        // timeline is an append-only accountability record — rewriting it would let a status judgement be
+        // silently changed (neutrality, PRD §10).
+        if (request.status() != null && request.status() != previous) {
+            promiseStatusEntryRepository.save(PromiseStatusEntry.record(
+                    saved, saved.getStatus(), saved.getEvidenceRef(), request.note()));
+        }
+        return mapper.toPromiseDto(saved);
     }
 
     /**

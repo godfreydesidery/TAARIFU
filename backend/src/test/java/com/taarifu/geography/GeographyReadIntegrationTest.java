@@ -3,6 +3,7 @@ package com.taarifu.geography;
 import com.taarifu.AbstractPostgisIntegrationTest;
 import com.taarifu.common.api.dto.ApiError;
 import com.taarifu.common.api.dto.ApiResponse;
+import com.taarifu.common.security.JwtService;
 import com.taarifu.geography.api.dto.ConstituencyDto;
 import com.taarifu.geography.api.dto.LocationResolutionDto;
 import com.taarifu.geography.api.dto.RegionDto;
@@ -60,6 +61,9 @@ class GeographyReadIntegrationTest extends AbstractPostgisIntegrationTest {
     @Autowired
     private GeographyTestData testData;
 
+    @Autowired
+    private JwtService jwtService;
+
     private GeographyTestData.Fixture fixture;
 
     @BeforeEach
@@ -115,6 +119,35 @@ class GeographyReadIntegrationTest extends AbstractPostgisIntegrationTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().success()).isTrue();
         assertThat(response.getBody().statusCode()).isEqualTo(200);
+    }
+
+    /**
+     * Regression guard: an AUTHENTICATED request to a path that matches NO controller mapping must return a
+     * clean {@code 404} envelope, not a {@code 500}. Spring 6.1 raises {@code NoResourceFoundException} for an
+     * unmatched path once it reaches the resource handler; without the dedicated handler in
+     * {@code GlobalExceptionHandler} it falls through to the catch-all and is mislabelled
+     * {@code INTERNAL_ERROR} (the exact symptom seen when the admin console probed a non-existent
+     * {@code /admin/analytics/...} URL). The request carries a bearer token because deny-by-default security
+     * 401s an anonymous request to an unmapped path BEFORE it reaches the dispatcher — the 404 path is only
+     * reachable once authorization passes (as it did for the authenticated admin that hit the original 500).
+     */
+    @Test
+    void unmatchedRoute_authenticated_returnsNotFoundEnvelope_notServerError() {
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setBearerAuth(jwtService.issueAccessToken(java.util.UUID.randomUUID(), List.of("CITIZEN"), "T2"));
+
+        ResponseEntity<ApiResponse<ApiError>> response = restTemplate.exchange(
+                "/this-path-maps-to-no-controller",
+                org.springframework.http.HttpMethod.GET, new org.springframework.http.HttpEntity<>(headers),
+                new ParameterizedTypeReference<>() {
+                });
+
+        assertThat(response.getStatusCode())
+                .as("an authenticated request to an unknown path must be 404, never 500")
+                .isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().success()).isFalse();
+        assertThat(response.getBody().statusCode()).isEqualTo(404);
     }
 
     @Test

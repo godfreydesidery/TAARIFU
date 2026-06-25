@@ -1,0 +1,63 @@
+# =============================================================================
+# Production overlay — in-country (D-Q9), managed DB, full HA, real adapters once
+# credentials + shortcode are live (LAUNCH-READINESS §2.2D, R27). PII NEVER leaves
+# the approved jurisdiction (R12). Legal residency sign-off gates this overlay.
+#   helm upgrade --install taarifu deploy/helm/taarifu -n taarifu-prod \
+#     -f deploy/helm/taarifu/values-prod.yaml --set backend.image.tag=<git-sha> --atomic --wait
+# =============================================================================
+environment: prod
+
+backend:
+  replicaCount: 3
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+  resources:
+    requests:
+      cpu: 750m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  corsOrigins: "https://admin.taarifu.example,https://app.taarifu.example"
+  config:
+    SPRING_PROFILES_ACTIVE: prod
+    TAARIFU_RATELIMIT_BACKEND: redis
+    TAARIFU_MFA_ENFORCED: "true"
+    # Flip these to real providers ONCE secrets + shortcode are live (R27); until then
+    # the safe logging stub keeps the citizen path up (PRD §21 graceful degradation).
+    # TAARIFU_SMS_PROVIDER: http
+    # TAARIFU_PUSH_PROVIDER: fcm
+    # TAARIFU_EMAIL_PROVIDER: smtp
+  secrets:
+    integrations:
+      enabled: true        # SMS/USSD/scanner secrets present in prod
+      existingSecret: taarifu-integration-secrets
+
+postgresql:
+  # Managed, in-country PostGIS — provider owns backups/PITR/HA (ADR-0021, RUNBOOK DR).
+  deployInCluster: false
+  external:
+    host: REPLACE_PROD_DB_HOST     # the in-country managed PostGIS endpoint
+    port: 5432
+    database: taarifu
+    username: taarifu
+
+redis:
+  deployInCluster: true   # short-TTL state; acceptable in-cluster. Use managed if SLA demands.
+
+ingress:
+  hosts:
+    - host: admin.taarifu.example
+      paths:
+        - path: /api/v1
+          pathType: Prefix
+          service: backend
+        - path: /
+          pathType: Prefix
+          service: web-admin
+  tls:
+    - hosts:
+        - admin.taarifu.example
+      secretName: taarifu-tls

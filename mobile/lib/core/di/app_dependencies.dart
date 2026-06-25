@@ -22,8 +22,11 @@ import '../../features/auth/data/auth_repository.dart';
 import '../../features/engagement/data/engagement_repository.dart';
 import '../../features/feed/data/feed_repository.dart';
 import '../../features/geography/data/geography_repository.dart';
+import '../../features/notifications/data/device_token_repository.dart';
 import '../../features/notifications/data/notification_repository.dart';
 import '../../features/notifications/data/push_service.dart';
+import '../../features/privacy/data/dsr_repository.dart';
+import '../../features/search/data/search_repository.dart';
 import '../../features/profile/data/profile_repository.dart';
 import '../../features/reporting/data/attachment_service.dart';
 import '../../features/reporting/data/category_repository.dart';
@@ -58,9 +61,6 @@ class AppDependencies {
        // is resolved lazily (async path_provider) on first use. See
        // core/storage/file_outbox_store.dart.
        _outbox = FileOutboxStore(fileResolver: _resolveOutboxFile),
-       // Push is a seam (no firebase_messaging in the budget yet); the default
-       // surfaces SMS-fallback copy and no-ops token calls. See push_service.dart.
-       pushService = const UnavailablePushService(),
        // Attachment capture is a seam (no image_picker in the budget yet); the
        // default reports "coming soon" rather than faking media. Swapping in an
        // ImagePickerAttachmentService here is the only change needed to ship
@@ -101,6 +101,17 @@ class AppDependencies {
       apiClient: _apiClient,
       cache: _cache,
     );
+    deviceTokenRepository = DeviceTokenRepository(apiClient: _apiClient);
+    searchRepository = SearchRepository(apiClient: _apiClient);
+    dsrRepository = DsrRepository(apiClient: _apiClient);
+    // Push is a seam (no firebase_messaging in the budget yet): the default
+    // surfaces SMS-fallback copy and obtains no token, so registration is
+    // correctly skipped — but the token-registration scaffolding is real and
+    // wired to /notification-tokens via [deviceTokenRepository], so going live
+    // only means supplying an FCM token provider here. See push_service.dart.
+    pushService = UnavailablePushService(
+      tokenRepository: deviceTokenRepository,
+    );
   }
 
   /// Builds the dependency graph, loading persisted settings first so the first
@@ -134,7 +145,7 @@ class AppDependencies {
   late final ApiClient _apiClient;
 
   /// Push-notification seam (token lifecycle + tap-through deep links).
-  final PushService pushService;
+  late final PushService pushService;
 
   /// Attachment-capture seam (camera/gallery → pre-signed upload contract).
   final AttachmentService attachmentService;
@@ -165,6 +176,15 @@ class AppDependencies {
 
   /// Notification inbox + preferences.
   late final NotificationRepository notificationRepository;
+
+  /// Push device-token registration (`/notification-tokens`).
+  late final DeviceTokenRepository deviceTokenRepository;
+
+  /// Cross-entity discovery search (`/search`).
+  late final SearchRepository searchRepository;
+
+  /// PDPA data-subject-request self-service (`/privacy/dsr/**`).
+  late final DsrRepository dsrRepository;
 
   /// Resolves the durable outbox's backing file under the platform's
   /// app-support directory (private to the app, not user-visible like Documents,

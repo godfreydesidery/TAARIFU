@@ -188,6 +188,11 @@ class CivicFlowE2ETest extends AbstractPostgisIntegrationTest {
         @Override public Optional<UUID> wardOf(UUID representativePublicId) {
             return Optional.empty();
         }
+        @Override public boolean ownsRepresentative(UUID accountPublicId, UUID representativePublicId) {
+            // This e2e flow exercises the rate-rep binding action, not the rep self-reply ownership path —
+            // no account is the rep's linked account here, so the ownership guard is closed (deny-by-default).
+            return false;
+        }
     }
 
     /** Test elector port: {@code elector} controls the verdict; defaults to NON-elector (deny). */

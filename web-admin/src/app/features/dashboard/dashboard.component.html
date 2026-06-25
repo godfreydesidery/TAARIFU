@@ -14,6 +14,51 @@
     </div>
   </header>
 
+  <!-- ===== Analytics date-range picker (drives every window-scoped chart below) ===== -->
+  <div class="filter-bar">
+    <div class="d-flex flex-wrap align-items-end gap-3">
+      <div>
+        <div class="form-label small mb-1" id="range-label">{{ 'analytics.dateRange' | translate }}</div>
+        <div class="btn-group btn-group-sm" role="group" aria-labelledby="range-label">
+          @for (r of quickRanges; track r) {
+            <button
+              type="button"
+              class="btn"
+              [class.btn-primary]="range() === r"
+              [class.btn-outline-secondary]="range() !== r"
+              [attr.aria-pressed]="range() === r"
+              (click)="selectRange(r)"
+            >
+              {{ 'analytics.range.' + r | translate }}
+            </button>
+          }
+        </div>
+      </div>
+      @if (range() === 'CUSTOM') {
+        <div>
+          <label class="form-label small mb-1" for="range-from">{{ 'analytics.from' | translate }}</label>
+          <input
+            id="range-from"
+            type="date"
+            class="form-control form-control-sm"
+            [ngModel]="customFrom()"
+            (ngModelChange)="customFrom.set($event); applyCustomRange()"
+          />
+        </div>
+        <div>
+          <label class="form-label small mb-1" for="range-to">{{ 'analytics.to' | translate }}</label>
+          <input
+            id="range-to"
+            type="date"
+            class="form-control form-control-sm"
+            [ngModel]="customTo()"
+            (ngModelChange)="customTo.set($event); applyCustomRange()"
+          />
+        </div>
+      }
+    </div>
+  </div>
+
   <!-- ===== KPI stat tiles ===== -->
   <div class="row g-3 mb-4">
     <div class="col-6 col-xl-3">
@@ -83,6 +128,78 @@
           </div>
         </div>
       </a>
+    </div>
+  </div>
+
+  <!-- ===== Reports-volume drill-down: total for the window + by-category / by-area detail ===== -->
+  <div class="card card-elevated mb-4">
+    <div class="card-body">
+      <div class="d-flex align-items-baseline justify-content-between flex-wrap gap-2 mb-1">
+        <h2 class="h6 mb-0">{{ 'analytics.volume' | translate }}</h2>
+        @if (volume()) {
+          <span class="badge-soft is-primary">
+            {{ 'analytics.volumeTotal' | translate }}: <strong class="ms-1">{{ volume()!.total | number }}</strong>
+          </span>
+        }
+      </div>
+      <p class="text-muted small mb-3">{{ 'analytics.volumeHint' | translate }}</p>
+
+      @if (volume() === undefined) {
+        <div class="skeleton skeleton--chart" style="height: 180px"></div>
+      } @else if (volume() && volumeRows().length > 0) {
+        <!-- Drill-down dimension toggle. -->
+        <div class="btn-group btn-group-sm mb-3" role="group" [attr.aria-label]="'analytics.drillBy' | translate">
+          <button
+            type="button"
+            class="btn"
+            [class.btn-primary]="volumeDim() === 'category'"
+            [class.btn-outline-secondary]="volumeDim() !== 'category'"
+            [attr.aria-pressed]="volumeDim() === 'category'"
+            (click)="volumeDim.set('category')"
+          >
+            {{ 'analytics.byCategory' | translate }}
+          </button>
+          <button
+            type="button"
+            class="btn"
+            [class.btn-primary]="volumeDim() === 'area'"
+            [class.btn-outline-secondary]="volumeDim() !== 'area'"
+            [attr.aria-pressed]="volumeDim() === 'area'"
+            (click)="volumeDim.set('area')"
+          >
+            {{ 'analytics.byArea' | translate }}
+          </button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <caption class="visually-hidden">{{ 'analytics.volume' | translate }}</caption>
+            <thead>
+              <tr>
+                <th scope="col">{{ volumeDim() === 'category' ? ('analytics.category' | translate) : ('analytics.area' | translate) }}</th>
+                <th scope="col" class="text-end" style="width: 6rem">{{ 'analytics.count' | translate }}</th>
+                <th scope="col" style="width: 40%">{{ 'analytics.share' | translate }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of volumeRows(); track row.key; let i = $index) {
+                <tr>
+                  <td>{{ row.key ?? ('analytics.unattributed' | translate) }}</td>
+                  <td class="text-end fw-semibold">{{ row.count | number }}</td>
+                  <td>
+                    <div class="volume-bar" role="img"
+                      [attr.aria-label]="(row.count / (volume()!.total || 1) * 100 | number: '1.0-0') + '%'">
+                      <span class="volume-bar__fill" [style.width.%]="row.count / (volume()!.total || 1) * 100"></span>
+                    </div>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      } @else {
+        <p class="state-panel__text text-center my-4">{{ 'analytics.noData' | translate }}</p>
+      }
     </div>
   </div>
 

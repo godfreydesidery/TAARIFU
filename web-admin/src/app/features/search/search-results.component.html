@@ -1,0 +1,73 @@
+<!--
+  Global search results — grouped by entity type, each row a deep link into the owning feature.
+  Loading → skeleton list; no query → prompt; query with no hits → empty state. (EI-10 / SY5.)
+-->
+<header class="page-header">
+  <div class="page-header__titles">
+    <h1 class="page-header__title">{{ 'search.resultsTitle' | translate }}</h1>
+    @if (ranQuery()) {
+      <p class="page-header__subtitle">
+        {{ 'search.resultsFor' | translate }} <strong>“{{ ranQuery() }}”</strong>
+        @if (!loading()) {
+          — {{ total() }} {{ 'search.matches' | translate }}
+        }
+      </p>
+    }
+  </div>
+</header>
+
+@if (loading()) {
+  <div class="card card-elevated p-3" role="status" aria-live="polite">
+    <span class="visually-hidden">{{ 'common.loading' | translate }}</span>
+    @for (i of [1, 2, 3, 4, 5]; track i) {
+      <div class="d-flex align-items-center gap-3 py-2">
+        <span class="skeleton skeleton--avatar" style="width: 2rem; height: 2rem"></span>
+        <span class="skeleton skeleton--text flex-grow-1" style="max-width: 22rem"></span>
+      </div>
+    }
+  </div>
+} @else if (!ranQuery()) {
+  <app-state-panel
+    kind="empty"
+    icon="🔍"
+    [title]="'search.promptTitle' | translate"
+    [text]="'search.promptText' | translate"
+  />
+} @else if (groups().length === 0) {
+  <app-state-panel
+    kind="empty"
+    icon="🔍"
+    [title]="'search.noResults' | translate"
+    [text]="'search.noResultsHint' | translate"
+  />
+} @else {
+  @for (group of groups(); track group.type) {
+    <section class="mb-4" [attr.aria-label]="group.labelKey | translate">
+      <h2 class="h6 text-uppercase text-muted mb-2" style="letter-spacing: 0.04em">
+        {{ group.labelKey | translate }}
+        <span class="badge-soft is-neutral ms-1">{{ group.hits.length }}</span>
+      </h2>
+      <div class="table-card">
+        <ul class="list-unstyled mb-0">
+          @for (hit of group.hits; track hit.id) {
+            <li>
+              <a class="search-hit" [routerLink]="link(hit)">
+                <span class="search-hit__icon" aria-hidden="true">{{ icon(hit.type) }}</span>
+                <span class="search-hit__body">
+                  <span class="search-hit__title">{{ hit.title }}</span>
+                  @if (hit.subtitle) {
+                    <span class="search-hit__subtitle">{{ hit.subtitle }}</span>
+                  }
+                  @if (hit.snippet) {
+                    <span class="search-hit__snippet">{{ hit.snippet }}</span>
+                  }
+                </span>
+                <span class="search-hit__chevron" aria-hidden="true">›</span>
+              </a>
+            </li>
+          }
+        </ul>
+      </div>
+    </section>
+  }
+}

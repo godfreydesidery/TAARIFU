@@ -1,0 +1,159 @@
+<!--
+  DSR (data-subject-request) admin queue: PDPA access/erasure requests with server-side type/status filters
+  and inline acknowledge/complete/reject actions. Subjects shown PII-minimised (masked contact only). (§25.1)
+-->
+<section>
+  <header class="page-header">
+    <div class="page-header__titles">
+      <h1 class="page-header__title">{{ 'privacy.title' | translate }}</h1>
+      <p class="page-header__subtitle">{{ 'privacy.subtitle' | translate }}</p>
+    </div>
+  </header>
+
+  <!-- PDPA SLA + PII reassurance note. -->
+  <div class="alert alert-info d-flex align-items-start gap-2 py-2" role="note">
+    <span aria-hidden="true">🔒</span>
+    <small>{{ 'privacy.slaNote' | translate }}</small>
+  </div>
+
+  <!-- Filters: type + status are server-side. -->
+  <div class="filter-bar">
+    <div class="row g-2 align-items-end">
+      <div class="col-6 col-md-3">
+        <label class="form-label small mb-1" for="dsr-type">{{ 'privacy.type' | translate }}</label>
+        <select
+          id="dsr-type"
+          class="form-select form-select-sm"
+          [ngModel]="typeFilter()"
+          (ngModelChange)="typeFilter.set($event); applyFilters()"
+        >
+          <option value="">{{ 'privacy.allTypes' | translate }}</option>
+          @for (t of types; track t) {
+            <option [value]="t">{{ 'privacy.typeValue.' + t | translate }}</option>
+          }
+        </select>
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label small mb-1" for="dsr-status">{{ 'privacy.status' | translate }}</label>
+        <select
+          id="dsr-status"
+          class="form-select form-select-sm"
+          [ngModel]="statusFilter()"
+          (ngModelChange)="statusFilter.set($event); applyFilters()"
+        >
+          <option value="">{{ 'privacy.allStatuses' | translate }}</option>
+          @for (s of statuses; track s) {
+            <option [value]="s">{{ 'privacy.statusValue.' + s | translate }}</option>
+          }
+        </select>
+      </div>
+    </div>
+  </div>
+
+  @if (errored()) {
+    <app-state-panel kind="error" icon="⚠" [title]="'common.errorLoading' | translate" (retry)="loadPage(0)" />
+  } @else if (!loading() && rows().length === 0) {
+    <app-state-panel
+      kind="empty"
+      icon="🛡"
+      [title]="'privacy.noResults' | translate"
+      [text]="(hasFilters() ? 'privacy.noResultsHintFiltered' : 'privacy.noResultsHint') | translate"
+    />
+  } @else {
+    <div class="table-card">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th scope="col">{{ 'privacy.type' | translate }}</th>
+              <th scope="col">{{ 'privacy.subject' | translate }}</th>
+              <th scope="col">{{ 'privacy.status' | translate }}</th>
+              <th scope="col">{{ 'privacy.requested' | translate }}</th>
+              <th scope="col">{{ 'privacy.due' | translate }}</th>
+              <th scope="col" class="text-end">{{ 'common.actions' | translate }}</th>
+            </tr>
+          </thead>
+          @if (loading()) {
+            <tbody app-skeleton-table [rows]="8" [cols]="6"></tbody>
+          } @else {
+            <tbody>
+              @for (req of rows(); track req.id) {
+                <tr>
+                  <td>
+                    <app-status-badge
+                      [tone]="req.type === 'ERASURE' ? 'danger' : 'info'"
+                      [label]="'privacy.typeValue.' + req.type | translate"
+                    />
+                  </td>
+                  <td>
+                    <span class="code-chip" [title]="req.subjectAccountId">{{ req.subjectMaskedContact || '—' }}</span>
+                    @if (req.legalHold) {
+                      <span class="badge-soft is-warning ms-1" [title]="'privacy.legalHoldHint' | translate">
+                        {{ 'privacy.legalHold' | translate }}
+                      </span>
+                    }
+                  </td>
+                  <td>
+                    <app-status-badge [tone]="tone(req.status)" [label]="'privacy.statusValue.' + req.status | translate" />
+                    @if (isOverdue(req)) {
+                      <span class="badge-soft is-danger ms-1">{{ 'privacy.overdue' | translate }}</span>
+                    }
+                  </td>
+                  <td><small class="text-muted">{{ req.requestedAt | date: 'short' }}</small></td>
+                  <td>
+                    @if (req.dueAt) {
+                      <small [class.text-danger]="isOverdue(req)" [class.text-muted]="!isOverdue(req)">
+                        {{ req.dueAt | date: 'mediumDate' }}
+                      </small>
+                    } @else {
+                      <span class="text-muted">—</span>
+                    }
+                  </td>
+                  <td class="text-end">
+                    <div class="btn-group btn-group-sm" role="group" [attr.aria-label]="'common.actions' | translate">
+                      @if (canAcknowledge(req)) {
+                        <button
+                          type="button"
+                          class="btn btn-outline-secondary"
+                          [disabled]="acting() === req.id"
+                          (click)="acknowledge(req)"
+                        >
+                          {{ 'privacy.acknowledge' | translate }}
+                        </button>
+                      }
+                      @if (canComplete(req)) {
+                        <button
+                          type="button"
+                          class="btn btn-outline-success"
+                          [disabled]="acting() === req.id"
+                          (click)="complete(req)"
+                        >
+                          {{ 'privacy.complete' | translate }}
+                        </button>
+                      }
+                      @if (canReject(req)) {
+                        <button
+                          type="button"
+                          class="btn btn-outline-danger"
+                          [disabled]="acting() === req.id"
+                          (click)="reject(req)"
+                        >
+                          {{ 'privacy.reject' | translate }}
+                        </button>
+                      }
+                      @if (!canAcknowledge(req) && !canComplete(req) && !canReject(req)) {
+                        <span class="text-muted small">—</span>
+                      }
+                    </div>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          }
+        </table>
+      </div>
+    </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="loadPage($event)" />
+  }
+</section>

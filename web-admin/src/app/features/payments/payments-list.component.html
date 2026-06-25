@@ -1,0 +1,170 @@
+<!--
+  Mobile-money payments admin: server-side provider/status/date filters, an aggregate totals strip, and a
+  paged ledger with MASKED payer MSISDN. Phase-2 token-purchase reconciliation. (D19; PRD §23.)
+-->
+<section>
+  <header class="page-header">
+    <div class="page-header__titles">
+      <h1 class="page-header__title">{{ 'payments.title' | translate }}</h1>
+      <p class="page-header__subtitle">{{ 'payments.subtitle' | translate }}</p>
+    </div>
+  </header>
+
+  <!-- §23 fence: token purchase never buys democratic weight. -->
+  <div class="alert alert-secondary d-flex align-items-start gap-2 py-2" role="note">
+    <span aria-hidden="true">●</span>
+    <small>{{ 'payments.fenceNote' | translate }}</small>
+  </div>
+
+  <!-- Totals strip — aggregate sums for the active filter; hidden if the totals endpoint is unavailable. -->
+  @if (totals(); as t) {
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-lg-3">
+        <div class="card card-elevated stat-tile">
+          <div class="stat-tile__icon is-success" aria-hidden="true">✓</div>
+          <div class="stat-tile__body">
+            <div class="stat-tile__value">{{ t.paidAmount | number: '1.0-0' }} {{ t.currency }}</div>
+            <p class="stat-tile__label">{{ 'payments.totalPaid' | translate }} ({{ t.paidCount }})</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="card card-elevated stat-tile">
+          <div class="stat-tile__icon is-warning" aria-hidden="true">⏳</div>
+          <div class="stat-tile__body">
+            <div class="stat-tile__value">{{ t.pendingAmount | number: '1.0-0' }} {{ t.currency }}</div>
+            <p class="stat-tile__label">{{ 'payments.totalPending' | translate }}</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="card card-elevated stat-tile">
+          <div class="stat-tile__icon is-danger" aria-hidden="true">✕</div>
+          <div class="stat-tile__body">
+            <div class="stat-tile__value">{{ t.failedAmount | number: '1.0-0' }} {{ t.currency }}</div>
+            <p class="stat-tile__label">{{ 'payments.totalFailed' | translate }}</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="card card-elevated stat-tile">
+          <div class="stat-tile__icon is-info" aria-hidden="true">↩</div>
+          <div class="stat-tile__body">
+            <div class="stat-tile__value">{{ t.refundedAmount | number: '1.0-0' }} {{ t.currency }}</div>
+            <p class="stat-tile__label">{{ 'payments.totalRefunded' | translate }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- Filters: provider/status/date window are server-side. -->
+  <div class="filter-bar">
+    <div class="row g-2 align-items-end">
+      <div class="col-6 col-md-3">
+        <label class="form-label small mb-1" for="pay-provider">{{ 'payments.provider' | translate }}</label>
+        <select
+          id="pay-provider"
+          class="form-select form-select-sm"
+          [ngModel]="providerFilter()"
+          (ngModelChange)="providerFilter.set($event); applyFilters()"
+        >
+          <option value="">{{ 'payments.allProviders' | translate }}</option>
+          @for (p of providers; track p) {
+            <option [value]="p">{{ 'payments.providerValue.' + p | translate }}</option>
+          }
+        </select>
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label small mb-1" for="pay-status">{{ 'payments.status' | translate }}</label>
+        <select
+          id="pay-status"
+          class="form-select form-select-sm"
+          [ngModel]="statusFilter()"
+          (ngModelChange)="statusFilter.set($event); applyFilters()"
+        >
+          <option value="">{{ 'payments.allStatuses' | translate }}</option>
+          @for (s of statuses; track s) {
+            <option [value]="s">{{ 'payments.statusValue.' + s | translate }}</option>
+          }
+        </select>
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label small mb-1" for="pay-from">{{ 'payments.from' | translate }}</label>
+        <input
+          id="pay-from"
+          type="date"
+          class="form-control form-control-sm"
+          [ngModel]="fromFilter()"
+          (ngModelChange)="fromFilter.set($event); applyFilters()"
+        />
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label small mb-1" for="pay-to">{{ 'payments.to' | translate }}</label>
+        <input
+          id="pay-to"
+          type="date"
+          class="form-control form-control-sm"
+          [ngModel]="toFilter()"
+          (ngModelChange)="toFilter.set($event); applyFilters()"
+        />
+      </div>
+    </div>
+  </div>
+
+  @if (errored()) {
+    <app-state-panel kind="error" icon="⚠" [title]="'common.errorLoading' | translate" (retry)="reload(0)" />
+  } @else if (!loading() && rows().length === 0) {
+    <app-state-panel
+      kind="empty"
+      icon="●"
+      [title]="'payments.noResults' | translate"
+      [text]="(hasFilters() ? 'payments.noResultsHintFiltered' : 'payments.noResultsHint') | translate"
+    />
+  } @else {
+    <div class="table-card">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th scope="col">{{ 'payments.provider' | translate }}</th>
+              <th scope="col">{{ 'payments.payer' | translate }}</th>
+              <th scope="col">{{ 'payments.amount' | translate }}</th>
+              <th scope="col">{{ 'payments.tokens' | translate }}</th>
+              <th scope="col">{{ 'payments.status' | translate }}</th>
+              <th scope="col">{{ 'payments.reference' | translate }}</th>
+              <th scope="col">{{ 'payments.created' | translate }}</th>
+            </tr>
+          </thead>
+          @if (loading()) {
+            <tbody app-skeleton-table [rows]="8" [cols]="7"></tbody>
+          } @else {
+            <tbody>
+              @for (pay of rows(); track pay.id) {
+                <tr>
+                  <td>{{ 'payments.providerValue.' + pay.provider | translate }}</td>
+                  <td><span class="code-chip">{{ mask(pay.maskedMsisdn) || '—' }}</span></td>
+                  <td class="fw-semibold">{{ pay.amount | number: '1.0-2' }} {{ pay.currency }}</td>
+                  <td>{{ pay.tokens === null ? '—' : (pay.tokens | number) }}</td>
+                  <td>
+                    <app-status-badge [tone]="tone(pay.status)" [label]="'payments.statusValue.' + pay.status | translate" />
+                  </td>
+                  <td>
+                    @if (pay.providerRef) {
+                      <small class="text-muted font-monospace">{{ pay.providerRef }}</small>
+                    } @else {
+                      <span class="text-muted">—</span>
+                    }
+                  </td>
+                  <td><small class="text-muted">{{ pay.createdAt | date: 'short' }}</small></td>
+                </tr>
+              }
+            </tbody>
+          }
+        </table>
+      </div>
+    </div>
+
+    <app-pagination [meta]="meta()" (pageChange)="reload($event)" />
+  }
+</section>

@@ -30,6 +30,14 @@ export const routes: Routes = [
         title: 'Taarifu Admin — Dashboard',
       },
       {
+        // Global search results (EI-10 / SY5). The `?q=` param binds to the component's `q` input via
+        // the router's component-input-binding; the topbar search box navigates here on submit.
+        path: 'search',
+        loadComponent: () =>
+          import('./features/search/search-results.component').then((m) => m.SearchResultsComponent),
+        title: 'Taarifu Admin — Search',
+      },
+      {
         path: 'geography',
         loadChildren: () => import('./features/geography/geography.routes').then((m) => m.GEOGRAPHY_ROUTES),
       },
@@ -80,6 +88,14 @@ export const routes: Routes = [
       {
         path: 'users',
         loadChildren: () => import('./features/users/users.routes').then((m) => m.USERS_ROUTES),
+      },
+      {
+        path: 'privacy',
+        loadChildren: () => import('./features/privacy/privacy.routes').then((m) => m.PRIVACY_ROUTES),
+      },
+      {
+        path: 'payments',
+        loadChildren: () => import('./features/payments/payments.routes').then((m) => m.PAYMENTS_ROUTES),
       },
     ],
   },

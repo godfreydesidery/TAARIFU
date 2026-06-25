@@ -18,8 +18,11 @@ package com.taarifu.analytics.domain.model.enums;
  *
  * <p>WHY only a subset (not every Appendix E row): M15 builds the aggregation surface for the headline
  * KPIs; the long tail (e.g. {@code feed_item_viewed}, {@code search_performed}) can be added additively
- * later without a schema change, since the column is a {@code VARCHAR}. New live emission from sibling
- * modules is marked {@code // TODO(wiring)} until the outbox increment (ADR-0013 §2).</p>
+ * later without a schema change, since the column is a {@code VARCHAR}. Live emission from sibling modules is
+ * now wired through the transactional outbox: producers append a {@code CivicActivityRecorded} fact and
+ * {@code AnalyticsEventHandler} records it here (ADR-0013 §2). PHASE-3: the long-tail catalogue values land
+ * additively as their owner modules begin emitting them — the handler's unknown-tolerant parse already drops
+ * any value an older build does not yet know (Appendix E.0).</p>
  */
 public enum AnalyticsEventType {
 

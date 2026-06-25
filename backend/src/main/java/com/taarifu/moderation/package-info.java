@@ -11,9 +11,11 @@
  * <p>Internal layering (ARCHITECTURE.md §3.3): {@code api → application → domain}. All moderated content
  * is referenced <b>by {@code (subjectType, subjectId UUID)} only</b> — this module never imports
  * reporting/engagement/communications/institutions (their entities live behind their own boundaries);
- * resolving a subject to a concrete record is a {@code // TODO(wiring)} for when those modules publish
- * their lookup APIs (ARCHITECTURE.md §3.2 rule 3). It depends only on {@code common} and {@code identity}
- * public surfaces.</p>
+ * resolving a subject to a concrete record is done boundary-safely through the owners' published lookup
+ * registries ({@code SubjectAuthorQueryApi} for the D16 author, {@code SubjectContentQueryApi} for the
+ * scorable text — ADR-0013 §4c rule 3), each dispatched by {@code subjectType}; an owner that has not yet
+ * published its port resolves to empty and the item still reaches a human (EI-18 floor). It depends only on
+ * {@code common}, {@code identity}, and {@code analytics} public surfaces.</p>
  *
  * <p>Integrity invariant (D16, §25.8): a moderator may not moderate their own content, nor handle an
  * appeal of their own action — enforced via {@code @taarifuAuthz.isNotSelf(...)} on the queue-action
@@ -30,8 +32,11 @@
  * raises a queue item, the flagged content is scored and the item is auto-marked/escalated for a human —
  * the scorable text is fetched via the owner's published {@code SubjectContentQueryApi} (the same registry
  * pattern as the author lookup), and when no owner publishes a content port the screen is simply skipped (the
- * flag still raises a human-reviewed item). Auto-assist screening on content <i>create</i> (before any flag)
- * and the §25.3 sensitive-report pre-routing hold remain {@code // TODO(wiring)} for those owners to call in.</p>
+ * flag still raises a human-reviewed item). PHASE-3: auto-assist screening on content <i>create</i> (before any
+ * flag) and the sensitive-report pre-routing hold need each content-owning module to call
+ * {@code AutoAssistService.triage(...)} on its own create/publish path — the receiving seam (that
+ * {@code @Transactional} bean + the {@code SubjectContentQueryApi} registry) is published and ready; moderation
+ * cannot trigger it from here without importing the owner (ARCHITECTURE.md §3.2).</p>
  *
  * <p><b>Transparency reporting (§18, §25, M-Phase 3; ADR-0018):</b> {@code TransparencyReportService} +
  * {@code GET /moderation/transparency} aggregate moderation's own (append-only, tamper-evident) tables into a

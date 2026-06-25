@@ -13,7 +13,8 @@ import java.util.UUID;
  *
  * <p>Responsibility: bind the USSD module's consumer-owned geography seam to geography's real ward-by-code
  * lookup, so the "enter a ward code" step resolves a friendly ward code against the real administrative
- * hierarchy — closing the prior {@code // TODO(wiring)} scaffold that accepted only a typed UUID.</p>
+ * hierarchy — fully wired to the live geography port (replacing the prior scaffold that accepted only a
+ * typed UUID).</p>
  *
  * <p>This adapter holds <b>no logic</b>: it is a one-line delegation to the published query port, the ADR-0013
  * pattern (the consumer's port, the producer's {@code api} implementation, an adapter wiring them by

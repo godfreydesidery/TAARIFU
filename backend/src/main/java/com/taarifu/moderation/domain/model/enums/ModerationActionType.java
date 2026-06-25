@@ -11,8 +11,11 @@ package com.taarifu.moderation.domain.model.enums;
  *
  * <p>WHY the action against the <i>content</i> is decoupled from any account sanction: {@link #REMOVE}
  * hides the content; {@link #SUSPEND} sanctions the <i>author's account</i> — the actual account-state
- * change is owned by the identity module and is a {@code // TODO(wiring)} event consumer, not done by
- * reaching into identity from here (ARCHITECTURE.md §3.2).</p>
+ * change is owned by the identity module, never done by reaching into identity from here
+ * (ARCHITECTURE.md §3.2). This is now <b>wired</b> asynchronously: {@code ModerationQueueService.takeAction}
+ * appends a {@code MODERATION_SANCTION_APPLIED} event (carrying only the author's account public id + the
+ * {@code SanctionType}) to the transactional outbox, and identity's {@code ModerationSanctionHandler}
+ * consumes it off the relay and applies the account-state change (ADR-0013 §2; ADR-0014 §1/§4).</p>
  */
 public enum ModerationActionType {
 

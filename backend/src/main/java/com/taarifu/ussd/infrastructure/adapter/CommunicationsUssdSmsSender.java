@@ -14,8 +14,8 @@ import org.springframework.stereotype.Component;
  * <p>Responsibility: bind the USSD module's consumer-owned SMS seam to communications' real SMS-send command
  * port, so the feature-phone <b>ticket-confirmation SMS</b> (UC-D02) and status replies really send through the
  * one owned delivery path (the least-cost/DLR aggregator, or communications' prod-safe masked stub when no
- * aggregator is configured) — no logged no-op any more. This closes the prior {@code // TODO(wiring)} on the
- * USSD SMS path.</p>
+ * aggregator is configured) — no logged no-op any more. The USSD SMS path is fully wired to the live
+ * communications port.</p>
  *
  * <p>This adapter holds <b>no logic</b>: it maps the USSD send into the published command and delegates by
  * value only (a raw E.164 + body), never importing communications' internal {@code domain.port.SmsGateway}

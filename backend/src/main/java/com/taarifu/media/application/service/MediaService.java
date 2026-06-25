@@ -135,8 +135,18 @@ public class MediaService {
     public UploadTicketDto requestUpload(UploadRequest request) {
         UUID uploader = CurrentUser.requirePublicId();
 
-        // TODO(wiring): authorize that `uploader` may attach to (request.ownerType, request.ownerId)
-        // via the host module's public API (the host lives in another module — ARCHITECTURE.md §3.2).
+        // PHASE-3: needs a host-published "may this caller attach media to this EXISTING host?" authorization
+        // port (the receiving seam would mirror the SubjectContentQueryApi registry — e.g. a per-ownerType
+        // MediaAttachAuthorizationApi, or reporting adding a canAttachReportMedia(reportId, callerId) method to
+        // ReportMediaAccessApi). No such port is published yet, and this module must not reach into the host
+        // (ARCHITECTURE.md §3.2). WHY this is safe to ship without it: this call only mints a PENDING/quarantined
+        // upload-intent — it grants NO read access (the serve path gates every download through mayView(), which
+        // is deny-by-default and delegates REPORT-owned reads to reporting's ReportMediaAccessApi) and creates no
+        // host effect (the host's own create/file path is the authority on what is bound to it). An object bound
+        // here to an (ownerType, ownerId) the caller cannot view is therefore unreadable by anyone but its
+        // uploader. The canonical, fully-authorized attach path is the unbound pipeline (requestUploadUrl →
+        // host's file-time MediaAttachmentApi.validateAndBind), which already enforces uploader==owner + type +
+        // confirmed-uploaded. When a host attach-authorization port lands, enforce it here before minting the URL.
 
         String objectKey = newQuarantineKey();
         MediaObject media = new MediaObject(

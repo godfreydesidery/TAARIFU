@@ -54,7 +54,8 @@ export class SearchResultsComponent implements OnInit {
 
   /** Hits grouped by type in a stable, civic-sensible order, dropping empty groups. */
   readonly groups = computed<ResultGroup[]>(() => {
-    const all = this.hits();
+    // Defensive: tolerate a malformed/empty wire payload (degrade to "no groups", never throw in CD).
+    const all = this.hits() ?? [];
     return SEARCH_GROUP_ORDER.map((g) => ({
       type: g.type,
       labelKey: g.labelKey,

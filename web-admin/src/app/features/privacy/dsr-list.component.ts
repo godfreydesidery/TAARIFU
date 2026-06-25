@@ -19,10 +19,12 @@ import { PrivacyService } from './privacy.service';
  * DSR (data-subject-request) admin queue — PDPA access/erasure handling (UC-A17 / UC-S09; PRD §25.1, §18).
  *
  * <p>Responsibility: the operator console for Tanzania PDPA data-subject requests. It lists requests paged
- * from {@code GET /privacy/admin/dsr} with server-side filters by type (ACCESS/ERASURE) and status, flags
- * those overdue against the §25.1 ≤30-day SLA, and lets the operator action each one inline — acknowledge
- * (starts the SLA clock), complete (export delivered / anonymisation done), or reject with a reason. The
- * actual export/anonymisation job is server-side (UC-S09); the console only records the human decision.
+ * from {@code GET /privacy/dsr} with server-side filters by type (ACCESS/ERASURE) and status, flags those
+ * overdue against the §25.1 ≤30-day SLA, and lets the operator action each one inline — acknowledge (starts
+ * the SLA clock), complete (export delivered / anonymisation done), or place on HOLD with a reason (suspends
+ * erasure until released, §25.1). The actual export/anonymisation job is server-side (UC-S09); the console
+ * only records the human decision. The detail view reuses the row already loaded in the list (the backend
+ * exposes no admin GET-by-id), so there is no separate per-request fetch.
  * Authorization is enforced SERVER-side (ADMIN/ROOT). Subjects are shown PII-minimised — public id + masked
  * contact only, never raw PII (defeating the erasure would be self-defeating, §18). Loading/empty/error
  * states are handled; the screen degrades a missing endpoint to a friendly error panel; subscriptions use
@@ -121,13 +123,13 @@ export class DsrListComponent implements OnInit {
     this.act(req.id, this.privacy.complete(req.id), 'privacy.completed');
   }
 
-  /** Rejects a request with a prompted machine reason code, then refreshes. */
-  reject(req: DsrRequest): void {
-    const reasonCode = (prompt(this.translate.instant('privacy.rejectPrompt')) || '').trim();
+  /** Places a request on legal HOLD with a prompted machine reason code, then refreshes. */
+  hold(req: DsrRequest): void {
+    const reasonCode = (prompt(this.translate.instant('privacy.holdPrompt')) || '').trim();
     if (!reasonCode) {
       return;
     }
-    this.act(req.id, this.privacy.reject(req.id, { reasonCode }), 'privacy.rejected');
+    this.act(req.id, this.privacy.hold(req.id, reasonCode), 'privacy.held');
   }
 
   /**
@@ -157,9 +159,12 @@ export class DsrListComponent implements OnInit {
     return (req.status === 'ACKNOWLEDGED' || req.status === 'IN_PROGRESS') && !req.legalHold;
   }
 
-  /** Whether a request can still be rejected (any non-terminal status). */
-  canReject(req: DsrRequest): boolean {
-    return req.status !== 'COMPLETED' && req.status !== 'REJECTED';
+  /**
+   * Whether a request can still be placed on HOLD: any non-terminal status that is not already on hold.
+   * A completed or rejected (terminal) request, or one already ON_HOLD, cannot be (re-)held.
+   */
+  canHold(req: DsrRequest): boolean {
+    return req.status !== 'COMPLETED' && req.status !== 'REJECTED' && req.status !== 'ON_HOLD';
   }
 
   /**

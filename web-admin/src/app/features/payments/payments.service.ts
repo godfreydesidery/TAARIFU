@@ -11,8 +11,8 @@ import { Payment, PaymentListFilter, PaymentTotals } from './payments.models';
  *
  * <p>Responsibility: the feature's typed gateway over the payments admin query endpoints, delegating
  * envelope/HTTP concerns to {@link ApiClient} (DRY, CLAUDE.md §8). It reads a paged, filterable list of
- * mobile-money payments ({@code GET /payments/admin}) and an aggregate totals strip
- * ({@code GET /payments/admin/totals}). Authorization is enforced SERVER-side (ADMIN/ROOT — payments are a
+ * mobile-money payments ({@code GET /admin/payments}) and an aggregate totals strip
+ * ({@code GET /admin/payments/totals}). Authorization is enforced SERVER-side (ADMIN/ROOT — payments are a
  * Phase-2 admin/finance surface).</p>
  *
  * <p>The TOTALS call DEGRADES GRACEFULLY to {@code null} on any error (404 when not deployed, 403, network)
@@ -26,16 +26,16 @@ export class PaymentsService {
   private readonly api = inject(ApiClient);
 
   /**
-   * Lists mobile-money payments, filtered and paged. `GET /payments/admin`.
+   * Lists mobile-money payments, filtered and paged. `GET /admin/payments`.
    * @param filter optional provider/status/date-window filters plus `page`/`size` (all server-side).
    * @returns a {@link Page} of {@link Payment}.
    */
   list(filter: PaymentListFilter): Observable<Page<Payment>> {
-    return this.api.getPage<Payment>('/payments/admin', { ...filter });
+    return this.api.getPage<Payment>('/admin/payments', { ...filter });
   }
 
   /**
-   * Fetches aggregate payment totals for the active filter window. `GET /payments/admin/totals`.
+   * Fetches aggregate payment totals for the active filter window. `GET /admin/payments/totals`.
    *
    * <p>Degrades to {@code null} on any error so the totals strip is hidden rather than failing the page.</p>
    *
@@ -44,7 +44,7 @@ export class PaymentsService {
    */
   totals(filter: PaymentListFilter): Observable<PaymentTotals | null> {
     return this.api
-      .get<PaymentTotals>('/payments/admin/totals', { ...filter })
+      .get<PaymentTotals>('/admin/payments/totals', { ...filter })
       .pipe(catchError(() => of(null)));
   }
 }

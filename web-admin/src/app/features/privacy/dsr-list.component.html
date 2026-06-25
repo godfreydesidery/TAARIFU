@@ -1,6 +1,6 @@
 <!--
   DSR (data-subject-request) admin queue: PDPA access/erasure requests with server-side type/status filters
-  and inline acknowledge/complete/reject actions. Subjects shown PII-minimised (masked contact only). (§25.1)
+  and inline acknowledge/complete/hold actions. Subjects shown PII-minimised (masked contact only). (§25.1)
 -->
 <section>
   <header class="page-header">
@@ -131,17 +131,17 @@
                           {{ 'privacy.complete' | translate }}
                         </button>
                       }
-                      @if (canReject(req)) {
+                      @if (canHold(req)) {
                         <button
                           type="button"
-                          class="btn btn-outline-danger"
+                          class="btn btn-outline-warning"
                           [disabled]="acting() === req.id"
-                          (click)="reject(req)"
+                          (click)="hold(req)"
                         >
-                          {{ 'privacy.reject' | translate }}
+                          {{ 'privacy.hold' | translate }}
                         </button>
                       }
-                      @if (!canAcknowledge(req) && !canComplete(req) && !canReject(req)) {
+                      @if (!canAcknowledge(req) && !canComplete(req) && !canHold(req)) {
                         <span class="text-muted small">—</span>
                       }
                     </div>

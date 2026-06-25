@@ -137,4 +137,20 @@ public interface SearchDocumentRepository extends JpaRepository<SearchDocument, 
                AND authored_by_account_id = :accountId
             """, nativeQuery = true)
     int hideByAuthor(@Param("accountId") UUID accountId);
+
+    /**
+     * Counts the live (non-tombstoned) projection rows currently in the discovery index — the size of the
+     * index, surfaced by the admin reindex status read ({@code GET /search/admin/reindex/status}, ADR-0017
+     * follow-up "a one-off backfill job per owner").
+     *
+     * <p>WHY a dedicated counter (not the inherited {@link JpaRepository#count()}): {@code JpaRepository.count()}
+     * counts <i>all</i> rows including soft-deleted tombstones (the {@code @SQLRestriction} is NOT applied to the
+     * Spring Data {@code count()} primitive in the same way the operator expects for "rows discoverable now"). A
+     * native count that re-states {@code deleted = FALSE} returns exactly the live index size the operator reads
+     * to confirm a backfill populated the index, and never inflates it with removed rows.</p>
+     *
+     * @return the number of live {@code search_document} rows ({@code >= 0}).
+     */
+    @Query(value = "SELECT count(*) FROM search_document WHERE deleted = FALSE", nativeQuery = true)
+    long countLive();
 }

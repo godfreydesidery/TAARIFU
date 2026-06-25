@@ -251,6 +251,20 @@ public interface AnalyticsEventRepository extends JpaRepository<AnalyticsEvent, 
      * fixed literal (defence in depth, ADR-0020 §1). Returns one row per non-empty bucket, chronologically
      * ordered so the client renders the series without re-sorting.</p>
      *
+     * <p>WHY {@code occurred_at AT TIME ZONE 'UTC'} on both sides of {@code date_trunc}: {@code date_trunc}
+     * over a {@code timestamptz} truncates in the <i>database session</i> timezone, so day/week/month buckets
+     * would silently shift with the server's TZ (e.g. +03 EAT). Converting to UTC wall-time, truncating, then
+     * re-stamping as UTC yields buckets aligned to UTC midnight regardless of host TZ — matching the PRD §15
+     * "all timestamps UTC" rule and keeping the series stable across environments.</p>
+     *
+     * <p>WHY {@code GROUP BY 1 / ORDER BY 1} (select-position) rather than repeating
+     * {@code date_trunc(:truncField, occurred_at)}: Hibernate expands each textual occurrence of a named
+     * parameter in a native query into a <i>separate</i> JDBC placeholder, so a repeated
+     * {@code date_trunc(:truncField, …)} in SELECT and GROUP BY reaches PostgreSQL as
+     * {@code date_trunc($a, …)} vs {@code date_trunc($b, …)} — structurally unequal, so the planner refuses
+     * the grouping ("column occurred_at must appear in the GROUP BY clause"). Grouping/ordering by the output
+     * column ordinal references the single SELECT expression and sidesteps the duplication.</p>
+     *
      * @param eventTypeName the event type name bound as text (e.g. {@code "REPORT_FILED"}); the column
      *                      stores the {@code @Enumerated(STRING)} value.
      * @param truncField    the {@code date_trunc} field literal ({@code "day"}/{@code "week"}/{@code "month"})
@@ -262,15 +276,15 @@ public interface AnalyticsEventRepository extends JpaRepository<AnalyticsEvent, 
      * @return (bucketStart, count) rows, oldest → newest.
      */
     @Query(value = """
-            SELECT date_trunc(:truncField, occurred_at) AS bucketStart,
-                   COUNT(*)                              AS count
+            SELECT (date_trunc(:truncField, occurred_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS bucketStart,
+                   COUNT(*)                                                                     AS count
             FROM analytics_event
             WHERE event_type = :eventTypeName
               AND occurred_at >= :from AND occurred_at < :to
               AND (CAST(:geoAreaId AS uuid) IS NULL OR geo_area_id = CAST(:geoAreaId AS uuid))
               AND (CAST(:categoryId AS uuid) IS NULL OR category_id = CAST(:categoryId AS uuid))
-            GROUP BY date_trunc(:truncField, occurred_at)
-            ORDER BY date_trunc(:truncField, occurred_at) ASC
+            GROUP BY 1
+            ORDER BY 1 ASC
             """, nativeQuery = true)
     List<CountByBucketProjection> countByTypeBucketed(@Param("eventTypeName") String eventTypeName,
                                                       @Param("truncField") String truncField,
@@ -284,7 +298,9 @@ public interface AnalyticsEventRepository extends JpaRepository<AnalyticsEvent, 
      * Appendix C), optionally scoped to an area/category. Only rows that carry a {@code breach_type} (an
      * actual SLA breach, not a manual escalation without a breach clock) are counted.
      *
-     * <p>WHY native + bound bucket field: identical rationale to {@link #countByTypeBucketed}.</p>
+     * <p>WHY native + bound bucket field, and WHY {@code GROUP BY 1 / ORDER BY 1}: identical rationale to
+     * {@link #countByTypeBucketed} (the select-position grouping avoids Hibernate duplicating the named
+     * {@code :truncField} into distinct placeholders the planner cannot match for GROUP-BY validation).</p>
      *
      * @param truncField the {@code date_trunc} field literal from the {@code TimeBucket} enum (never raw text).
      * @param from       inclusive window start (UTC).
@@ -294,16 +310,16 @@ public interface AnalyticsEventRepository extends JpaRepository<AnalyticsEvent, 
      * @return (bucketStart, count) rows, oldest → newest.
      */
     @Query(value = """
-            SELECT date_trunc(:truncField, occurred_at) AS bucketStart,
-                   COUNT(*)                              AS count
+            SELECT (date_trunc(:truncField, occurred_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS bucketStart,
+                   COUNT(*)                                                                     AS count
             FROM analytics_event
             WHERE event_type = 'REPORT_ESCALATED'
               AND breach_type IS NOT NULL
               AND occurred_at >= :from AND occurred_at < :to
               AND (CAST(:geoAreaId AS uuid) IS NULL OR geo_area_id = CAST(:geoAreaId AS uuid))
               AND (CAST(:categoryId AS uuid) IS NULL OR category_id = CAST(:categoryId AS uuid))
-            GROUP BY date_trunc(:truncField, occurred_at)
-            ORDER BY date_trunc(:truncField, occurred_at) ASC
+            GROUP BY 1
+            ORDER BY 1 ASC
             """, nativeQuery = true)
     List<CountByBucketProjection> countSlaBreachesBucketed(@Param("truncField") String truncField,
                                                            @Param("from") Instant from,

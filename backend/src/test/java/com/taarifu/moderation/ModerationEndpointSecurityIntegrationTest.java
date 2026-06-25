@@ -178,10 +178,14 @@ class ModerationEndpointSecurityIntegrationTest extends AbstractPostgisIntegrati
      */
     private UUID insertItem(UUID authorPublicId) {
         UUID itemPublicId = UUID.randomUUID();
+        // Set auto_assisted explicitly (a manually-flagged item, NOT auto-raised): the column is NOT NULL
+        // (V154). Being explicit keeps the fixture deterministic even when a reused Testcontainers DB
+        // (testcontainers.reuse.enable=true) holds a schema where the column DEFAULT has not been applied.
         txTemplate.executeWithoutResult(status -> em.createNativeQuery("""
                 INSERT INTO moderation_item (public_id, version, created_at, deleted, subject_type,
-                        subject_id, subject_author_profile_id, severity, status, flag_count, sla_due_at)
-                VALUES (:pid, 0, :now, false, 'COMMENT', :sid, :author, 'MEDIUM', 'PENDING', 1, :sla)
+                        subject_id, subject_author_profile_id, severity, status, flag_count, sla_due_at,
+                        auto_assisted)
+                VALUES (:pid, 0, :now, false, 'COMMENT', :sid, :author, 'MEDIUM', 'PENDING', 1, :sla, false)
                 """)
                 .setParameter("pid", itemPublicId)
                 .setParameter("now", Instant.now())

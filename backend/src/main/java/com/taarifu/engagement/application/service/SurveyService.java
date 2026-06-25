@@ -121,6 +121,10 @@ public class SurveyService {
         Survey survey = Survey.create(title, description, type, binding, audienceScope, questions,
                 startsAt, endsAt, anonymous, creatorPublicId, null);
         surveys.save(survey);
+        // TODO(wiring/search, ADR-0017 §1): on open/schedule (DRAFT -> SCHEDULED/OPEN) push a PUBLIC projection
+        // to search.api.SearchIndexApi.upsert (title + description as snippet; NEVER the questions JSON or any
+        // response payload); on close/archive/delete call remove(...). BLOCKED: SearchEntityType has no POLL
+        // value (search-owner CENTRAL NEED — see package-info). DRAFTs and anonymous response data are never indexed.
         return mapper.toSurveyDto(survey);
     }
 

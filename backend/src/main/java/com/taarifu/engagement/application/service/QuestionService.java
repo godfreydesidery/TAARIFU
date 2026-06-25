@@ -120,6 +120,10 @@ public class QuestionService {
         // targetRepId against the institutions registry, once those modules are wired.
         Question question = Question.ask(askerPublicId, targetRepId, body);
         questions.save(question);
+        // TODO(wiring/search, ADR-0017 §1): a public (OPEN/ANSWERED) question is discoverable — push a PUBLIC
+        // projection to search.api.SearchIndexApi.upsert (lean body summary as title/snippet); on the answer
+        // flow re-upsert, and on delete/hide call remove(...). BLOCKED: SearchEntityType has no QUESTION value
+        // (search-owner CENTRAL NEED — see package-info). No PII (never the asker id) is indexed.
         return mapper.toQuestionDto(question, null);
     }
 

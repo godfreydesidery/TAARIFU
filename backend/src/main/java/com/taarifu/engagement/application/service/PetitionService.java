@@ -161,6 +161,10 @@ public class PetitionService {
         Petition petition = Petition.create(title, body, targetType, targetId,
                 signatureGoal, deadline, creatorPublicId, null);
         petitions.save(petition);
+        // TODO(wiring/search, ADR-0017 §1): on activate (DRAFT -> ACTIVE) push a PUBLIC projection to
+        // search.api.SearchIndexApi.upsert(title + lean summary; NO body if private; NO DRAFT); on
+        // close/delete call remove(...). BLOCKED: SearchEntityType has no PETITION value (search-owner
+        // CENTRAL NEED — see package-info). DRAFTs are never indexed (visibility gate). No PII/no author body.
         return mapper.toPetitionDto(petition);
     }
 

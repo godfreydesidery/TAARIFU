@@ -50,7 +50,7 @@ import java.util.UUID;
  *       §23.5) by construction. WHY T3 (not T2) at the annotation: binding-ness is per-survey data, but
  *       the tier aspect needs a static minimum on the method; choosing the stricter T3 keeps binding polls
  *       safe, and the per-survey relaxation to T2 for non-binding surveys is a documented
- *       {@code // TODO(wiring)} refinement (it requires reading the survey before the tier aspect runs).
+ *       <b>PHASE-3</b> refinement: relaxing to T2 for a non-binding survey needs a survey-pre-reading tier aspect that does not yet exist (RequiresTierAspect resolves a static minimum before the method body, so it cannot read the per-row binding flag first); until it ships, the safe T3 floor stands.
  *       One-per-person is enforced in the service; token balance is never read.</li>
  * </ul>
  */

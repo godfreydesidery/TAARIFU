@@ -16,6 +16,7 @@ import com.taarifu.engagement.domain.model.enums.SurveyStatus;
 import com.taarifu.engagement.domain.model.enums.SurveyType;
 import com.taarifu.engagement.domain.repository.SurveyRepository;
 import com.taarifu.engagement.domain.repository.SurveyResponseRepository;
+import com.taarifu.identity.api.ProfileLookupApi;
 import com.taarifu.search.api.SearchIndexApi;
 import com.taarifu.search.api.dto.SearchDocumentUpsert;
 import com.taarifu.search.domain.model.enums.SearchEntityType;
@@ -41,10 +42,10 @@ import java.util.UUID;
  *
  * <p>WHY the binding-tier decision is split between controller and service: the {@code @RequiresTier}
  * aspect resolves the live tier (MF-2) and must sit on the method; since binding-ness is per-survey
- * (data, not static), the controller declares the <b>stricter</b> T3 requirement for the respond endpoint
- * and the service additionally rejects a binding response from anyone the fence would exclude. A
- * non-binding survey is reachable at T2; see the controller for the exact gate and the
- * {@code // TODO(wiring)} for the per-survey tier refinement.</p>
+ * (data, not static), the controller declares the <b>stricter</b> T3 requirement for the respond endpoint,
+ * which satisfies the binding-poll fence by construction (every response is reached only above T3; token
+ * balance is never read). A non-binding survey could in principle be relaxed to T2 — see the controller's
+ * {@code PHASE-3} note (it needs a survey-pre-reading tier aspect that does not yet exist).</p>
  */
 @Service
 @Transactional
@@ -73,6 +74,7 @@ public class SurveyService {
     private final EngagementMapper mapper;
     private final OutboxWriter outboxWriter;
     private final SearchIndexApi searchIndex;
+    private final ProfileLookupApi profileLookup;
 
     /**
      * @param surveys      survey persistence port.
@@ -88,17 +90,24 @@ public class SurveyService {
      *                     into the discovery index on create/open/lifecycle-change and <b>removes</b> it when
      *                     not (or no longer) public-safe — owner→search, an {@code api → api} call, never a
      *                     reach-in. The questions JSON and response payloads are NEVER indexed (PRD §18).
+     * @param profileLookup identity's published author-resolution port (ADR-0013 §1). {@link #create} maps the
+     *                     authenticated <b>account</b> public id to the authoring identity {@code Profile} public
+     *                     id through this {@code api → api} call, so the survey/poll is attributed by
+     *                     <b>profile</b> id (never the raw account id) — engagement never imports identity's
+     *                     {@code domain}. Returns id + public display name only, no PII (PRD §18, PDPA).
      */
     public SurveyService(SurveyRepository surveys,
                          SurveyResponseRepository responses,
                          EngagementMapper mapper,
                          OutboxWriter outboxWriter,
-                         SearchIndexApi searchIndex) {
+                         SearchIndexApi searchIndex,
+                         ProfileLookupApi profileLookup) {
         this.surveys = surveys;
         this.responses = responses;
         this.mapper = mapper;
         this.outboxWriter = outboxWriter;
         this.searchIndex = searchIndex;
+        this.profileLookup = profileLookup;
     }
 
     /**
@@ -147,9 +156,16 @@ public class SurveyService {
                             String audienceScope, String questions, Instant startsAt, Instant endsAt,
                             boolean anonymous, UUID creatorPublicId) {
         SurveyType type = parseType(typeRaw);
-        // TODO(wiring): resolve creatorPublicId (account) -> identity Profile public id once wired.
+        // Resolve the authenticated ACCOUNT public id (the JWT-subject grain from CurrentUser) to the authoring
+        // identity PROFILE public id via identity's published ProfileLookupApi (api -> api; engagement never
+        // imports identity's domain - ADR-0013 §1). The survey/poll is attributed by PROFILE id, never the raw
+        // account id; the author-or-staff open gate (#open) compares this stored profile id to the resolved
+        // caller profile id. A caller whose account has no resolvable profile (deny-by-default empty) cannot
+        // author - clean BAD_REQUEST.
+        UUID creatorProfileId = profileLookup.profileIdForAccount(creatorPublicId)
+                .orElseThrow(() -> new ApiException(ErrorCode.BAD_REQUEST));
         Survey survey = Survey.create(title, description, type, binding, audienceScope, questions,
-                startsAt, endsAt, anonymous, creatorPublicId, null);
+                startsAt, endsAt, anonymous, creatorProfileId, null);
         surveys.save(survey);
         // SEARCH (ADR-0017 §1, ADR-0013 §1): keep the discovery projection in step with the survey's public
         // visibility. A freshly-created survey is DRAFT, so reindexForDiscovery REMOVES (idempotent no-op on a
@@ -188,8 +204,18 @@ public class SurveyService {
             throw new ApiException(ErrorCode.CONFLICT);
         }
 
-        // TODO(wiring): audience eligibility (geo/role match against audienceScope) + per-survey binding-tier
-        // refinement are wired with the identity/geography scope seam. Token balance is NOT read (fence).
+        // BINDING-TIER FENCE (D18, PRD §23.5): a binding poll is a democratic-weight act gated at T3. That tier
+        // gate is enforced by construction at the controller's @RequiresTier("T3") on this endpoint (the
+        // strictest requirement, re-resolved LIVE by RequiresTierAspect - MF-2), so the service is reached only
+        // above T3 for every response. Token balance is NEVER read here (the fence). The one-per-person guarantee
+        // is the DB unique constraint + the pre-check above.
+        //
+        // PHASE-3: audience eligibility (geo/role match of the responder against the survey's audienceScope JSON)
+        // needs an audience-scope evaluator that does not yet exist - identity publishes ElectoralScopeApi
+        // (constituency/ward elector checks) but no general "does this responder match this audience descriptor?"
+        // port, and there is no shared audienceScope schema/parser. When that evaluator ships (identity/geography
+        // audience-scope port, ready to receive this audienceScope), enforce it here before the response is saved
+        // (today audienceScope is advisory metadata on the survey, surfaced to clients, not a server-side gate).
 
         SurveyResponse response = SurveyResponse.of(survey, responderPublicId, answers);
         try {
@@ -248,9 +274,15 @@ public class SurveyService {
     public SurveyDto open(UUID surveyPublicId, UUID callerPublicId) {
         Survey survey = require(surveyPublicId);
 
-        // Author-or-staff gate (deny-by-default). Author = the survey's creator profile id; staff = any
-        // platform staff role on the live principal (the established CurrentUser role-read pattern).
-        boolean isAuthor = callerPublicId != null && callerPublicId.equals(survey.getCreatorProfileId());
+        // Author-or-staff gate (deny-by-default). The survey's authorship is stored as a PROFILE id (resolved at
+        // create via ProfileLookupApi), so the caller's ACCOUNT id is mapped to its PROFILE id through the same
+        // identity port before comparison - apples to apples (api -> api, no import). Staff = any platform staff
+        // role on the live principal (the established CurrentUser role-read pattern). An account with no
+        // resolvable profile is simply not the author (Optional.empty -> no match) and falls through to staff.
+        UUID callerProfileId = callerPublicId == null
+                ? null
+                : profileLookup.profileIdForAccount(callerPublicId).orElse(null);
+        boolean isAuthor = callerProfileId != null && callerProfileId.equals(survey.getCreatorProfileId());
         if (!isAuthor && !callerIsStaff()) {
             throw new ApiException(ErrorCode.FORBIDDEN);
         }
@@ -301,12 +333,19 @@ public class SurveyService {
      * suspended-author visibility maintenance (ADR-0017 §3) — never returned.</p>
      *
      * @param survey the survey/poll whose discovery projection is being maintained.
+     * @return {@code true} if the survey/poll was upserted into discovery (it is publicly visible — non-DRAFT);
+     *         {@code false} if it was removed/absent (DRAFT or any non-public state). The one-off backfill
+     *         adapter ({@link com.taarifu.engagement.application.service.search.SurveyBackfillSource}) reuses this
+     *         exact method and counts a {@code true} as one indexed row — so the fence can never drift between
+     *         the live write path and the backfill (DRY; the
+     *         {@link com.taarifu.search.domain.port.SearchBackfillSource} contract). Public (the same-module
+     *         backfill adapter lives in a {@code service.search} sub-package and reuses this method directly).
      */
-    private void reindexForDiscovery(Survey survey) {
+    public boolean reindexForDiscovery(Survey survey) {
         if (!survey.isPubliclyVisible()) {
             // DRAFT (or any non-public state): ensure it is absent from discovery (idempotent remove).
             searchIndex.remove(SearchEntityType.POLL, survey.getPublicId());
-            return;
+            return false;
         }
         searchIndex.upsert(new SearchDocumentUpsert(
                 SearchEntityType.POLL,
@@ -325,6 +364,7 @@ public class SurveyService {
                 // authoredByAccountId: visibility-maintenance only (ADR-0017 §3); never returned. Null for an
                 // org-authored survey (an authorless row), which is fine.
                 survey.getCreatorProfileId()));
+        return true;
     }
 
     /**

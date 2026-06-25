@@ -9,6 +9,7 @@ import com.taarifu.engagement.domain.model.SurveyResponse;
 import com.taarifu.engagement.domain.model.enums.SurveyType;
 import com.taarifu.engagement.domain.repository.SurveyRepository;
 import com.taarifu.engagement.domain.repository.SurveyResponseRepository;
+import com.taarifu.identity.api.ProfileLookupApi;
 import com.taarifu.search.api.SearchIndexApi;
 import com.taarifu.search.api.dto.SearchDocumentUpsert;
 import com.taarifu.search.domain.model.enums.SearchEntityType;
@@ -47,6 +48,8 @@ class SurveyServiceTest {
     private OutboxWriter outboxWriter;
     @Mock
     private SearchIndexApi searchIndex;
+    @Mock
+    private ProfileLookupApi profileLookup;
 
     private final EngagementMapper mapper = new EngagementMapper();
     private SurveyService service;
@@ -58,7 +61,7 @@ class SurveyServiceTest {
     void setUp() {
         // No token collaborator is injectable here — SurveyService cannot read a balance (integrity fence).
         // The OutboxWriter mock receives the survey_responded analytics fact (a passive side-record, not a gate).
-        service = new SurveyService(surveys, responses, mapper, outboxWriter, searchIndex);
+        service = new SurveyService(surveys, responses, mapper, outboxWriter, searchIndex, profileLookup);
     }
 
     private Survey openBindingPoll() {
@@ -122,6 +125,7 @@ class SurveyServiceTest {
     void createDraft_removesFromDiscovery_neverIndexesADraft() {
         // The no-leak fence: a freshly-created survey is DRAFT and must NOT be discoverable. The create path
         // routes through reindexForDiscovery, whose non-public branch REMOVES (idempotent) — never upserts.
+        when(profileLookup.profileIdForAccount(responder)).thenReturn(Optional.of(responder));
         service.create("Poll title", "Desc", "POLL", true,
                 null, "[{\"prompt\":\"x\"}]", null, null, false, responder);
 
@@ -137,6 +141,9 @@ class SurveyServiceTest {
         Survey draft = Survey.create("Maoni ya Maji", "Tafadhali toa maoni.", SurveyType.SURVEY, false,
                 null, "[{\"prompt\":\"secret question\"}]", null, null, false, responder, null);
         when(surveys.findByPublicId(surveyId)).thenReturn(Optional.of(draft));
+        // The author-or-staff gate maps the caller's ACCOUNT id to its PROFILE id; stub it to the survey's
+        // creator profile id (responder) so the author branch matches and open proceeds.
+        when(profileLookup.profileIdForAccount(responder)).thenReturn(Optional.of(responder));
 
         service.open(surveyId, responder);
 

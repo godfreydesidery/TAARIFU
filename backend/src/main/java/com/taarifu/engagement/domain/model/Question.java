@@ -48,8 +48,9 @@ public class Question extends BaseEntity {
     private UUID askerProfileId;
 
     /**
-     * Public id of the targeted representative in the <b>institutions</b> module (by id only — no import).
-     * Resolving/validating the target is a later integration step (// TODO(wiring) in the service).
+     * Public id of the targeted representative in the <b>institutions</b> module (by id only — no import). On
+     * the answer path the answerer (the authenticated account from {@code CurrentUser}) must equal this id, so
+     * a rep answers only their own inbox (D13/D16) — both sides are the account grain, no further mapping.
      */
     @Column(name = "target_rep_id", nullable = false)
     private UUID targetRepId;

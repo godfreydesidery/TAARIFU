@@ -21,6 +21,7 @@ import com.taarifu.engagement.domain.model.enums.PetitionTargetType;
 import com.taarifu.engagement.domain.repository.PetitionRepository;
 import com.taarifu.engagement.domain.repository.PetitionSignatureRepository;
 import com.taarifu.identity.api.ElectoralScopeApi;
+import com.taarifu.identity.api.ProfileLookupApi;
 import com.taarifu.institutions.api.RepresentativeQueryApi;
 import com.taarifu.search.api.SearchIndexApi;
 import com.taarifu.search.api.dto.SearchDocumentUpsert;
@@ -52,9 +53,10 @@ import java.util.UUID;
  *
  * <p>WHY actor references are the authenticated principal's {@code publicId} (the JWT subject): the signer
  * is taken from {@code CurrentUser}, never from the request body, so a caller can only sign <i>as
- * themselves</i> — the foundation of the no-self-petition and one-per-person guards. Mapping the account
- * {@code publicId} to its identity {@code Profile} public id is a later cross-module wiring step (this
- * scaffold references the actor by the account public id consistently for signer + conflict checks).</p>
+ * themselves</i> — the foundation of the no-self-petition and one-per-person guards. The signer + conflict +
+ * electoral checks key on the <b>account</b> public id (the grain {@code ScopeGuard}/{@code ElectoralScopeApi}
+ * use); the petition's stored <b>authorship</b> is the identity {@code Profile} id, resolved from the account
+ * id via identity's {@link com.taarifu.identity.api.ProfileLookupApi} on the create path (api → api, no import).</p>
  */
 @Service
 @Transactional
@@ -74,6 +76,7 @@ public class PetitionService {
     private final AuditEventService audit;
     private final OutboxWriter outboxWriter;
     private final SearchIndexApi searchIndex;
+    private final ProfileLookupApi profileLookup;
 
     /**
      * Max characters of the petition body carried in the public discovery snippet — a lean public preview
@@ -102,6 +105,12 @@ public class PetitionService {
      *                               owner→search direction, an {@code api → api} call, never a reach-in. Token
      *                               balance is NEVER read on this path; indexing is a passive side-record, not a
      *                               gate (the fence stays intact, D18/§23.5).
+     * @param profileLookup          identity's published author-resolution port (ADR-0013 §1). {@link #create}
+     *                               maps the authenticated <b>account</b> public id to the authoring identity
+     *                               {@code Profile} public id through this {@code api → api} call, so the petition
+     *                               is stored/attributed by <b>profile</b> id (never the raw account id) —
+     *                               engagement never imports identity's {@code domain}. Returns id + public
+     *                               display name only, no PII (PRD §18, PDPA data minimisation).
      */
     public PetitionService(PetitionRepository petitions,
                            PetitionSignatureRepository signatures,
@@ -111,7 +120,8 @@ public class PetitionService {
                            ElectoralScopeApi electoralScopeApi,
                            AuditEventService audit,
                            OutboxWriter outboxWriter,
-                           SearchIndexApi searchIndex) {
+                           SearchIndexApi searchIndex,
+                           ProfileLookupApi profileLookup) {
         this.petitions = petitions;
         this.signatures = signatures;
         this.mapper = mapper;
@@ -121,6 +131,7 @@ public class PetitionService {
         this.audit = audit;
         this.outboxWriter = outboxWriter;
         this.searchIndex = searchIndex;
+        this.profileLookup = profileLookup;
     }
 
     /**
@@ -186,10 +197,20 @@ public class PetitionService {
             throw new ApiException(ErrorCode.CONFLICT_OF_INTEREST);
         }
 
-        // TODO(wiring): resolve creatorPublicId (account) -> identity Profile public id, and validate
-        // targetId against the institutions registry, once those modules are wired (cross-module step).
+        // Resolve the authenticated ACCOUNT public id (the JWT-subject grain from CurrentUser) to the authoring
+        // identity PROFILE public id via identity's published ProfileLookupApi (api -> api; engagement never
+        // imports identity's domain - ADR-0013 §1). The petition is attributed/displayed by PROFILE id, never
+        // the raw account id, and the author renders by display name through the same port on the read path. A
+        // caller whose account has no resolvable profile (deny-by-default empty) cannot author - surfaced as a
+        // clean BAD_REQUEST rather than storing an unattributable row (the conflict/electoral checks above run on
+        // the account id, consistent with ScopeGuard/ElectoralScopeApi which key on the account grain). The
+        // institutions target is referenced by id only; its electoral seat is resolved on the binding SIGN path
+        // via RepresentativeQueryApi (no separate validate-target port - an unknown target yields no signable
+        // scope and a clean NOT_FOUND there, the deny-by-default boundary).
+        UUID creatorProfileId = profileLookup.profileIdForAccount(creatorPublicId)
+                .orElseThrow(() -> new ApiException(ErrorCode.BAD_REQUEST));
         Petition petition = Petition.create(title, body, targetType, targetId,
-                signatureGoal, deadline, creatorPublicId, null);
+                signatureGoal, deadline, creatorProfileId, null);
         petitions.save(petition);
         // SEARCH (ADR-0017 §1, ADR-0013 §1): keep the discovery projection in step with the petition's public
         // visibility. A freshly-created petition is DRAFT, so reindexForDiscovery REMOVES (idempotent no-op on
@@ -400,12 +421,19 @@ public class PetitionService {
      * ward/category, so those discovery facets are intentionally {@code null}.</p>
      *
      * @param petition the petition whose discovery projection is being maintained.
+     * @return {@code true} if the petition was upserted into discovery (it is publicly visible); {@code false}
+     *         if it was removed/absent (DRAFT or any non-public state). The one-off backfill adapter
+     *         ({@link com.taarifu.engagement.application.service.search.PetitionBackfillSource}) reuses this
+     *         exact method and counts a {@code true} as one indexed row — so the fence can never drift between
+     *         the live write path and the backfill (DRY; the
+     *         {@link com.taarifu.search.domain.port.SearchBackfillSource} contract). Public (the same-module
+     *         backfill adapter lives in a {@code service.search} sub-package and reuses this method directly).
      */
-    private void reindexForDiscovery(Petition petition) {
+    public boolean reindexForDiscovery(Petition petition) {
         if (!petition.isPubliclyVisible()) {
             // DRAFT (or any non-public state): ensure it is absent from discovery (idempotent remove).
             searchIndex.remove(SearchEntityType.PETITION, petition.getPublicId());
-            return;
+            return false;
         }
         searchIndex.upsert(new SearchDocumentUpsert(
                 SearchEntityType.PETITION,
@@ -423,6 +451,7 @@ public class PetitionService {
                 // authoredByAccountId: visibility-maintenance only (ADR-0017 §3); never returned. Null for an
                 // org-authored petition, which is fine (an authorless row).
                 petition.getCreatorProfileId()));
+        return true;
     }
 
     /**

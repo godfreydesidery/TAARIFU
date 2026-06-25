@@ -15,6 +15,7 @@ import com.taarifu.engagement.domain.model.Question;
 import com.taarifu.engagement.domain.model.enums.QuestionStatus;
 import com.taarifu.engagement.domain.repository.AnswerRepository;
 import com.taarifu.engagement.domain.repository.QuestionRepository;
+import com.taarifu.identity.api.ProfileLookupApi;
 import com.taarifu.search.api.SearchIndexApi;
 import com.taarifu.search.api.dto.SearchDocumentUpsert;
 import com.taarifu.search.domain.model.enums.SearchEntityType;
@@ -57,6 +58,7 @@ public class QuestionService {
     private final ScopeGuard scopeGuard;
     private final AuditEventService audit;
     private final SearchIndexApi searchIndex;
+    private final ProfileLookupApi profileLookup;
 
     /**
      * @param questions   question persistence port.
@@ -69,19 +71,26 @@ public class QuestionService {
      *                    question into the discovery index on ask/answer and <b>removes</b> it when the
      *                    question is not (or no longer) public (DECLINED/MODERATED) — owner→search, an
      *                    {@code api → api} call, never a reach-in. The asker id is NEVER indexed.
+     * @param profileLookup identity's published author-resolution port (ADR-0013 §1). {@link #ask} maps the
+     *                    authenticated <b>account</b> public id to the asking identity {@code Profile} public id
+     *                    through this {@code api → api} call, so the question is attributed by <b>profile</b> id
+     *                    (never the raw account id) — engagement never imports identity's {@code domain}.
+     *                    Returns id + public display name only, no PII (PRD §18, PDPA data minimisation).
      */
     public QuestionService(QuestionRepository questions,
                            AnswerRepository answers,
                            EngagementMapper mapper,
                            ScopeGuard scopeGuard,
                            AuditEventService audit,
-                           SearchIndexApi searchIndex) {
+                           SearchIndexApi searchIndex,
+                           ProfileLookupApi profileLookup) {
         this.questions = questions;
         this.answers = answers;
         this.mapper = mapper;
         this.scopeGuard = scopeGuard;
         this.audit = audit;
         this.searchIndex = searchIndex;
+        this.profileLookup = profileLookup;
     }
 
     /**
@@ -136,9 +145,16 @@ public class QuestionService {
             throw new ApiException(ErrorCode.CONFLICT_OF_INTEREST);
         }
 
-        // TODO(wiring): resolve askerPublicId (account) -> identity Profile public id, and validate
-        // targetRepId against the institutions registry, once those modules are wired.
-        Question question = Question.ask(askerPublicId, targetRepId, body);
+        // Resolve the authenticated ACCOUNT public id (the JWT-subject grain from CurrentUser) to the asking
+        // identity PROFILE public id via identity's published ProfileLookupApi (api -> api; engagement never
+        // imports identity's domain - ADR-0013 §1). The question is attributed by PROFILE id, never the raw
+        // account id. A caller whose account has no resolvable profile (deny-by-default empty) cannot ask -
+        // surfaced as a clean BAD_REQUEST rather than storing an unattributable row. (The no-self guard above
+        // keys on the account id, consistent with ScopeGuard.isNotSelf.) The targetRepId is an institutions
+        // reference by id only; the answerer-is-target check on the answer path keys on the same account grain.
+        UUID askerProfileId = profileLookup.profileIdForAccount(askerPublicId)
+                .orElseThrow(() -> new ApiException(ErrorCode.BAD_REQUEST));
+        Question question = Question.ask(askerProfileId, targetRepId, body);
         questions.save(question);
         // SEARCH (ADR-0017 §1, ADR-0013 §1): a new question is OPEN — publicly visible — so push its public,
         // PII-free projection into discovery. reindexForDiscovery decides upsert-vs-remove from the question's
@@ -157,9 +173,10 @@ public class QuestionService {
      * <p><b>Authorization / integrity (D13/D16).</b> Only the <b>targeted</b> representative may answer their
      * own Q&amp;A inbox: the answering principal (taken from {@code CurrentUser}, never the body) must equal the
      * question's {@code targetRepId}. A caller who is not the target is {@link ErrorCode#FORBIDDEN}, audited —
-     * the same boundary discipline as {@code ask} (the actor is the authenticated principal, referenced by
-     * account public id; mapping account → institutions rep id is the documented cross-module wiring step,
-     * // TODO(wiring)). One answer per question is guaranteed by the {@link Answer} unique constraint and the
+     * the same boundary discipline as {@code ask}. Both sides of this equality are the <b>account</b> public id
+     * (the question's {@code targetRepId} is the addressee's account/institutions public id; the answerer is the
+     * authenticated account from {@code CurrentUser}), so the check is correct without a further account → rep-id
+     * mapping. One answer per question is guaranteed by the {@link Answer} unique constraint and the
      * {@code OPEN}-only {@link Question#markAnswered()} guard; a second answer is a clean
      * {@link ErrorCode#CONFLICT}. No token balance is read on this path — answering is a representative duty,
      * never a paid/weighted action.</p>
@@ -236,12 +253,19 @@ public class QuestionService {
      * one party we must never surface for a question, and the row carries no other author to maintain.</p>
      *
      * @param question the question whose discovery projection is being maintained.
+     * @return {@code true} if the question was upserted into discovery (it is publicly visible — OPEN/ANSWERED);
+     *         {@code false} if it was removed/absent (DECLINED/MODERATED/any non-public state). The one-off
+     *         backfill adapter ({@link com.taarifu.engagement.application.service.search.QuestionBackfillSource})
+     *         reuses this exact method and counts a {@code true} as one indexed row — so the fence can never
+     *         drift between the live write path and the backfill (DRY; the
+     *         {@link com.taarifu.search.domain.port.SearchBackfillSource} contract). Public (the same-module
+     *         backfill adapter lives in a {@code service.search} sub-package and reuses this method directly).
      */
-    private void reindexForDiscovery(Question question) {
+    public boolean reindexForDiscovery(Question question) {
         if (!question.isPubliclyVisible()) {
             // DECLINED / MODERATED (or any non-public state): ensure it is absent from discovery (idempotent).
             searchIndex.remove(SearchEntityType.QUESTION, question.getPublicId());
-            return;
+            return false;
         }
         String body = snippet(question.getBody());
         searchIndex.upsert(new SearchDocumentUpsert(
@@ -260,6 +284,7 @@ public class QuestionService {
                 SearchVisibility.PUBLIC,
                 // authoredByAccountId: deliberately null — the asker must never be surfaced for a question.
                 null));
+        return true;
     }
 
     /**

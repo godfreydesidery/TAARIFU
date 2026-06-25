@@ -26,14 +26,16 @@ import java.util.UUID;
  *
  * <p>WHY the target is a {@code UUID} + {@link PetitionTargetType}, not a real FK: the addressee (a
  * Representative or an Office) is owned by the <b>institutions</b> module, which this module must not
- * import (HARD ISOLATION rule 2). The reference is therefore late-bound by id; resolving/validating the
- * target against the institutions registry is a later integration step
- * (// TODO(wiring) in the service).</p>
+ * import (HARD ISOLATION rule 2). The reference is therefore late-bound by id; the target's electoral seat
+ * is resolved on the binding SIGN path via institutions' {@code RepresentativeQueryApi} (api → api), where an
+ * unknown target yields no signable scope and a clean NOT_FOUND (the deny-by-default boundary).</p>
  *
  * <p>WHY {@link #creatorProfileId} / {@link #creatorOrgId} are {@code UUID}s, not FKs to identity: same
  * boundary discipline — the creator is an identity {@code Profile} (person) or organisation; we reference
  * it by its public id rather than FK-coupling engagement to identity's tables. Exactly one of the two is
- * set (a person-authored or an org-authored petition).</p>
+ * set (a person-authored or an org-authored petition). The authoring person's {@code creatorProfileId} is
+ * resolved from the authenticated <b>account</b> id via identity's {@code ProfileLookupApi} on the create
+ * path (api → api, no import); the author is rendered by display name through the same port on reads.</p>
  *
  * <p><b>Integrity (D13/D16):</b> a representative may not petition against <i>themselves</i>; that
  * conflict-of-interest guard is enforced in the application service via the shared

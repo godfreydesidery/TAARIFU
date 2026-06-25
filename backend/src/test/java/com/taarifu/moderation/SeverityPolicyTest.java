@@ -1,6 +1,7 @@
 package com.taarifu.moderation;
 
 import com.taarifu.moderation.application.service.SeverityPolicy;
+import com.taarifu.moderation.domain.model.enums.ContentSignal;
 import com.taarifu.moderation.domain.model.enums.FlagReason;
 import com.taarifu.moderation.domain.model.enums.ModerationSeverity;
 import org.junit.jupiter.api.Test;
@@ -50,6 +51,31 @@ class SeverityPolicyTest {
     void everyReasonClassifies() {
         for (FlagReason reason : FlagReason.values()) {
             assertThat(policy.initialSeverity(reason)).isNotNull();
+        }
+    }
+
+    // --- Auto-assist signal → severity (US-12.3; ADR-0018) — reuses the §25.8 SLA ladder ---------------
+
+    @Test
+    void piiSignalIsHigh_doxxingScreen() {
+        assertThat(policy.severityForSignal(ContentSignal.PII)).isEqualTo(ModerationSeverity.HIGH);
+    }
+
+    @Test
+    void profanitySignalIsMedium() {
+        assertThat(policy.severityForSignal(ContentSignal.PROFANITY)).isEqualTo(ModerationSeverity.MEDIUM);
+    }
+
+    @Test
+    void spamAndImageSignalsAreLow() {
+        assertThat(policy.severityForSignal(ContentSignal.SPAM)).isEqualTo(ModerationSeverity.LOW);
+        assertThat(policy.severityForSignal(ContentSignal.IMAGE)).isEqualTo(ModerationSeverity.LOW);
+    }
+
+    @Test
+    void everySignalClassifies() {
+        for (ContentSignal signal : ContentSignal.values()) {
+            assertThat(policy.severityForSignal(signal)).isNotNull();
         }
     }
 }

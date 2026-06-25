@@ -230,3 +230,14 @@ taarifu:
       from: ${TAARIFU_EMAIL_FROM:}                    # SPF/DKIM/DMARC-aligned sender address (provider=smtp)
       from-name: ${TAARIFU_EMAIL_FROM_NAME:Taarifu}   # optional From display name
       reply-to: ${TAARIFU_EMAIL_REPLY_TO:}            # optional Reply-To address
+
+  # Moderation auto-assist (US-12.3, EI-18, D-Q8; ADR-0018). The content-safety scorer is pluggable and
+  # SAFE-BY-DEFAULT: 'heuristic' (default) is the in-house Swahili+English heuristic that runs with ZERO
+  # external calls; a real ML/hosted Swahili-aware classifier ('ml') swaps in behind the same port later.
+  # When nothing scores content, everything routes to human moderators (EI-18 degradation). Auto-assist is
+  # ASSIST ONLY — it holds-for-review and never auto-removes (R21). No secrets here; an ML adapter's endpoint/
+  # key would come from env (PRD §18, CLAUDE.md §12).
+  moderation:
+    content-safety:
+      provider: ${TAARIFU_CONTENT_SAFETY_PROVIDER:heuristic}    # 'heuristic' (default) or 'ml'
+      hold-threshold: ${TAARIFU_CONTENT_SAFETY_HOLD_THRESHOLD:0.80}  # conservative confidence to HOLD (R21)
